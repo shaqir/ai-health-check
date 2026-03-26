@@ -10,7 +10,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "claude-3-haiku-20240307"
     llm_max_tokens: int = 1024
     llm_timeout_seconds: int = 30
 

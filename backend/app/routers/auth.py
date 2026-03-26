@@ -48,7 +48,7 @@ def login(
             detail="Invalid email or password",
         )
 
-    token = create_access_token(data={"sub": user.id, "role": user.role.value})
+    token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
     return TokenResponse(
         access_token=token,
         user_id=user.id,
@@ -88,7 +88,7 @@ def register(
     # Audit log
     log_action(db, current_user.id, "create_user", "users", user.id, new_value=req.username)
 
-    token = create_access_token(data={"sub": user.id, "role": user.role.value})
+    token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
     return TokenResponse(
         access_token=token,
         user_id=user.id,

@@ -31,7 +31,7 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
-async def test_connection(prompt: str = "Say hello in exactly 5 words.") -> dict:
+async def test_connection(prompt: str = "Say hello in exactly 5 words.", model: str = None) -> dict:
     """
     Module 1: Test Connection
     Sends a small prompt to Claude and measures latency.
@@ -42,7 +42,7 @@ async def test_connection(prompt: str = "Say hello in exactly 5 words.") -> dict
 
     try:
         response = client.messages.create(
-            model=settings.llm_model,
+            model=model or settings.llm_model,
             max_tokens=50,
             messages=[{"role": "user", "content": prompt}],
         )

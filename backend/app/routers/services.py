@@ -58,7 +58,7 @@ class ServiceResponse(BaseModel):
 
 # ── Endpoints ──
 
-@router.get("/", response_model=list[ServiceResponse])
+@router.get("", response_model=list[ServiceResponse])
 def list_services(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),  # Any authenticated user
@@ -95,7 +95,7 @@ def get_service(
 
 
 @router.post(
-    "/",
+    "",
     response_model=ServiceResponse,
     dependencies=[Depends(require_role(["admin", "maintainer"]))],
 )
@@ -226,7 +226,7 @@ async def test_service_connection(
         raise HTTPException(status_code=404, detail="Service not found")
 
     # Call through the REST wrapper — never direct SDK
-    result = await llm_test_connection()
+    result = await llm_test_connection(model=service.model_name)
 
     # Save to connection_logs
     log = ConnectionLog(

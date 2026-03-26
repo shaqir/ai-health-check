@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import ServicesPage from './pages/ServicesPage';
 import IncidentsPage from './pages/IncidentsPage';
+import IncidentDetailPage from './pages/IncidentDetailPage';
 import GovernancePage from './pages/GovernancePage';
 import DataPolicyPage from './pages/DataPolicyPage';
 import {
@@ -91,6 +92,7 @@ export default function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/services" element={<ServicesPage />} />
                 <Route path="/incidents" element={<IncidentsPage />} />
+                <Route path="/incidents/:id" element={<IncidentDetailPage />} />
                 <Route path="/governance" element={<GovernancePage />} />
                 <Route path="/data-policy" element={<DataPolicyPage />} />
               </Routes>

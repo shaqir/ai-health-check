@@ -20,7 +20,7 @@ from app.models import (  # noqa: F401
 )
 
 # Import routers
-from app.routers import auth, services
+from app.routers import auth, services, incidents, maintenance
 
 settings = get_settings()
 
@@ -77,11 +77,11 @@ app.add_middleware(
 # ── Register Routers ──
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(services.router, prefix="/api/v1/services", tags=["Services"])
+app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
+app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
 # TODO: Add remaining routers as modules are built:
 # app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
 # app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
-# app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
-# app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
 # app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
 
 

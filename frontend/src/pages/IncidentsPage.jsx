@@ -17,6 +17,7 @@ export default function IncidentsPage() {
     service_id: '',
     severity: 'medium',
     symptoms: '',
+    timeline: '',
     checklist_data_issue: false,
     checklist_prompt_change: false,
     checklist_model_update: false,
@@ -53,6 +54,7 @@ export default function IncidentsPage() {
         service_id: services.length > 0 ? services[0].id : '',
         severity: 'medium',
         symptoms: '',
+        timeline: '',
         checklist_data_issue: false,
         checklist_prompt_change: false,
         checklist_model_update: false,
@@ -138,6 +140,16 @@ export default function IncidentsPage() {
                   value={form.symptoms} 
                   onChange={(e) => setForm({ ...form, symptoms: e.target.value })} 
                   required 
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Timeline (when issue first occurred)</label>
+                <input 
+                  type="datetime-local" 
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50"
+                  value={form.timeline}
+                  onChange={(e) => setForm({ ...form, timeline: e.target.value })}
                 />
               </div>
             </div>

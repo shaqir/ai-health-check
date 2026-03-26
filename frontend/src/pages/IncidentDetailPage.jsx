@@ -20,6 +20,8 @@ export default function IncidentDetailPage() {
     risk_level: 'medium',
     rollback_plan: '',
     validation_steps: '',
+    scheduled_date: '',
+    human_approved: false,
   });
 
   const fetchData = async () => {
@@ -74,7 +76,7 @@ export default function IncidentDetailPage() {
         incident_id: parseInt(id)
       });
       setShowMaintForm(false);
-      setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '' });
+      setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '', scheduled_date: '', human_approved: false });
       fetchData();
     } catch (err) {
       alert("Failed to create maintenance plan");
@@ -262,6 +264,26 @@ export default function IncidentDetailPage() {
                     value={maintForm.validation_steps} onChange={e => setMaintForm({...maintForm, validation_steps: e.target.value})}
                   />
                 </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Schedule Next Evaluation / Update Window</label>
+                  <input
+                    type="datetime-local"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    value={maintForm.scheduled_date}
+                    onChange={e => setMaintForm({...maintForm, scheduled_date: e.target.value})}
+                  />
+                </div>
+                <div className="mb-5">
+                  <label className="flex items-center gap-3 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300"
+                      checked={maintForm.human_approved}
+                      onChange={e => setMaintForm({...maintForm, human_approved: e.target.checked})}
+                    />
+                    <span className="font-medium">I have reviewed and approve this maintenance plan</span>
+                  </label>
+                </div>
                 <div className="flex gap-2">
                   <button type="submit" className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">Submit Plan</button>
                   <button type="button" onClick={() => setShowMaintForm(false)} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm font-medium hover:bg-gray-100">Cancel</button>
@@ -285,6 +307,11 @@ export default function IncidentDetailPage() {
                       <span className="text-gray-500 text-xs font-bold flex items-center gap-1">PENDING APPROVAL</span>
                     )}
                   </div>
+                  {plan.scheduled_date && (
+                    <div className="mb-3 flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-3 py-1.5 font-medium">
+                      🗓 Scheduled: {new Date(plan.scheduled_date).toLocaleString()}
+                    </div>
+                  )}
                   <div className="mb-2">
                     <h5 className="text-xs font-semibold text-gray-700 mb-1">Rollback Strategy</h5>
                     <p className="text-sm text-gray-600 bg-gray-50 p-2 rounded">{plan.rollback_plan}</p>

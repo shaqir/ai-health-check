@@ -27,6 +27,7 @@ class IncidentCreate(BaseModel):
     service_id: int
     severity: str
     symptoms: str
+    timeline: Optional[datetime] = None
     checklist_data_issue: bool = False
     checklist_prompt_change: bool = False
     checklist_model_update: bool = False
@@ -50,6 +51,7 @@ class IncidentResponse(BaseModel):
     summary: str
     summary_draft: str
     root_causes: str
+    timeline: Optional[datetime] = None
     checklist_data_issue: bool
     checklist_prompt_change: bool
     checklist_model_update: bool
@@ -121,6 +123,7 @@ def create_incident(
         severity=sev_enum,
         status=IncidentStatus.open,
         symptoms=req.symptoms,
+        timeline=req.timeline,
         checklist_data_issue=req.checklist_data_issue,
         checklist_prompt_change=req.checklist_prompt_change,
         checklist_model_update=req.checklist_model_update,

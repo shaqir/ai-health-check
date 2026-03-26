@@ -22,6 +22,8 @@ class MaintenanceCreate(BaseModel):
     risk_level: str
     rollback_plan: str
     validation_steps: str
+    scheduled_date: Optional[str] = None
+    human_approved: bool = False
 
 
 class MaintenanceResponse(BaseModel):
@@ -31,6 +33,7 @@ class MaintenanceResponse(BaseModel):
     rollback_plan: str
     validation_steps: str
     approved: bool
+    scheduled_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -79,12 +82,20 @@ def create_maintenance_plan(
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid risk severity")
 
+    from datetime import datetime as dt
+    sched = None
+    if req.scheduled_date:
+        try:
+            sched = dt.fromisoformat(req.scheduled_date)
+        except ValueError:
+            pass
     plan = MaintenancePlan(
         incident_id=req.incident_id,
         risk_level=r_level,
         rollback_plan=req.rollback_plan,
         validation_steps=req.validation_steps,
-        approved=False,
+        scheduled_date=sched,
+        approved=req.human_approved,
     )
     db.add(plan)
     db.commit()

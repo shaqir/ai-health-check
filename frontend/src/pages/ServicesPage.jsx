@@ -14,7 +14,7 @@ export default function ServicesPage() {
   const [testResults, setTestResults] = useState({});
   const [form, setForm] = useState({
     name: '', owner: '', environment: 'dev',
-    model_name: 'claude-3-haiku-20240307',
+    model_name: 'claude-sonnet-4-20250514',
     sensitivity_label: 'internal', endpoint_url: '',
   });
 
@@ -36,7 +36,7 @@ export default function ServicesPage() {
     try {
       await api.post('/services', form);
       setShowForm(false);
-      setForm({ name: '', owner: '', environment: 'dev', model_name: 'claude-3-haiku-20240307', sensitivity_label: 'internal', endpoint_url: '' });
+      setForm({ name: '', owner: '', environment: 'dev', model_name: 'claude-sonnet-4-20250514', sensitivity_label: 'internal', endpoint_url: '' });
       fetchServices();
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to create service');

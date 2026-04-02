@@ -23,6 +23,7 @@ class UserRole(str, enum.Enum):
 
 class Environment(str, enum.Enum):
     dev = "dev"
+    staging = "staging"
     prod = "prod"
 
 

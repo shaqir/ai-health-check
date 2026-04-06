@@ -1,38 +1,39 @@
 """
-Services Router — Module 1: AI Service Registry & Connection
-Full CRUD + Test Connection endpoint.
+Services router for Module 1: service registry CRUD and connectivity checks.
 """
 
 import json
-from fastapi import APIRouter, Depends, HTTPException
+import time
+from urllib.parse import urlparse
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
 
 from app.database import get_db
-from app.models import (
-    AIService, ConnectionLog, User,
-    Environment, SensitivityLabel,
-)
+from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.middleware.audit import log_action
-from app.services.llm_client import test_connection as llm_test_connection
+from app.models import AIService, ConnectionLog, Environment, SensitivityLabel, User
 
 router = APIRouter()
 
 
-# ── Schemas ──
-
 class ServiceCreate(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     name: str
     owner: str
-    environment: str  # "dev" or "prod"
+    environment: str
     model_name: str
-    sensitivity_label: str  # "public", "internal", or "confidential"
+    sensitivity_label: str
     endpoint_url: str = ""
 
 
 class ServiceUpdate(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     name: str | None = None
     owner: str | None = None
     environment: str | None = None
@@ -43,6 +44,11 @@ class ServiceUpdate(BaseModel):
 
 
 class ServiceResponse(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True,
+        protected_namespaces=(),
+    )
+
     id: int
     name: str
     owner: str
@@ -52,28 +58,94 @@ class ServiceResponse(BaseModel):
     endpoint_url: str
     is_active: bool
 
-    class Config:
-        from_attributes = True
+
+class ServiceConnectionResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    service_id: int
+    service_name: str
+    endpoint_url: str
+    status: str
+    latency_ms: float | None
+    response_snippet: str
 
 
-# ── Endpoints ──
+def _serialize_service(service: AIService) -> ServiceResponse:
+    return ServiceResponse(
+        id=service.id,
+        name=service.name,
+        owner=service.owner,
+        environment=service.environment.value,
+        model_name=service.model_name,
+        sensitivity_label=service.sensitivity_label.value,
+        endpoint_url=service.endpoint_url,
+        is_active=service.is_active,
+    )
+
+
+def _parse_environment(value: str) -> Environment:
+    try:
+        return Environment(value)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in Environment)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid environment '{value}'. Allowed values: {allowed}",
+        ) from exc
+
+
+def _parse_sensitivity_label(value: str) -> SensitivityLabel:
+    try:
+        return SensitivityLabel(value)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in SensitivityLabel)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid sensitivity_label '{value}'. "
+                f"Allowed values: {allowed}"
+            ),
+        ) from exc
+
+
+async def _probe_service_endpoint(endpoint_url: str) -> dict:
+    parsed = urlparse(endpoint_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="endpoint_url must be a valid http or https URL",
+        )
+
+    start = time.perf_counter()
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(endpoint_url)
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        snippet = (response.text or "")[:200]
+        return {
+            "status": "success" if response.is_success else "failure",
+            "latency_ms": latency_ms,
+            "response_snippet": (
+                snippet or f"HTTP {response.status_code} from service endpoint"
+            ),
+        }
+    except httpx.HTTPError as exc:
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        return {
+            "status": "failure",
+            "latency_ms": latency_ms,
+            "response_snippet": str(exc)[:200],
+        }
+
 
 @router.get("", response_model=list[ServiceResponse])
 def list_services(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),  # Any authenticated user
+    _: User = Depends(get_current_user),
 ):
-    """List all registered AI services."""
-    services = db.query(AIService).all()
-    return [
-        ServiceResponse(
-            id=s.id, name=s.name, owner=s.owner,
-            environment=s.environment.value, model_name=s.model_name,
-            sensitivity_label=s.sensitivity_label.value,
-            endpoint_url=s.endpoint_url, is_active=s.is_active,
-        )
-        for s in services
-    ]
+    services = db.query(AIService).order_by(AIService.id.asc()).all()
+    return [_serialize_service(service) for service in services]
 
 
 @router.get("/{service_id}", response_model=ServiceResponse)
@@ -82,16 +154,10 @@ def get_service(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Get a single service by ID."""
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
-    return ServiceResponse(
-        id=service.id, name=service.name, owner=service.owner,
-        environment=service.environment.value, model_name=service.model_name,
-        sensitivity_label=service.sensitivity_label.value,
-        endpoint_url=service.endpoint_url, is_active=service.is_active,
-    )
+    return _serialize_service(service)
 
 
 @router.post(
@@ -104,38 +170,28 @@ def create_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Register a new AI service."""
-    # Validate enums
-    try:
-        env = Environment(req.environment)
-        sensitivity = SensitivityLabel(req.sensitivity_label)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
     service = AIService(
         name=req.name,
         owner=req.owner,
-        environment=env,
+        environment=_parse_environment(req.environment),
         model_name=req.model_name,
-        sensitivity_label=sensitivity,
-        endpoint_url=req.endpoint_url,
+        sensitivity_label=_parse_sensitivity_label(req.sensitivity_label),
+        endpoint_url=req.endpoint_url.strip(),
     )
     db.add(service)
     db.commit()
     db.refresh(service)
 
-    # Audit log
     log_action(
-        db, current_user.id, "create_service", "ai_services",
-        service.id, new_value=json.dumps(req.model_dump()),
+        db,
+        current_user.id,
+        "create_service",
+        "ai_services",
+        service.id,
+        new_value=json.dumps(req.model_dump()),
     )
 
-    return ServiceResponse(
-        id=service.id, name=service.name, owner=service.owner,
-        environment=service.environment.value, model_name=service.model_name,
-        sensitivity_label=service.sensitivity_label.value,
-        endpoint_url=service.endpoint_url, is_active=service.is_active,
-    )
+    return _serialize_service(service)
 
 
 @router.put(
@@ -149,39 +205,36 @@ def update_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update an existing service."""
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    old_values = json.dumps({
-        "name": service.name, "owner": service.owner,
-        "environment": service.environment.value,
-    })
-
-    # Apply updates
+    old_values = json.dumps(_serialize_service(service).model_dump())
     update_data = req.model_dump(exclude_unset=True)
+
     for key, value in update_data.items():
         if key == "environment" and value:
-            value = Environment(value)
+            value = _parse_environment(value)
         elif key == "sensitivity_label" and value:
-            value = SensitivityLabel(value)
+            value = _parse_sensitivity_label(value)
+        elif key == "endpoint_url" and value is not None:
+            value = value.strip()
         setattr(service, key, value)
 
     db.commit()
     db.refresh(service)
 
     log_action(
-        db, current_user.id, "update_service", "ai_services",
-        service.id, old_value=old_values, new_value=json.dumps(update_data),
+        db,
+        current_user.id,
+        "update_service",
+        "ai_services",
+        service.id,
+        old_value=old_values,
+        new_value=json.dumps(update_data),
     )
 
-    return ServiceResponse(
-        id=service.id, name=service.name, owner=service.owner,
-        environment=service.environment.value, model_name=service.model_name,
-        sensitivity_label=service.sensitivity_label.value,
-        endpoint_url=service.endpoint_url, is_active=service.is_active,
-    )
+    return _serialize_service(service)
 
 
 @router.delete(
@@ -193,14 +246,17 @@ def delete_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a service from the registry."""
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
 
     log_action(
-        db, current_user.id, "delete_service", "ai_services",
-        service.id, old_value=service.name,
+        db,
+        current_user.id,
+        "delete_service",
+        "ai_services",
+        service.id,
+        old_value=service.name,
     )
 
     db.delete(service)
@@ -210,6 +266,7 @@ def delete_service(
 
 @router.post(
     "/{service_id}/test-connection",
+    response_model=ServiceConnectionResponse,
     dependencies=[Depends(require_role(["admin", "maintainer"]))],
 )
 async def test_service_connection(
@@ -217,18 +274,17 @@ async def test_service_connection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Test Connection button — sends a small prompt through the LLM wrapper
-    and returns latency + success/fail. Saves result to connection_logs.
-    """
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+    if not service.endpoint_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Service has no endpoint_url configured",
+        )
 
-    # Call through the REST wrapper — never direct SDK
-    result = await llm_test_connection(model=service.model_name)
+    result = await _probe_service_endpoint(service.endpoint_url)
 
-    # Save to connection_logs
     log = ConnectionLog(
         service_id=service.id,
         latency_ms=result["latency_ms"],
@@ -237,15 +293,20 @@ async def test_service_connection(
     )
     db.add(log)
     db.commit()
+    db.refresh(log)
 
-    # Audit
     log_action(
-        db, current_user.id, "test_connection", "connection_logs",
-        service.id, new_value=f"{result['status']} ({result['latency_ms']}ms)",
+        db,
+        current_user.id,
+        "test_connection",
+        "connection_logs",
+        log.id,
+        new_value=f"{result['status']} ({result['latency_ms']}ms)",
     )
 
-    return {
-        "service_id": service.id,
-        "service_name": service.name,
+    return ServiceConnectionResponse(
+        service_id=service.id,
+        service_name=service.name,
+        endpoint_url=service.endpoint_url,
         **result,
-    }
+    )

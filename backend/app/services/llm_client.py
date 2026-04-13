@@ -74,10 +74,11 @@ def _log_usage(
     caller: str, model: str,
     input_tokens: int, output_tokens: int,
     latency_ms: float, status: str = "success",
-    user_id: int | None = None,
+    user_id: int | None = None, service_id: int | None = None,
     safety_flags: str = "", risk_score: int = 0,
+    prompt_text: str = "", response_text: str = "",
 ):
-    """Write an API usage record to the database."""
+    """Write an API usage record to the database with full trace."""
     from app.models import APIUsageLog
 
     total = input_tokens + output_tokens
@@ -87,6 +88,7 @@ def _log_usage(
     try:
         db.add(APIUsageLog(
             user_id=user_id,
+            service_id=service_id,
             caller=caller,
             model=model,
             input_tokens=input_tokens,
@@ -97,6 +99,8 @@ def _log_usage(
             status=status,
             safety_flags=safety_flags,
             risk_score=risk_score,
+            prompt_text=prompt_text[:2000],
+            response_text=response_text[:2000],
         ))
         db.commit()
     except Exception:
@@ -175,7 +179,8 @@ def _check_budget(user_id: int | None = None) -> dict | None:
 
 
 def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
-                   max_retries: int = 2, user_id: int | None = None, **kwargs):
+                   max_retries: int = 2, user_id: int | None = None,
+                   service_id: int | None = None, **kwargs):
     """
     Centralized API call with safety scanning, budget enforcement, retry logic,
     categorized error logging, and per-user rate limiting.
@@ -244,8 +249,9 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
 
             _log_usage(
                 caller, model, input_tokens, output_tokens, latency_ms, "success",
-                user_id=user_id, safety_flags=safety_flags_str,
-                risk_score=safety_result["risk_score"],
+                user_id=user_id, service_id=service_id,
+                safety_flags=safety_flags_str, risk_score=safety_result["risk_score"],
+                prompt_text=input_text, response_text=output_text,
             )
             return response, latency_ms
 
@@ -508,3 +514,39 @@ Keep the report under 500 words."""
         return {"report_text": text}
     except Exception as e:
         return {"report_text": f"Error generating compliance report: {str(e)}"}
+
+
+async def detect_hallucination(prompt: str, response_text: str) -> float:
+    """
+    Hallucination Detection (inspired by Patronus AI / Braintrust).
+    Asks Claude to judge whether the response contains claims not supported by the prompt.
+    Returns a hallucination score from 0 (no hallucination) to 100 (severe hallucination).
+    """
+    judge_prompt = f"""You are a hallucination detector. Given a prompt and a model's response, rate how much the response contains unsupported or fabricated claims.
+
+PROMPT:
+{prompt}
+
+RESPONSE:
+{response_text}
+
+Score from 0 to 100:
+- 0 = fully grounded, no hallucination
+- 50 = some claims not directly supported by the prompt
+- 100 = mostly fabricated or contradicts the prompt
+
+Respond with ONLY a single integer from 0 to 100. No other text."""
+
+    try:
+        response, _ = _make_api_call(
+            caller="detect_hallucination",
+            model=settings.llm_model,
+            max_tokens=10,
+            messages=[{"role": "user", "content": judge_prompt}],
+        )
+        text = response.content[0].text.strip() if response.content else "0"
+        match = re.search(r"\d+", text)
+        score = int(match.group()) if match else 0
+        return min(max(score, 0), 100)
+    except Exception:
+        return 0.0

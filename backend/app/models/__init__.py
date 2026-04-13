@@ -126,6 +126,7 @@ class EvalRun(Base):
     quality_score = Column(Float, nullable=False)
     factuality_score = Column(Float, nullable=True)
     format_score = Column(Float, nullable=True)
+    hallucination_score = Column(Float, nullable=True)
     drift_flagged = Column(Boolean, default=False)
     run_type = Column(String(20), default="manual")  # "manual" or "scheduled"
     run_at = Column(DateTime, default=utcnow)
@@ -231,9 +232,12 @@ class APIUsageLog(Base):
     total_tokens = Column(Integer, default=0)
     estimated_cost_usd = Column(Float, default=0.0)      # estimated cost in USD
     latency_ms = Column(Float, default=0.0)
+    service_id = Column(Integer, ForeignKey("ai_services.id"), nullable=True)
     status = Column(String(30), default="success")       # "success", "error_timeout", "error_rate_limit", etc.
     safety_flags = Column(Text, default="")              # comma-separated safety flags
     risk_score = Column(Integer, default=0)               # 0-100 input risk score
+    prompt_text = Column(Text, default="")               # actual prompt sent (truncated to 2000 chars)
+    response_text = Column(Text, default="")             # actual response received (truncated to 2000 chars)
     timestamp = Column(DateTime, default=utcnow)
 
 
@@ -245,3 +249,17 @@ class LoginAttempt(Base):
     success = Column(Boolean, default=False)
     ip_address = Column(String(45), default="")          # supports IPv6
     timestamp = Column(DateTime, default=utcnow)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_type = Column(String(50), nullable=False)      # "drift", "budget", "safety", "outage"
+    severity = Column(String(20), nullable=False)         # "critical", "warning", "info"
+    message = Column(Text, nullable=False)
+    service_id = Column(Integer, ForeignKey("ai_services.id"), nullable=True)
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)

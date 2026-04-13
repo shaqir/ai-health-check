@@ -23,7 +23,7 @@ from app.services.safety import PromptSafetyError
 # Import all models so SQLAlchemy knows about them
 from app.models import (  # noqa: F401
     User, AIService, ConnectionLog, EvalTestCase, EvalRun, EvalResult,
-    Incident, MaintenancePlan, AuditLog, Telemetry, APIUsageLog, LoginAttempt,
+    Incident, MaintenancePlan, AuditLog, Telemetry, APIUsageLog, LoginAttempt, Alert,
 )
 
 # Import routers

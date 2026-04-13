@@ -14,8 +14,8 @@ from app.database import get_db
 from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AIService, EvalTestCase, EvalRun, EvalResult, Telemetry, User
-from app.services.llm_client import run_eval_prompt, score_factuality
+from app.models import AIService, Alert, EvalTestCase, EvalRun, EvalResult, Telemetry, User
+from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
 
 router = APIRouter()
 settings = get_settings()
@@ -50,6 +50,7 @@ class EvalRunResponse(BaseModel):
     quality_score: float
     factuality_score: float | None = None
     format_score: float | None = None
+    hallucination_score: float | None = None
     drift_flagged: bool
     run_type: str
     run_at: datetime | None = None
@@ -202,15 +203,20 @@ async def run_evaluation(
     results = []
     factuality_scores = []
     format_scores = []
+    hallucination_scores = []
 
     for tc in test_cases:
         llm_result = await run_eval_prompt(prompt=tc.prompt)
         response_text = llm_result.get("response_text", "")
         latency_ms = llm_result.get("latency_ms", 0)
 
+        halluc_score = None
         if tc.category == "factuality":
             score = await score_factuality(tc.expected_output, response_text)
             factuality_scores.append(score)
+            # Hallucination detection (inspired by Patronus AI)
+            halluc_score = await detect_hallucination(tc.prompt, response_text)
+            hallucination_scores.append(halluc_score)
         elif tc.category == "format_json":
             try:
                 json.loads(response_text)
@@ -230,6 +236,7 @@ async def run_evaluation(
             "expected": tc.expected_output[:100],
             "actual": response_text[:200],
             "score": score,
+            "hallucination_score": halluc_score,
             "latency_ms": latency_ms,
             "status": result_status,
         })
@@ -244,6 +251,10 @@ async def run_evaluation(
     format_score = (
         round(sum(format_scores) / len(format_scores), 1)
         if format_scores else None
+    )
+    hallucination_score = (
+        round(sum(hallucination_scores) / len(hallucination_scores), 1)
+        if hallucination_scores else None
     )
 
     # Enhanced drift detection: threshold + trend analysis
@@ -268,6 +279,7 @@ async def run_evaluation(
         service_id=service_id,
         quality_score=quality_score,
         factuality_score=factuality_score,
+        hallucination_score=hallucination_score,
         format_score=format_score,
         drift_flagged=drift_flagged,
         run_type="manual",
@@ -311,6 +323,17 @@ async def run_evaluation(
         eval_run.id, new_value=f"quality={quality_score}, drift={drift_flagged}",
     )
 
+    # Auto-create alert on drift (inspired by Datadog/PagerDuty)
+    if drift_flagged:
+        severity = "critical" if quality_score < settings.drift_threshold else "warning"
+        db.add(Alert(
+            alert_type="drift",
+            severity=severity,
+            message=f"{service.name} quality dropped to {quality_score}% (threshold: {settings.drift_threshold}%)",
+            service_id=service_id,
+        ))
+        db.commit()
+
     return EvalRunDetailResponse(
         id=eval_run.id,
         service_id=eval_run.service_id,
@@ -318,6 +341,7 @@ async def run_evaluation(
         quality_score=eval_run.quality_score,
         factuality_score=eval_run.factuality_score,
         format_score=eval_run.format_score,
+        hallucination_score=eval_run.hallucination_score,
         drift_flagged=eval_run.drift_flagged,
         run_type=eval_run.run_type,
         run_at=eval_run.run_at,
@@ -347,6 +371,7 @@ def list_eval_runs(
             quality_score=run.quality_score,
             factuality_score=run.factuality_score,
             format_score=run.format_score,
+            hallucination_score=run.hallucination_score,
             drift_flagged=run.drift_flagged,
             run_type=run.run_type,
             run_at=run.run_at,

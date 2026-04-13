@@ -145,12 +145,23 @@ def scan_output(text: str) -> dict:
             flags.append("model_refusal")
             break
 
-    # 3. Error in response
+    # 3. Toxicity / content policy (inspired by Patronus AI / Lakera)
+    toxicity_patterns = [
+        r"\b(?:kill|murder|attack|destroy|bomb|weapon)\b.*\b(?:how|steps|instructions|guide)\b",
+        r"\b(?:hate|inferior|subhuman)\b.*\b(?:race|gender|religion|ethnicity)\b",
+        r"\b(?:illegal|illicit)\b.*\b(?:how to|instructions|steps to)\b",
+    ]
+    for pattern in toxicity_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            flags.append("toxicity_detected")
+            break
+
+    # 4. Error in response
     if text.strip().upper().startswith("ERROR:"):
         flags.append("error_response")
 
     return {
-        "safe": "output_pii_ssn" not in flags and "output_pii_credit_card" not in flags,
+        "safe": "output_pii_ssn" not in flags and "output_pii_credit_card" not in flags and "toxicity_detected" not in flags,
         "flags": flags,
         "pii_detected": pii_found,
     }

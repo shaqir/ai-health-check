@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AIService, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
+from app.models import AIService, Alert, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
 from app.services.llm_client import generate_dashboard_insight
 
 router = APIRouter()
@@ -649,3 +649,117 @@ def get_api_safety(
         "avg_risk_score": round(avg_risk, 1),
         "recent_blocked": recent_blocked_list,
     }
+
+
+# ── LLM Call Trace Detail (inspired by LangSmith) ──
+
+@router.get("/api-calls/{call_id}")
+def get_call_detail(
+    call_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Get full trace of an LLM call including prompt and response text."""
+    call = db.query(APIUsageLog).filter(APIUsageLog.id == call_id).first()
+    if not call:
+        return {"detail": "Call not found"}
+
+    service = db.query(AIService).filter(AIService.id == call.service_id).first() if call.service_id else None
+
+    return {
+        "id": call.id,
+        "caller": call.caller,
+        "model": call.model,
+        "service_name": service.name if service else None,
+        "input_tokens": call.input_tokens,
+        "output_tokens": call.output_tokens,
+        "total_tokens": call.total_tokens,
+        "cost_usd": round(call.estimated_cost_usd, 6),
+        "latency_ms": call.latency_ms,
+        "status": call.status,
+        "safety_flags": call.safety_flags,
+        "risk_score": call.risk_score,
+        "prompt_text": call.prompt_text or "",
+        "response_text": call.response_text or "",
+        "timestamp": call.timestamp.strftime("%Y-%m-%d %H:%M:%S") if call.timestamp else "",
+    }
+
+
+# ── Cost by Service (inspired by Helicone/Datadog) ──
+
+@router.get("/cost-by-service")
+def get_cost_by_service(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Cost breakdown by AI service."""
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    rows = (
+        db.query(
+            AIService.name,
+            func.count(APIUsageLog.id),
+            func.coalesce(func.sum(APIUsageLog.total_tokens), 0),
+            func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+        )
+        .join(AIService, APIUsageLog.service_id == AIService.id)
+        .filter(APIUsageLog.timestamp >= month_start)
+        .group_by(AIService.name)
+        .all()
+    )
+
+    return [
+        {"service": row[0], "calls": row[1], "tokens": row[2], "cost_usd": round(row[3], 6)}
+        for row in rows
+    ]
+
+
+# ── Alert System (inspired by Datadog/PagerDuty) ──
+
+@router.get("/alerts")
+def list_alerts(
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """List alerts, optionally filtered to active (unacknowledged) only."""
+    query = db.query(Alert).order_by(Alert.created_at.desc())
+    if active_only:
+        query = query.filter(Alert.acknowledged == False)
+    alerts = query.limit(50).all()
+
+    result = []
+    for a in alerts:
+        service = db.query(AIService).filter(AIService.id == a.service_id).first() if a.service_id else None
+        result.append({
+            "id": a.id,
+            "type": a.alert_type,
+            "severity": a.severity,
+            "message": a.message,
+            "service_name": service.name if service else None,
+            "acknowledged": a.acknowledged,
+            "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "",
+        })
+    return result
+
+
+@router.post(
+    "/alerts/{alert_id}/acknowledge",
+    dependencies=[Depends(require_role(["admin", "maintainer"]))],
+)
+def acknowledge_alert(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Acknowledge an alert (dismiss it)."""
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if not alert:
+        return {"detail": "Alert not found"}
+
+    alert.acknowledged = True
+    alert.acknowledged_by = current_user.id
+    alert.acknowledged_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"detail": "Alert acknowledged", "id": alert_id}

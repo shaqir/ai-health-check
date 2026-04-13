@@ -1,0 +1,163 @@
+/*
+ * AIHealthCheck Design Tokens
+ *
+ * All colors, radii, and shadows are defined as CSS custom properties.
+ * Tailwind consumes these via tailwind.config.js.
+ * Dark mode is the default; light mode applied via [data-theme="light"].
+ * Toggle persisted by ThemeProvider.jsx.
+ */
+
+/* ── Dark theme (default) ── */
+:root {
+  /* Surfaces */
+  --color-bg: #0b0f1a;
+  --color-surface: #131825;
+  --color-surface-elevated: #1a2032;
+  --color-surface-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Borders */
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+
+  /* Text */
+  --color-text: #e2e8f0;
+  --color-text-muted: #94a3b8;
+  --color-text-subtle: #64748b;
+
+  /* Status — semantic only */
+  --status-healthy: #22c55e;
+  --status-healthy-muted: rgba(34, 197, 94, 0.15);
+  --status-degraded: #f59e0b;
+  --status-degraded-muted: rgba(245, 158, 11, 0.15);
+  --status-failing: #ef4444;
+  --status-failing-muted: rgba(239, 68, 68, 0.15);
+  --status-unknown: #64748b;
+  --status-unknown-muted: rgba(100, 116, 139, 0.15);
+  --status-paused: #8b5cf6;
+  --status-paused-muted: rgba(139, 92, 246, 0.15);
+
+  /* Severity */
+  --severity-critical: #ef4444;
+  --severity-critical-muted: rgba(239, 68, 68, 0.15);
+  --severity-high: #f97316;
+  --severity-high-muted: rgba(249, 115, 22, 0.15);
+  --severity-medium: #f59e0b;
+  --severity-medium-muted: rgba(245, 158, 11, 0.15);
+  --severity-low: #3b82f6;
+  --severity-low-muted: rgba(59, 130, 246, 0.15);
+
+  /* Accent — single interactive color */
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-muted: rgba(59, 130, 246, 0.15);
+
+  /* Focus ring */
+  --focus-ring: rgba(59, 130, 246, 0.5);
+
+  /* Chart palette — 5 distinguishable colors */
+  --chart-1: #3b82f6;
+  --chart-2: #22c55e;
+  --chart-3: #f59e0b;
+  --chart-4: #ef4444;
+  --chart-5: #8b5cf6;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+
+  /* Fonts */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #f1f5f9;
+  --color-surface-overlay: rgba(0, 0, 0, 0.4);
+
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  --color-text: #0f172a;
+  --color-text-muted: #475569;
+  --color-text-subtle: #94a3b8;
+
+  /* Status — same hues, adjusted for light bg */
+  --status-healthy: #16a34a;
+  --status-healthy-muted: rgba(22, 163, 74, 0.1);
+  --status-degraded: #d97706;
+  --status-degraded-muted: rgba(217, 119, 6, 0.1);
+  --status-failing: #dc2626;
+  --status-failing-muted: rgba(220, 38, 38, 0.1);
+  --status-unknown: #64748b;
+  --status-unknown-muted: rgba(100, 116, 139, 0.08);
+  --status-paused: #7c3aed;
+  --status-paused-muted: rgba(124, 58, 237, 0.1);
+
+  /* Severity */
+  --severity-critical: #dc2626;
+  --severity-critical-muted: rgba(220, 38, 38, 0.1);
+  --severity-high: #ea580c;
+  --severity-high-muted: rgba(234, 88, 12, 0.1);
+  --severity-medium: #d97706;
+  --severity-medium-muted: rgba(217, 119, 6, 0.1);
+  --severity-low: #2563eb;
+  --severity-low-muted: rgba(37, 99, 235, 0.1);
+
+  /* Accent */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-muted: rgba(37, 99, 235, 0.1);
+
+  --focus-ring: rgba(37, 99, 235, 0.4);
+
+  /* Chart */
+  --chart-1: #2563eb;
+  --chart-2: #16a34a;
+  --chart-3: #d97706;
+  --chart-4: #dc2626;
+  --chart-5: #7c3aed;
+
+  /* Shadows — lighter */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Typography baseline ── */
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numerals for metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Focus-visible ring ── */
+*:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

@@ -1,15 +1,12 @@
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-[#FCFDFD] text-slate-900 font-sans antialiased;
-  }
-}
-
-@layer utilities {
-  .glass-panel {
-    @apply bg-white/70 backdrop-blur-md border border-white/20 shadow-sm;
+    background-color: var(--color-bg);
+    color: var(--color-text);
   }
 }

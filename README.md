@@ -4,6 +4,11 @@ A centralized AI operations platform to monitor, evaluate, triage, and govern an
 
 ARTI-409-A | AI Systems & Governance | Group Project
 
+"We built a simplified but complete version of what companies like Arize AI, LangSmith, and Datadog LLM Monitoring
+ do separately. In production, organizations typically need 3-4 different tools stitched together to monitor AI
+ health, detect drift, manage incidents, and prove compliance. Our app does all four in one place, with
+ human-in-the-loop governance built in from the start."
+
 ## The Problem
 
 Companies use AI tools (chatbots, report generators, assistants) but have no single place to answer:

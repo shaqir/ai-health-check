@@ -1,68 +1,96 @@
 import { useState, useEffect } from 'react';
-import { Activity, Clock, AlertTriangle, Server, AlertCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Activity, Clock, AlertTriangle, Server, AlertCircle, FlaskConical } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer
 } from 'recharts';
+import api from '../utils/api';
+import PageHeader from '../components/common/PageHeader';
 import MetricCard from '../components/common/MetricCard';
 import StatusBadge from '../components/common/StatusBadge';
 import DataTable from '../components/common/DataTable';
+import EmptyState from '../components/common/EmptyState';
+import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
+/* Shared chart config — token-aware */
+const GRID_STROKE = 'var(--color-border)';
+const AXIS_TICK = { fontSize: 11, fill: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)' };
+const TOOLTIP_STYLE = {
+  backgroundColor: 'var(--color-surface-elevated)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 'var(--radius-md)',
+  fontSize: '12px',
+  color: 'var(--color-text)',
+};
+
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [activeService, setActiveService] = useState('all');
+  const [error, setError] = useState(null);
+  const [activeEnv, setActiveEnv] = useState('all');
 
-  // MOCK DATA
-  const latencyData = [
-    { time: '00:00', ms: 140 }, { time: '04:00', ms: 152 }, { time: '08:00', ms: 190 },
-    { time: '12:00', ms: 165 }, { time: '16:00', ms: 210 }, { time: '20:00', ms: 180 }, { time: '24:00', ms: 145 }
-  ];
+  const [metrics, setMetrics] = useState({
+    active_services: 0, avg_latency_ms: 0, error_rate_pct: 0,
+    avg_quality_score: 0, p50_latency_ms: 0, p95_latency_ms: 0, p99_latency_ms: 0,
+    latency_trend: 'neutral', error_trend: 'neutral', quality_trend: 'neutral',
+  });
+  const [latencyData, setLatencyData] = useState([]);
+  const [qualityData, setQualityData] = useState([]);
+  const [errorData, setErrorData] = useState([]);
+  const [recentEvals, setRecentEvals] = useState([]);
+  const [driftAlerts, setDriftAlerts] = useState([]);
 
-  const qualityData = [
-    { run: 'Run 1', score: 85 }, { run: 'Run 2', score: 88 }, { run: 'Run 3', score: 92 },
-    { run: 'Run 4', score: 78 }, { run: 'Run 5', score: 89 }, { run: 'Run 6', score: 95 }
-  ];
-
-  const errorData = [
-    { time: 'Mon', rate: 0.5 }, { time: 'Tue', rate: 1.2 }, { time: 'Wed', rate: 0.8 },
-    { time: 'Thu', rate: 2.1 }, { time: 'Fri', rate: 1.5 }, { time: 'Sat', rate: 0.4 }, { time: 'Sun', rate: 0.2 }
-  ];
-
-  const recentEvals = [
-    { id: 1, timestamp: '2026-03-18 14:30', score: 92, drift: false, type: 'Scheduled' },
-    { id: 2, timestamp: '2026-03-18 12:00', score: 78, drift: true, type: 'Manual' },
-    { id: 3, timestamp: '2026-03-18 09:15', score: 89, drift: false, type: 'Scheduled' },
-    { id: 4, timestamp: '2026-03-17 14:30', score: 95, drift: false, type: 'Scheduled' },
-  ];
-
-  const evalColumns = [
-    { key: 'timestamp', label: 'Timestamp' },
-    { key: 'score', label: 'Quality Score', render: (val) => <span className="font-semibold text-slate-700">{val}%</span> },
-    { key: 'type', label: 'Run Type' },
-    { 
-      key: 'drift', 
-      label: 'Status', 
-      render: (val) => <StatusBadge status={val ? 'Drift Detected' : 'Healthy'} type={val ? 'severity' : 'default'} /> 
+  const fetchDashboard = async () => {
+    setError(null);
+    try {
+      const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
+      const [metricsRes, latencyRes, qualityRes, errorRes, evalsRes, driftRes] = await Promise.all([
+        api.get('/dashboard/metrics', { params: envParam }),
+        api.get('/dashboard/latency-trend', { params: envParam }),
+        api.get('/dashboard/quality-trend', { params: envParam }),
+        api.get('/dashboard/error-trend', { params: envParam }),
+        api.get('/dashboard/recent-evals'),
+        api.get('/dashboard/drift-alerts'),
+      ]);
+      setMetrics(metricsRes.data);
+      setLatencyData(latencyRes.data);
+      setQualityData(qualityRes.data);
+      setErrorData(errorRes.data);
+      setRecentEvals(evalsRes.data);
+      setDriftAlerts(driftRes.data);
+    } catch (err) {
+      setError('Failed to load dashboard data.');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
-  }, []);
+    setLoading(true);
+    fetchDashboard();
+  }, [activeEnv]);
+
+  const evalColumns = [
+    { key: 'timestamp', label: 'Time', render: (v) => <span className="font-mono text-xs tabular-nums">{v}</span> },
+    { key: 'service_name', label: 'Service' },
+    { key: 'score', label: 'Score', render: (v) => <span className="font-mono tabular-nums font-medium">{v}%</span> },
+    { key: 'type', label: 'Type' },
+    { key: 'drift', label: 'Status', render: (v) => <StatusBadge status={v ? 'Drift Detected' : 'Healthy'} /> },
+  ];
 
   if (loading) {
     return (
-      <div className="space-y-6 animate-in fade-in duration-300">
-        <div className="h-8 bg-slate-200 rounded w-48 mb-6 animate-pulse"></div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="space-y-5" aria-busy="true">
+        <div className="h-5 w-40 bg-surface-elevated rounded-md animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <LoadingSkeleton type="card" />
           <LoadingSkeleton type="card" />
           <LoadingSkeleton type="card" />
           <LoadingSkeleton type="card" />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <LoadingSkeleton type="chart" />
           <LoadingSkeleton type="chart" />
         </div>
@@ -70,137 +98,151 @@ export default function DashboardPage() {
     );
   }
 
+  if (error) {
+    return <ErrorState message={error} onRetry={() => { setLoading(true); fetchDashboard(); }} />;
+  }
+
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
-      
-      {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Platform Overview</h1>
-          <p className="text-sm text-slate-500 mt-1">Real-time metrics and evaluations across all connected services</p>
-        </div>
-        
-        <div className="flex items-center gap-3 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+    <div className="space-y-5">
+      {/* Header + env filter */}
+      <PageHeader title="Dashboard" description="Platform health across all connected AI services">
+        <div className="flex items-center bg-surface border border-border rounded-md p-0.5" role="tablist" aria-label="Environment filter">
           {['all', 'production', 'staging'].map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveService(tab)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md capitalize transition-colors ${
-                activeService === tab 
-                  ? 'bg-slate-100 text-slate-900 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+              role="tab"
+              aria-selected={activeEnv === tab}
+              onClick={() => setActiveEnv(tab)}
+              className={`px-3 py-1 text-xs font-medium rounded-sm capitalize transition-colors ${
+                activeEnv === tab
+                  ? 'bg-surface-elevated text-text shadow-sm'
+                  : 'text-text-muted hover:text-text'
               }`}
             >
               {tab}
             </button>
           ))}
         </div>
-      </div>
+      </PageHeader>
 
-      {/* Drift Alert Banner */}
-      <div className="bg-gradient-to-r from-rose-50 to-orange-50 border border-rose-200 rounded-xl p-4 flex items-start sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-start sm:items-center gap-3">
-          <div className="p-2 bg-rose-100 rounded-lg shrink-0">
-            <AlertCircle size={20} className="text-rose-600" />
+      {/* Drift alert */}
+      {driftAlerts.length > 0 && (
+        <div className="flex items-center justify-between gap-4 px-4 py-3 bg-status-failing-muted border border-status-failing/20 rounded-lg" role="alert">
+          <div className="flex items-center gap-3">
+            <AlertCircle size={16} strokeWidth={1.5} className="text-status-failing shrink-0" />
+            <p className="text-sm text-text">
+              <span className="font-medium">Drift detected</span>
+              <span className="text-text-muted"> — {driftAlerts[0].service_name} quality dropped to </span>
+              <span className="font-mono tabular-nums font-medium">{driftAlerts[0].score}%</span>
+              <span className="text-text-muted"> (threshold: {driftAlerts[0].threshold}%)</span>
+            </p>
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-rose-900">Concept Drift Detected</h3>
-            <p className="text-sm text-rose-700 mt-0.5">Customer Support Bot QA score dropped below 80% threshold during recent evaluation run.</p>
-          </div>
+          <button
+            onClick={() => navigate('/incidents')}
+            className="shrink-0 px-3 py-1.5 text-xs font-medium bg-status-failing text-white rounded-md hover:opacity-90 transition-opacity"
+          >
+            Create incident
+          </button>
         </div>
-        <button className="whitespace-nowrap px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm">
-          Create Incident
-        </button>
+      )}
+
+      {/* Metric cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MetricCard title="Active Services" value={metrics.active_services} icon={Server} trend="neutral" color="slate" />
+        <MetricCard title="Avg Quality" value={`${metrics.avg_quality_score.toFixed(1)}%`} icon={Activity} trend={metrics.quality_trend} color="green" />
+        <MetricCard title="Error Rate" value={`${metrics.error_rate_pct.toFixed(1)}%`} icon={AlertTriangle} trend={metrics.error_trend} color="amber" />
+        <MetricCard title="Avg Latency" value={`${metrics.avg_latency_ms.toFixed(0)}ms`} icon={Clock} trend={metrics.latency_trend} color="blue" />
       </div>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard title="Avg API Latency" value="168ms" icon={Clock} trend="down" trendValue="-12ms" color="blue" />
-        <MetricCard title="Error Rate" value="1.2%" icon={AlertTriangle} trend="up" trendValue="+0.4%" color="amber" />
-        <MetricCard title="Avg Quality Score" value="89.5" icon={Activity} trend="neutral" trendValue="+0.0" color="green" />
-        <MetricCard title="Active Services" value="24" icon={Server} trend="up" trendValue="+2" color="slate" />
+      {/* Latency percentiles bar */}
+      <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Latency Percentiles (24h)</h3>
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: 'P50', value: metrics.p50_latency_ms, color: 'text-accent' },
+            { label: 'P95', value: metrics.p95_latency_ms, color: 'text-status-degraded' },
+            { label: 'P99', value: metrics.p99_latency_ms, color: 'text-status-failing' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="flex items-baseline justify-between px-3 py-2 bg-surface-elevated rounded-md border border-border">
+              <span className="text-xs font-medium text-text-muted">{label}</span>
+              <span className={`text-sm font-semibold font-mono tabular-nums ${color}`}>
+                {(value || 0).toFixed(0)}ms
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Latency Chart */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-semibold text-slate-800">Response Latency (24h)</h3>
-          </div>
-          <div className="h-64">
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Latency */}
+        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Response Latency (24h)</h3>
+          <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={latencyData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dx={-10} />
-                <RechartsTooltip 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                />
-                <Line type="monotone" dataKey="ms" stroke="#3B82F6" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} tickFormatter={(v) => `${v}ms`} />
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}ms`, 'Latency']} />
+                <Line type="monotone" dataKey="ms" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 3, strokeWidth: 1.5, fill: 'var(--color-surface)' }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Quality Chart */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-semibold text-slate-800">Quality Scores per Run</h3>
-          </div>
-          <div className="h-64">
+        {/* Quality */}
+        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Quality Scores per Run</h3>
+          <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={qualityData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                <XAxis dataKey="run" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dx={-10} domain={[0, 100]} />
-                <RechartsTooltip 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  cursor={{ fill: '#F1F5F9' }}
-                />
-                <Bar dataKey="score" fill="#10B981" radius={[4, 4, 0, 0]} barSize={32} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <XAxis dataKey="run" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Quality']} cursor={{ fill: 'var(--color-surface-elevated)' }} />
+                <Bar dataKey="score" fill="var(--chart-2)" radius={[3, 3, 0, 0]} barSize={28} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Error Area Chart */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm lg:col-span-2">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-semibold text-slate-800">Error Rate Trend (%)</h3>
-          </div>
-          <div className="h-64">
+        {/* Error trend — full width */}
+        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm lg:col-span-2">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Error Rate Trend (%)</h3>
+          <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={errorData}>
                 <defs>
-                  <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
+                  <linearGradient id="errorGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--chart-3)" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="var(--chart-3)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dx={-10} />
-                <RechartsTooltip 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                />
-                <Area type="monotone" dataKey="rate" stroke="#F59E0B" strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <XAxis dataKey="time" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} tickFormatter={(v) => `${v}%`} />
+                <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Error Rate']} />
+                <Area type="monotone" dataKey="rate" stroke="var(--chart-3)" strokeWidth={2} fillOpacity={1} fill="url(#errorGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
 
-      {/* Recent Evaluations Table */}
+      {/* Recent evaluations */}
       <div>
-        <h3 className="text-lg font-semibold text-slate-900 mb-4">Recent Evaluations</h3>
-        <DataTable 
-          columns={evalColumns}
-          data={recentEvals}
-          searchPlaceholder="Search evaluations..."
-        />
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Recent Evaluations</h3>
+        {recentEvals.length > 0 ? (
+          <DataTable columns={evalColumns} data={recentEvals} searchPlaceholder="Search evaluations..." />
+        ) : (
+          <EmptyState
+            icon={FlaskConical}
+            title="No evaluations yet"
+            description="Run evaluations from the Evaluations page to see results here."
+          />
+        )}
       </div>
-
     </div>
   );
 }

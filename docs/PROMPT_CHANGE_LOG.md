@@ -1,89 +1,51 @@
 # Prompt and Change Log
 
-> ARTI-409-A | AIHealthCheck | Final
->
-> This document is an AI tool usage governance artifact. It tracks all Claude API prompt templates used in the application and documents the model upgrade history.
+> Canonical source for LLM usage and prompt templates. For risk mitigations referencing these functions, see [RISK_REGISTER.md](RISK_REGISTER.md). For evaluation scoring details, see [EVAL_DATASET_CARD.md](EVAL_DATASET_CARD.md).
 
 ---
 
-## Model History
+## 1. Model History
 
-| Date | Change | Model ID | SDK Requirement |
-|------|--------|----------|-----------------|
-| 2026-03-18 | Initial implementation | `claude-sonnet-4-20250514` (Sonnet 4) | `anthropic>=0.39.0` |
-| 2026-04-12 | Model upgrade | `claude-sonnet-4-6-20250415` (Sonnet 4.6) | `anthropic>=0.49.0` |
-
-**Reason for upgrade:** Sonnet 4.6 offers improved reasoning and instruction following. Pricing: $3.00 per million input tokens, $15.00 per million output tokens. Configuration via `LLM_MODEL` in `.env`, with defaults in `app/config.py`. No prompt changes were required for the upgrade.
+| Date | Change | Reason |
+|------|--------|--------|
+| 2026-03-18 | Initial: `claude-sonnet-4-20250514` (Sonnet 4), `anthropic>=0.39.0` | Project launch |
+| 2026-04-12 | Upgrade: `claude-sonnet-4-6-20250415` (Sonnet 4.6), `anthropic>=0.49.0` | Improved reasoning and instruction following; no prompt changes required |
 
 ---
 
-## AI-Assisted Code Generation
+## 2. LLM Functions
 
-### 2026-03-18 -- Initial Project Scaffold
-
-- **Prompt used:** "Help me set up the project structure for our AIHealthCheck with React + FastAPI + SQLite"
-- **Tool:** Claude (via Claude.ai)
-- **What changed:** Created full project directory structure, backend (FastAPI + SQLAlchemy models + auth + RBAC + LLM wrapper), frontend (React + Vite + Tailwind + routing + auth context), config files, and documentation templates.
-- **How verified:** Manual review of all generated files by team. Structure matches architecture diagram from project plan.
+All functions are in `backend/app/services/llm_client.py`. No route handler touches the Anthropic SDK directly.
 
 ---
 
-## Claude API Prompt Templates
+### test_connection
 
-All LLM calls go through `backend/app/services/llm_client.py`. No route handler touches the Anthropic SDK directly. Below are all six functions with their exact prompt templates.
-
----
-
-### Function 1: test_connection
-
-- **Module:** Module 1 (Service Registry)
-- **Purpose:** Sends a small prompt to Claude and measures latency to verify API connectivity.
-- **Caller string:** `test_connection`
-- **Max tokens:** 50
-
-**Prompt (default):**
+Module 1 (Service Registry). Verifies API connectivity and measures latency. Max tokens: 50.
 
 ```
 Say hello in exactly 5 words.
 ```
 
-**Parameters:** The prompt is configurable via the function parameter. No system message is used.
-
-**Output parsing:** Returns status (success/failure), latency_ms, and response_snippet (first 200 characters). On any exception, returns failure status with the error message as the snippet.
-
-**Verification:** Manual testing via the Test Connection button in the service registry UI.
+Output: Returns `{status, latency_ms, response_snippet}` (first 200 chars). On exception, returns failure with error message.
 
 ---
 
-### Function 2: run_eval_prompt
+### run_eval_prompt
 
-- **Module:** Module 2 (Evaluation Harness)
-- **Purpose:** Sends an eval test case prompt and returns the raw response for scoring.
-- **Caller string:** `run_eval_prompt`
-- **Max tokens:** Configured via `LLM_MAX_TOKENS` (default: 1024)
-
-**Prompt:**
+Module 2 (Evaluation Harness). Sends eval test case prompt for scoring. Max tokens: `LLM_MAX_TOKENS` (default 1024).
 
 ```
-[EvalTestCase.prompt is sent as-is, with no wrapping or modification]
+[EvalTestCase.prompt sent as-is, no wrapping or modification]
 ```
 
-**Parameters:** Optional `system_context` parameter passed as the `system` kwarg to the API call. Currently not used by the evaluation router.
-
-**Output parsing:** Returns response_text and latency_ms. On error, returns `"ERROR: {error message}"` as the response text with latency 0. The response is then scored by either `score_factuality` (for factuality category) or `json.loads()` (for format_json category).
-
-**Verification:** Evaluation harness runs with synthetic test cases; scores compared against expected outputs.
+Output: Returns `{response_text, latency_ms}`. On error, response_text is `"ERROR: {message}"`. Scored by `score_factuality` (factuality category) or `json.loads()` (format_json category).
 
 ---
 
-### Function 3: score_factuality
+### score_factuality
 
-- **Module:** Module 2 (Evaluation Scoring)
-- **Purpose:** Asks Claude to rate factual similarity between expected and actual output on a 0-100 scale.
-- **Caller string:** `score_factuality`
-- **Max tokens:** 10
-
-**Prompt template:**
+Module 2 (Evaluation Scoring). Rates factual similarity 0-100. Max tokens: 10.
 
 ```
 You are evaluating AI output quality. Compare the expected output with the actual output and rate their factual similarity on a scale of 0-100.
@@ -97,20 +59,13 @@ Actual output:
 Respond with ONLY a single integer from 0 to 100. No other text.
 ```
 
-**Output parsing:** Response parsed via regex (`\d+`) to extract the first integer. Score clamped to 0-100 with `min(max(score, 0), 100)`. On any exception, returns 0.0.
-
-**Verification:** Tested with known-good pairs (e.g., "The capital of France is Paris" vs. actual Claude response to "What is the capital of France?"). Scores consistently return 85-100 for correct answers.
+Output: Parsed via regex (`\d+`), clamped `min(max(score, 0), 100)`. Defaults to 0.0 on exception.
 
 ---
 
-### Function 4: generate_summary
+### generate_summary
 
-- **Module:** Module 3 (Incident Triage)
-- **Purpose:** Generates a stakeholder update and root cause analysis for an incident.
-- **Caller string:** `generate_summary`
-- **Max tokens:** Configured via `LLM_MAX_TOKENS` (default: 1024)
-
-**Prompt template:**
+Module 3 (Incident Triage). Generates stakeholder update and root cause analysis. Max tokens: `LLM_MAX_TOKENS` (default 1024).
 
 ```
 You are an AI operations assistant. An incident has been reported.
@@ -140,22 +95,13 @@ ROOT CAUSES:
 3. [cause 3]
 ```
 
-**Parameters:** `checklist` dict is formatted dynamically using `"Yes" if v else "No"` for each key.
-
-**Output parsing:** Response split on `"ROOT CAUSES:"` to separate stakeholder update from root causes. The `STAKEHOLDER UPDATE:` prefix is stripped from summary_draft. On error, the error message becomes the summary_draft.
-
-**Verification:** Manual review via the human-in-the-loop approval flow. Output stored in summary_draft until explicitly approved.
+Output: Split on `"ROOT CAUSES:"` to separate `summary_draft` from `root_causes_draft`. `STAKEHOLDER UPDATE:` prefix stripped. Stored in draft until human approval.
 
 ---
 
-### Function 5: generate_dashboard_insight
+### generate_dashboard_insight
 
-- **Module:** Module 2 (Dashboard AI Summary)
-- **Purpose:** Summarizes current platform health and suggests action items.
-- **Caller string:** `generate_dashboard_insight`
-- **Max tokens:** Configured via `LLM_MAX_TOKENS` (default: 1024)
-
-**Prompt template:**
+Module 2 (Dashboard AI Summary). Summarizes platform health with action items. Max tokens: `LLM_MAX_TOKENS` (default 1024).
 
 ```
 You are an AI operations analyst. Summarize the current platform health based on these metrics and suggest 2-3 action items.
@@ -179,22 +125,13 @@ ACTION ITEMS:
 3. [item 3]
 ```
 
-**Parameters:** Metrics aggregated from the database: active services (is_active=True), average latency (last 24 hours of connection logs), error rate (last 7 days), quality score (average of last 10 eval runs), drift alert count (drift-flagged runs in last 7 days).
-
-**Output parsing:** Returns the full response as insight_text. On error, the error message becomes the insight_text.
-
-**Verification:** Manual review on the dashboard. Verified that metrics are accurately reflected in the generated narrative.
+Output: Full response returned as `insight_text`. On error, error message becomes insight_text.
 
 ---
 
-### Function 6: generate_compliance_summary
+### generate_compliance_summary
 
-- **Module:** Module 4 (Compliance AI Report)
-- **Purpose:** Generates a professional compliance report from audit, incident, and drift data.
-- **Caller string:** `generate_compliance_summary`
-- **Max tokens:** Configured via `LLM_MAX_TOKENS` (default: 1024)
-
-**Prompt template:**
+Module 4 (Compliance AI Report). Generates compliance report from audit/incident/drift data. Max tokens: `LLM_MAX_TOKENS` (default 1024).
 
 ```
 You are an AI governance compliance officer. Generate a concise compliance report based on the following data from the AI operations platform.
@@ -217,34 +154,17 @@ Write a professional compliance report with these sections:
 Keep the report under 500 words.
 ```
 
-**Parameters:** Input data serialized via `json.dumps` with `default=str` for datetime serialization. Audit data capped at 20 entries, incidents at 10, drift data at 10. Empty lists replaced with placeholder text ("No audit logs." / "No incidents." / "No drift events.").
-
-**Output parsing:** Returns the full response as report_text. On error, the error message becomes the report_text.
-
-**Verification:** Manual review of generated reports against the input data. Verified that all four sections are consistently produced.
+Output: Full response returned as `report_text`. Input serialized via `json.dumps(default=str)`. Capped at 20 audit entries, 10 incidents, 10 drift events. Empty lists replaced with placeholder text.
 
 ---
 
-## Centralized API Call Infrastructure
+## 3. Centralized Pipeline
 
-All six functions above route through `_make_api_call` in `llm_client.py`, which enforces the following pipeline on every call:
+All six functions route through `_make_api_call()` in `llm_client.py`:
 
-1. **Input safety scan** -- `scan_input()` from `safety.py` checks for injection patterns (15 regex), PII (email, phone, SSN, credit card), and prompt length (max 10,000 characters). Blocked prompts raise `PromptSafetyError` (HTTP 422) with flags and risk score.
-
-2. **Budget check** -- `_check_budget()` verifies daily ($5) and monthly ($25) budget limits against `api_usage_log` totals. Raises `BudgetExceededError` (HTTP 402) when exceeded.
-
-3. **Rate limit check** -- Same `_check_budget()` function checks global rate limit (10 calls/min) and per-user rate limit (5 calls/min) against `api_usage_log` entries in the last 60 seconds. Raises `BudgetExceededError` (HTTP 429) when exceeded.
-
-4. **Retry with backoff** -- Exponential backoff (`2^attempt + random(0, 0.5)` seconds) with max 2 retries for `RateLimitError`, `APIConnectionError`, and `InternalServerError`. Non-retryable errors (`AuthenticationError`, `BadRequestError`) fail immediately.
-
-5. **API call** -- `client.messages.create()` with the configured model, max_tokens, messages, and timeout.
-
-6. **Output safety scan** -- `scan_output()` checks the Claude response for PII leakage and model refusal patterns. Flags are appended to the safety record.
-
-7. **Usage logging** -- Every call (success, error, retry, blocked) is recorded in the `api_usage_log` table with: caller, model, input_tokens, output_tokens, total_tokens, estimated_cost_usd, latency_ms, status, user_id, safety_flags, risk_score.
-
-8. **Error categorization** -- Errors are classified as: `error_timeout`, `error_rate_limit`, `error_server`, `error_auth`, `error_bad_request`, `error_unknown`, `blocked_safety`. Retry attempts are logged as `retry_0`, `retry_1`.
-
----
-
-*Version: Final | Date: 2026-04-12*
+1. **Input safety scan** -- `scan_input()` checks injection patterns, PII, and prompt length; blocks unsafe prompts (HTTP 422)
+2. **Budget check** -- `_check_budget()` verifies daily and monthly limits against `api_usage_log`; raises HTTP 402 if exceeded
+3. **Rate limit check** -- same `_check_budget()` checks global (10/min) and per-user (5/min) limits; raises HTTP 429
+4. **Retry with backoff** -- `2^attempt + random(0, 0.5)` sec, max 2 retries for transient errors; non-retryable errors fail immediately
+5. **API call + output scan** -- `client.messages.create()` then `scan_output()` checks response for PII and refusal patterns
+6. **Usage logging** -- every call recorded in `api_usage_log` with caller, tokens, cost, latency, status, safety_flags, risk_score

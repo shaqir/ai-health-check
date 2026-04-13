@@ -1,0 +1,651 @@
+"""
+Dashboard router for Module 2: metrics aggregation, trends, and AI-powered insights.
+"""
+
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.database import get_db
+from app.middleware.auth import get_current_user
+from app.middleware.rbac import require_role
+from app.models import AIService, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
+from app.services.llm_client import generate_dashboard_insight
+
+router = APIRouter()
+settings = get_settings()
+
+
+# ── Schemas ──
+
+class DashboardMetrics(BaseModel):
+    active_services: int
+    avg_latency_ms: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    error_rate_pct: float
+    avg_quality_score: float
+    latency_trend: str  # "up", "down", "neutral"
+    error_trend: str
+    quality_trend: str
+
+
+# ── Helpers ──
+
+def _env_filter(query, environment: str | None):
+    """Apply environment filter by joining to AIService."""
+    if environment and environment != "all":
+        env_map = {"production": "prod", "staging": "staging", "dev": "dev"}
+        env_val = env_map.get(environment, environment)
+        try:
+            env_enum = Environment(env_val)
+            query = query.join(AIService).filter(AIService.environment == env_enum)
+        except ValueError:
+            pass
+    return query
+
+
+def _compute_trend(current: float, previous: float) -> str:
+    if previous == 0:
+        return "neutral"
+    diff = ((current - previous) / previous) * 100
+    if diff > 5:
+        return "up"
+    elif diff < -5:
+        return "down"
+    return "neutral"
+
+
+# ── Endpoints ──
+
+@router.get("/metrics", response_model=DashboardMetrics)
+def get_metrics(
+    environment: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+    two_days_ago = now - timedelta(hours=48)
+    week_ago = now - timedelta(days=7)
+
+    # Active services count
+    svc_query = db.query(AIService).filter(AIService.is_active == True)
+    if environment and environment not in ("all", ""):
+        env_map = {"production": "prod", "staging": "staging", "dev": "dev"}
+        env_val = env_map.get(environment, environment)
+        try:
+            svc_query = svc_query.filter(AIService.environment == Environment(env_val))
+        except ValueError:
+            pass
+    active_services = svc_query.count()
+
+    # Latency stats (last 24h) — average + percentiles
+    latency_logs = (
+        db.query(ConnectionLog.latency_ms)
+        .filter(ConnectionLog.tested_at >= day_ago, ConnectionLog.latency_ms != None)
+        .all()
+    )
+    latencies = sorted([l[0] for l in latency_logs if l[0] is not None])
+    avg_latency = sum(latencies) / len(latencies) if latencies else 0
+    p50 = latencies[len(latencies) // 2] if latencies else 0
+    p95 = latencies[int(len(latencies) * 0.95)] if latencies else 0
+    p99 = latencies[int(len(latencies) * 0.99)] if latencies else 0
+
+    # Previous 24h latency for trend
+    prev_latency_query = db.query(func.avg(ConnectionLog.latency_ms)).filter(
+        ConnectionLog.tested_at >= two_days_ago,
+        ConnectionLog.tested_at < day_ago,
+    )
+    prev_latency_query = _env_filter(prev_latency_query, environment)
+    prev_latency = prev_latency_query.scalar() or 0
+
+    # Error rate (last 7 days)
+    total_connections = db.query(ConnectionLog).filter(
+        ConnectionLog.tested_at >= week_ago
+    ).count()
+    failed_connections = db.query(ConnectionLog).filter(
+        ConnectionLog.tested_at >= week_ago,
+        ConnectionLog.status == "failure",
+    ).count()
+    error_rate = (failed_connections / total_connections * 100) if total_connections > 0 else 0
+
+    # Previous week error rate for trend
+    two_weeks_ago = now - timedelta(days=14)
+    prev_total = db.query(ConnectionLog).filter(
+        ConnectionLog.tested_at >= two_weeks_ago,
+        ConnectionLog.tested_at < week_ago,
+    ).count()
+    prev_failed = db.query(ConnectionLog).filter(
+        ConnectionLog.tested_at >= two_weeks_ago,
+        ConnectionLog.tested_at < week_ago,
+        ConnectionLog.status == "failure",
+    ).count()
+    prev_error_rate = (prev_failed / prev_total * 100) if prev_total > 0 else 0
+
+    # Average quality score (last 10 runs)
+    recent_runs = (
+        db.query(EvalRun)
+        .order_by(EvalRun.run_at.desc())
+        .limit(10)
+        .all()
+    )
+    avg_quality = (
+        sum(r.quality_score for r in recent_runs) / len(recent_runs)
+        if recent_runs else 0
+    )
+
+    # Previous 10 runs for quality trend
+    older_runs = (
+        db.query(EvalRun)
+        .order_by(EvalRun.run_at.desc())
+        .offset(10)
+        .limit(10)
+        .all()
+    )
+    prev_quality = (
+        sum(r.quality_score for r in older_runs) / len(older_runs)
+        if older_runs else 0
+    )
+
+    return DashboardMetrics(
+        active_services=active_services,
+        avg_latency_ms=round(avg_latency, 1),
+        p50_latency_ms=round(p50, 1),
+        p95_latency_ms=round(p95, 1),
+        p99_latency_ms=round(p99, 1),
+        error_rate_pct=round(error_rate, 1),
+        avg_quality_score=round(avg_quality, 1),
+        latency_trend=_compute_trend(avg_latency, prev_latency),
+        error_trend=_compute_trend(error_rate, prev_error_rate),
+        quality_trend=_compute_trend(avg_quality, prev_quality),
+    )
+
+
+@router.get("/latency-trend")
+def get_latency_trend(
+    environment: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+
+    logs = (
+        db.query(ConnectionLog)
+        .filter(ConnectionLog.tested_at >= day_ago)
+        .order_by(ConnectionLog.tested_at.asc())
+        .all()
+    )
+
+    # Group into 4-hour buckets
+    buckets = {}
+    for log in logs:
+        hour = (log.tested_at.hour // 4) * 4
+        label = f"{hour:02d}:00"
+        if label not in buckets:
+            buckets[label] = []
+        buckets[label].append(log.latency_ms or 0)
+
+    result = []
+    for hour in range(0, 24, 4):
+        label = f"{hour:02d}:00"
+        values = buckets.get(label, [])
+        avg_ms = round(sum(values) / len(values), 1) if values else 0
+        result.append({"time": label, "ms": avg_ms})
+
+    return result
+
+
+@router.get("/quality-trend")
+def get_quality_trend(
+    environment: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    runs = (
+        db.query(EvalRun)
+        .order_by(EvalRun.run_at.asc())
+        .limit(6)
+        .all()
+    )
+
+    return [
+        {"run": f"Run {i + 1}", "score": round(run.quality_score, 1)}
+        for i, run in enumerate(runs)
+    ]
+
+
+@router.get("/error-trend")
+def get_error_trend(
+    environment: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    logs = (
+        db.query(ConnectionLog)
+        .filter(ConnectionLog.tested_at >= week_ago)
+        .all()
+    )
+
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    daily_totals = {}
+    daily_failures = {}
+
+    for log in logs:
+        day_name = day_names[log.tested_at.weekday()]
+        daily_totals[day_name] = daily_totals.get(day_name, 0) + 1
+        if log.status == "failure":
+            daily_failures[day_name] = daily_failures.get(day_name, 0) + 1
+
+    result = []
+    for day in day_names:
+        total = daily_totals.get(day, 0)
+        failures = daily_failures.get(day, 0)
+        rate = round((failures / total * 100), 1) if total > 0 else 0
+        result.append({"time": day, "rate": rate})
+
+    return result
+
+
+@router.get("/recent-evals")
+def get_recent_evals(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    runs = (
+        db.query(EvalRun)
+        .order_by(EvalRun.run_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    result = []
+    for run in runs:
+        service = db.query(AIService).filter(AIService.id == run.service_id).first()
+        result.append({
+            "id": run.id,
+            "timestamp": run.run_at.strftime("%Y-%m-%d %H:%M") if run.run_at else "",
+            "score": run.quality_score,
+            "drift": run.drift_flagged,
+            "type": run.run_type.capitalize(),
+            "service_name": service.name if service else "",
+        })
+
+    return result
+
+
+@router.get("/drift-alerts")
+def get_drift_alerts(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    runs = (
+        db.query(EvalRun)
+        .filter(EvalRun.drift_flagged == True, EvalRun.run_at >= week_ago)
+        .order_by(EvalRun.run_at.desc())
+        .all()
+    )
+
+    result = []
+    for run in runs:
+        service = db.query(AIService).filter(AIService.id == run.service_id).first()
+        result.append({
+            "service_name": service.name if service else "",
+            "score": run.quality_score,
+            "threshold": settings.drift_threshold,
+            "run_id": run.id,
+            "run_at": run.run_at.strftime("%Y-%m-%d %H:%M") if run.run_at else "",
+        })
+
+    return result
+
+
+@router.post(
+    "/ai-summary",
+    dependencies=[Depends(require_role(["admin", "maintainer"]))],
+)
+async def get_ai_summary(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    active_services = db.query(AIService).filter(AIService.is_active == True).count()
+
+    avg_latency = db.query(func.avg(ConnectionLog.latency_ms)).filter(
+        ConnectionLog.tested_at >= day_ago
+    ).scalar() or 0
+
+    total_conn = db.query(ConnectionLog).filter(ConnectionLog.tested_at >= week_ago).count()
+    failed_conn = db.query(ConnectionLog).filter(
+        ConnectionLog.tested_at >= week_ago, ConnectionLog.status == "failure"
+    ).count()
+    error_rate = (failed_conn / total_conn * 100) if total_conn > 0 else 0
+
+    recent_runs = db.query(EvalRun).order_by(EvalRun.run_at.desc()).limit(10).all()
+    avg_quality = (
+        sum(r.quality_score for r in recent_runs) / len(recent_runs)
+        if recent_runs else 0
+    )
+
+    drift_count = db.query(EvalRun).filter(
+        EvalRun.drift_flagged == True, EvalRun.run_at >= week_ago
+    ).count()
+
+    metrics = {
+        "active_services": active_services,
+        "avg_latency_ms": avg_latency,
+        "error_rate_pct": error_rate,
+        "avg_quality_score": avg_quality,
+        "drift_alert_count": drift_count,
+    }
+
+    result = await generate_dashboard_insight(metrics)
+    return result
+
+
+@router.get("/claude-health")
+async def claude_api_health(
+    _: User = Depends(get_current_user),
+):
+    """Lightweight health check for the Claude API — verifies connectivity and latency."""
+    from app.services.llm_client import test_connection
+    result = await test_connection(prompt="Hi", model=settings.llm_model)
+    return {
+        "api_status": result["status"],
+        "latency_ms": result["latency_ms"],
+        "model": settings.llm_model,
+        "response_snippet": result["response_snippet"][:50],
+    }
+
+
+@router.get("/settings")
+def get_platform_settings(
+    _: User = Depends(get_current_user),
+):
+    """Return non-sensitive platform configuration for the settings page."""
+    return {
+        "ai_model": {
+            "provider": "Anthropic",
+            "model": settings.llm_model,
+            "max_tokens": settings.llm_max_tokens,
+            "timeout_seconds": settings.llm_timeout_seconds,
+        },
+        "budget": {
+            "daily_limit_usd": settings.api_daily_budget,
+            "monthly_limit_usd": settings.api_monthly_budget,
+            "rate_limit_per_min": settings.api_max_calls_per_minute,
+        },
+        "evaluation": {
+            "drift_threshold_pct": settings.drift_threshold,
+            "eval_schedule_minutes": settings.eval_schedule_minutes,
+            "health_check_schedule_minutes": settings.health_check_schedule_minutes,
+        },
+        "pricing": {
+            "input_per_million_usd": 3.0,
+            "output_per_million_usd": 15.0,
+            "currency": "USD",
+        },
+    }
+
+
+@router.get("/api-usage")
+def get_api_usage(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Today's usage
+    daily_stats = db.query(
+        func.count(APIUsageLog.id),
+        func.coalesce(func.sum(APIUsageLog.input_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.output_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+    ).filter(APIUsageLog.timestamp >= day_start).first()
+
+    # This month's usage
+    monthly_stats = db.query(
+        func.count(APIUsageLog.id),
+        func.coalesce(func.sum(APIUsageLog.input_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.output_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+    ).filter(APIUsageLog.timestamp >= month_start).first()
+
+    # Per-function breakdown (today)
+    breakdown_rows = db.query(
+        APIUsageLog.caller,
+        func.count(APIUsageLog.id),
+        func.coalesce(func.sum(APIUsageLog.total_tokens), 0),
+        func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+    ).filter(
+        APIUsageLog.timestamp >= day_start,
+    ).group_by(APIUsageLog.caller).all()
+
+    breakdown = [
+        {"function": row[0], "calls": row[1], "tokens": row[2], "cost_usd": round(row[3], 6)}
+        for row in breakdown_rows
+    ]
+
+    # Recent calls (last 10)
+    recent = db.query(APIUsageLog).order_by(APIUsageLog.timestamp.desc()).limit(10).all()
+    recent_calls = [
+        {
+            "id": r.id,
+            "caller": r.caller,
+            "model": r.model,
+            "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens,
+            "total_tokens": r.total_tokens,
+            "cost_usd": round(r.estimated_cost_usd, 6),
+            "latency_ms": r.latency_ms,
+            "status": r.status,
+            "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+        }
+        for r in recent
+    ]
+
+    return {
+        "daily": {
+            "calls": daily_stats[0],
+            "input_tokens": daily_stats[1],
+            "output_tokens": daily_stats[2],
+            "total_tokens": daily_stats[3],
+            "cost_usd": round(float(daily_stats[4]), 6),
+            "budget_usd": settings.api_daily_budget,
+            "budget_remaining_usd": round(max(settings.api_daily_budget - float(daily_stats[4]), 0), 6),
+            "budget_pct_used": round(
+                (float(daily_stats[4]) / settings.api_daily_budget * 100)
+                if settings.api_daily_budget > 0 else 0, 1
+            ),
+        },
+        "monthly": {
+            "calls": monthly_stats[0],
+            "input_tokens": monthly_stats[1],
+            "output_tokens": monthly_stats[2],
+            "total_tokens": monthly_stats[3],
+            "cost_usd": round(float(monthly_stats[4]), 6),
+            "budget_usd": settings.api_monthly_budget,
+            "budget_remaining_usd": round(max(settings.api_monthly_budget - float(monthly_stats[4]), 0), 6),
+            "budget_pct_used": round(
+                (float(monthly_stats[4]) / settings.api_monthly_budget * 100)
+                if settings.api_monthly_budget > 0 else 0, 1
+            ),
+        },
+        "breakdown": breakdown,
+        "recent_calls": recent_calls,
+    }
+
+
+@router.get("/performance")
+def get_performance(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Detailed performance metrics: percentiles, error breakdown, throughput, efficiency."""
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    hour_ago = now - timedelta(hours=1)
+
+    # Latency percentiles from APIUsageLog (LLM calls, more relevant than HTTP probes)
+    latency_logs = (
+        db.query(APIUsageLog.latency_ms)
+        .filter(APIUsageLog.timestamp >= day_start, APIUsageLog.latency_ms > 0)
+        .all()
+    )
+    latencies = sorted([l[0] for l in latency_logs]) if latency_logs else []
+
+    latency_stats = {
+        "avg": round(sum(latencies) / len(latencies), 1) if latencies else 0,
+        "p50": round(latencies[len(latencies) // 2], 1) if latencies else 0,
+        "p95": round(latencies[int(len(latencies) * 0.95)], 1) if latencies else 0,
+        "p99": round(latencies[int(len(latencies) * 0.99)], 1) if latencies else 0,
+        "min": round(min(latencies), 1) if latencies else 0,
+        "max": round(max(latencies), 1) if latencies else 0,
+    }
+
+    # Error breakdown by category
+    error_rows = (
+        db.query(APIUsageLog.status, func.count(APIUsageLog.id))
+        .filter(APIUsageLog.timestamp >= day_start, APIUsageLog.status.like("error_%"))
+        .group_by(APIUsageLog.status)
+        .all()
+    )
+    error_breakdown = {row[0].replace("error_", ""): row[1] for row in error_rows}
+
+    # Throughput
+    calls_today = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= day_start
+    ).scalar()
+    calls_this_hour = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= hour_ago
+    ).scalar()
+    tokens_today = db.query(func.coalesce(func.sum(APIUsageLog.total_tokens), 0)).filter(
+        APIUsageLog.timestamp >= day_start
+    ).scalar()
+
+    # Efficiency
+    cost_today = db.query(func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0)).filter(
+        APIUsageLog.timestamp >= day_start
+    ).scalar()
+    avg_tokens = round(tokens_today / calls_today, 0) if calls_today > 0 else 0
+    avg_cost = round(float(cost_today) / calls_today, 6) if calls_today > 0 else 0
+    tokens_per_dollar = round(tokens_today / float(cost_today), 0) if cost_today > 0 else 0
+
+    return {
+        "latency": latency_stats,
+        "error_breakdown": error_breakdown,
+        "throughput": {
+            "calls_today": calls_today,
+            "calls_this_hour": calls_this_hour,
+            "tokens_today": tokens_today,
+        },
+        "efficiency": {
+            "avg_tokens_per_call": avg_tokens,
+            "avg_cost_per_call": avg_cost,
+            "tokens_per_dollar": tokens_per_dollar,
+        },
+    }
+
+
+@router.get("/api-safety")
+def get_api_safety(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Safety metrics: blocked calls, flagged prompts, risk distribution."""
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Total calls scanned today
+    total_today = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= day_start
+    ).scalar()
+
+    # Blocked today (safety rejections)
+    blocked_today = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= day_start,
+        APIUsageLog.status == "blocked_safety",
+    ).scalar()
+
+    # Blocked this month
+    blocked_month = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= month_start,
+        APIUsageLog.status == "blocked_safety",
+    ).scalar()
+
+    # Calls with any safety flags (not blocked, but flagged)
+    flagged_today = db.query(func.count(APIUsageLog.id)).filter(
+        APIUsageLog.timestamp >= day_start,
+        APIUsageLog.safety_flags != "",
+        APIUsageLog.status != "blocked_safety",
+    ).scalar()
+
+    # Flag frequency breakdown
+    flagged_logs = (
+        db.query(APIUsageLog.safety_flags)
+        .filter(
+            APIUsageLog.timestamp >= day_start,
+            APIUsageLog.safety_flags != "",
+        )
+        .all()
+    )
+    flag_counts = {}
+    for row in flagged_logs:
+        for flag in row[0].split(","):
+            flag = flag.strip()
+            if flag:
+                flag_counts[flag] = flag_counts.get(flag, 0) + 1
+
+    # Average risk score today
+    avg_risk = db.query(func.avg(APIUsageLog.risk_score)).filter(
+        APIUsageLog.timestamp >= day_start,
+        APIUsageLog.risk_score > 0,
+    ).scalar() or 0
+
+    # Recent blocked calls
+    recent_blocked = (
+        db.query(APIUsageLog)
+        .filter(APIUsageLog.status == "blocked_safety")
+        .order_by(APIUsageLog.timestamp.desc())
+        .limit(5)
+        .all()
+    )
+    recent_blocked_list = [
+        {
+            "caller": r.caller,
+            "safety_flags": r.safety_flags,
+            "risk_score": r.risk_score,
+            "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+        }
+        for r in recent_blocked
+    ]
+
+    return {
+        "total_scanned_today": total_today,
+        "blocked_today": blocked_today,
+        "blocked_this_month": blocked_month,
+        "flagged_today": flagged_today,
+        "flag_breakdown": flag_counts,
+        "avg_risk_score": round(avg_risk, 1),
+        "recent_blocked": recent_blocked_list,
+    }

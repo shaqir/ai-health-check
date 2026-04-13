@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, ConnectionLog, Environment, SensitivityLabel, User
+from app.services.llm_client import test_connection as llm_test_connection
 
 router = APIRouter()
 
@@ -271,19 +272,23 @@ def delete_service(
 )
 async def test_service_connection(
     service_id: int,
+    mode: str = Query("http", description="Test mode: 'http' for endpoint probe, 'llm' for Claude API health check"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
-    if not service.endpoint_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Service has no endpoint_url configured",
-        )
 
-    result = await _probe_service_endpoint(service.endpoint_url)
+    if mode == "llm":
+        result = await llm_test_connection(model=service.model_name)
+    else:
+        if not service.endpoint_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Service has no endpoint_url configured",
+            )
+        result = await _probe_service_endpoint(service.endpoint_url)
 
     log = ConnectionLog(
         service_id=service.id,

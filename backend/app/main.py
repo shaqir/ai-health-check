@@ -5,22 +5,29 @@ Start with: uvicorn app.main:app --reload --port 8000
 API docs:   http://localhost:8000/docs
 """
 
+import time
 from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from fastapi.responses import JSONResponse
+
 from app.config import get_settings
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
+from app.services.llm_client import BudgetExceededError
+from app.services.safety import PromptSafetyError
 
 # Import all models so SQLAlchemy knows about them
 from app.models import (  # noqa: F401
-    User, AIService, ConnectionLog, EvalTestCase, EvalRun,
-    Incident, MaintenancePlan, AuditLog, Telemetry,
+    User, AIService, ConnectionLog, EvalTestCase, EvalRun, EvalResult,
+    Incident, MaintenancePlan, AuditLog, Telemetry, APIUsageLog, LoginAttempt,
 )
 
 # Import routers
-from app.routers import auth, services, incidents, maintenance
+from app.routers import auth, services, incidents, maintenance, evaluations, dashboard, compliance
 
 settings = get_settings()
 
@@ -29,9 +36,49 @@ scheduler = BackgroundScheduler()
 
 
 def scheduled_health_check():
-    """Placeholder — runs periodic health checks on registered services."""
-    # TODO: Implement in Week 2 (Sakir + Jack)
-    pass
+    """Runs periodic health checks on all active services with an endpoint URL."""
+    db = SessionLocal()
+    try:
+        active_services = db.query(AIService).filter(
+            AIService.is_active == True,
+            AIService.endpoint_url != "",
+            AIService.endpoint_url != None,
+        ).all()
+
+        for service in active_services:
+            start = time.perf_counter()
+            try:
+                with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                    response = client.get(service.endpoint_url)
+                latency_ms = round((time.perf_counter() - start) * 1000, 1)
+                status_str = "success" if response.is_success else "failure"
+                snippet = (response.text or "")[:200]
+            except Exception as exc:
+                latency_ms = round((time.perf_counter() - start) * 1000, 1)
+                status_str = "failure"
+                snippet = str(exc)[:200]
+
+            log = ConnectionLog(
+                service_id=service.id,
+                latency_ms=latency_ms,
+                status=status_str,
+                response_snippet=snippet,
+            )
+            db.add(log)
+
+            telemetry = Telemetry(
+                service_id=service.id,
+                metric_name="latency",
+                metric_value=latency_ms,
+            )
+            db.add(telemetry)
+
+        db.commit()
+    except Exception as e:
+        print(f"[HealthCheck] Error: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -79,10 +126,32 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(services.router, prefix="/api/v1/services", tags=["Services"])
 app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incidents"])
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
-# TODO: Add remaining routers as modules are built:
-# app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
-# app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
-# app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+
+
+# ── Global Exception Handlers ──
+
+@app.exception_handler(BudgetExceededError)
+async def budget_exceeded_handler(request, exc: BudgetExceededError):
+    status_code = 429 if exc.exceeded_type == "rate_limit" else 402
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": str(exc), "exceeded_type": exc.exceeded_type},
+    )
+
+
+@app.exception_handler(PromptSafetyError)
+async def prompt_safety_handler(request, exc: PromptSafetyError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": str(exc),
+            "safety_flags": exc.flags,
+            "risk_score": exc.risk_score,
+        },
+    )
 
 
 @app.get("/", tags=["Health"])

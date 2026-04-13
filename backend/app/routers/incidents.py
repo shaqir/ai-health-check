@@ -5,7 +5,7 @@ Full CRUD operations + AI-assisted summary drafting.
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -26,7 +26,7 @@ router = APIRouter()
 class IncidentCreate(BaseModel):
     service_id: int
     severity: str
-    symptoms: str
+    symptoms: str = Field(..., max_length=5000)
     timeline: Optional[datetime] = None
     checklist_data_issue: bool = False
     checklist_prompt_change: bool = False

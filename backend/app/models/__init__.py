@@ -86,6 +86,7 @@ class AIService(Base):
 
     # Relationships
     connection_logs = relationship("ConnectionLog", back_populates="service")
+    eval_test_cases = relationship("EvalTestCase", back_populates="service")
     eval_runs = relationship("EvalRun", back_populates="service")
     incidents = relationship("Incident", back_populates="service")
     telemetry = relationship("Telemetry", back_populates="service")
@@ -114,6 +115,8 @@ class EvalTestCase(Base):
     category = Column(String(50), nullable=False)  # "factuality" or "format_json"
     created_at = Column(DateTime, default=utcnow)
 
+    service = relationship("AIService", back_populates="eval_test_cases")
+
 
 class EvalRun(Base):
     __tablename__ = "eval_runs"
@@ -129,6 +132,23 @@ class EvalRun(Base):
     created_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="eval_runs")
+    results = relationship("EvalResult", back_populates="eval_run")
+
+
+class EvalResult(Base):
+    __tablename__ = "eval_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    eval_run_id = Column(Integer, ForeignKey("eval_runs.id"), nullable=False)
+    test_case_id = Column(Integer, ForeignKey("eval_test_cases.id"), nullable=False)
+    response_text = Column(Text, default="")
+    score = Column(Float, nullable=False)
+    latency_ms = Column(Float, default=0.0)
+    status = Column(String(20), default="success")  # "success" or "error"
+    created_at = Column(DateTime, default=utcnow)
+
+    eval_run = relationship("EvalRun", back_populates="results")
+    test_case = relationship("EvalTestCase")
 
 
 class Incident(Base):
@@ -197,3 +217,31 @@ class Telemetry(Base):
     recorded_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="telemetry")
+
+
+class APIUsageLog(Base):
+    __tablename__ = "api_usage_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    caller = Column(String(100), nullable=False)        # function name (e.g. "generate_summary")
+    model = Column(String(100), nullable=False)          # model used
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)      # estimated cost in USD
+    latency_ms = Column(Float, default=0.0)
+    status = Column(String(30), default="success")       # "success", "error_timeout", "error_rate_limit", etc.
+    safety_flags = Column(Text, default="")              # comma-separated safety flags
+    risk_score = Column(Integer, default=0)               # 0-100 input risk score
+    timestamp = Column(DateTime, default=utcnow)
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(100), nullable=False)
+    success = Column(Boolean, default=False)
+    ip_address = Column(String(45), default="")          # supports IPv6
+    timestamp = Column(DateTime, default=utcnow)

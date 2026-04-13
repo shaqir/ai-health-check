@@ -1,40 +1,115 @@
-# AIHealthCheck: System Onboarding & Monitoring Lifecycle
+# AIHealthCheck Onboarding Guide
 
-Welcome to the AIHealthCheck (ARTI-409-A) development team! This platform acts as an **air-traffic control tower** for deployed AI applications.
+## Overview
 
-If you are new to the project, here is the step-by-step lifecycle of how the system operates from end-to-end, focusing specifically on how the platform actively monitors and evaluates the AI models in our ecosystem.
+AIHealthCheck is a monitoring and governance platform for deployed AI services. It provides continuous health checking, evaluation-based drift detection, incident triage with AI-assisted drafting, budget enforcement, prompt safety scanning, and compliance auditing. The platform runs on Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) via the Anthropic SDK.
 
----
+## Prerequisites
 
-## Step 1: Registration (Service Registry)
-Before the platform can monitor an AI model, it needs to be attached to the registry.
-- In the **Services** module (Module 1), administrators register an AI feature (e.g., "Customer Support Bot", "Financial Analyzer").
-- The registry tracks the **LLM model identifier** (like `claude-3-opus-20240229`), who the **Owner** is, and tags it with a **Sensitivity Badge** (Public, Internal, Confidential). 
-- *Why it matters:* This registry acts as the single source of truth for every AI endpoint the company runs. No shadow AI can exist without being tracked here.
+- Python 3.11 or later
+- Node.js 18 or later
+- An Anthropic API key (set as `ANTHROPIC_API_KEY` in your environment)
 
-## Step 2: Active Monitoring & Evaluations (The Core Engine)
-This is exactly how the platform watches our AI models (Module 2). The backend utilizes `APScheduler` (a Python background task runner) to ping models in two distinct ways:
+## Setup Steps
 
-**A. Health & Latency Pings (Constant)**
-- Every few minutes, the backend shoots a tiny, generic prompt (a "health check ping") to Anthropic's Claude API via our abstraction wrapper (`/services/llm_client.py`). 
-- It records exactly how many milliseconds it took to get a response and whether the connection succeeded or failed (Error Rate). These are the numbers seen on the line graphs in the main **Dashboard**.
+### Backend
 
-**B. Quality & Concept Drift Evals (Scheduled)**
-- Periodically, the backend runs a **Synthetic Evaluation Batch**. It takes a pre-defined list of test prompts (e.g., *"How do I reset my password?"*) and sends them to the model through the endpoints.
-- It then automatically scores the response quality (e.g., checking for hallucinations, correct formatting, or blocked safety words). This generates the **Quality Score** bar charts.
-- **Concept Drift:** If a model used to score 95% on a standard test format, but suddenly drops to 70%, the system flags this as **"Concept Drift"** and triggers a red banner alert so engineers can investigate if the underlying LLM provider changed their model weights.
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
 
-## Step 3: Incident Triage (When things go wrong)
-If latency spikes or concept drift triggers an alert, the engineering team steps in (Module 3).
-- In the **Incidents** module, engineers declare an incident ticket (e.g., "High Severity: Support Bot Hallucinating").
-- They use the **Diagnostic Checklist** to isolate the root cause (Was there a prompt change? Did Anthropic update their model API? Is it a data pipeline issue?).
-- **AI-Assisted Drafting:** To save time, engineers can click "Generate AI Summary". The platform uses Claude to read the telemetry metrics and write a draft incident report / post-mortem, which the human can then approve or reject.
-- Finally, they use the **Maintenance Planner** to schedule a rollback or deployment fix.
+The API starts at `http://localhost:8000`. Interactive docs are available at `/docs`.
 
-## Step 4: Governance & Compliance
-Large organizations need to prove they are handling AI safely to external auditors (Module 4).
-- Every time a service is created, a prompt is tested, an incident is closed, or an admin changes a user's Role-Based Access level (RBAC), the **Governance** module silently writes an immutable record to the SQLite Database `audit_log` table.
-- At the end of the quarter, the compliance team navigates to the Governance page, selects a date range, and clicks **Export PDF/JSON** to generate cryptographic proof that all AI models are being safely monitored and incident procedures were correctly followed.
+### Frontend
 
----
-**Summary:** We track what models we have (Registry) → Run scheduled prompt tests to ensure quality hasn't decayed (Monitoring) → Isolate and rollback issues rapidly (Incidents) → Create an immutable paper-trail of accountability (Governance).
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The UI starts at `http://localhost:5173`.
+
+## Platform Lifecycle
+
+The system operates through seven stages. Each stage builds on the previous one.
+
+### 1. Registration
+
+Administrators register AI services in the Service Registry (Services page). Each record captures the LLM model identifier, owner, and a sensitivity label (Public, Internal, or Confidential). Service data is stored in the `AIService` model with connection history in `ConnectionLog`. Only admin-role users can create, update, or delete services.
+
+### 2. Service Setup
+
+After registration, administrators configure monitoring parameters for each service: evaluation test cases, budget thresholds, and safety scanner sensitivity. The Settings page provides centralized control over daily/monthly budget caps, rate limits, retry behavior (exponential backoff), and input validation rules.
+
+### 3. Monitoring
+
+The platform monitors services in two ways. Scheduled health checks run every 5 minutes (HTTP-only, no Claude API consumption) to track latency, uptime, and error rates. Quality evaluations run synthetic test cases stored in `EvalTestCase`, scoring responses for accuracy and safety. Results are stored in `EvalRun` and `EvalResult` models. The Dashboard page displays P50, P95, and P99 percentiles, throughput, error categorization, and efficiency ratings.
+
+### 4. Safety and Budget
+
+Every prompt passes through the Prompt Safety Scanner before reaching the LLM. The scanner checks for injection attempts (15 patterns), PII (names, emails, phone numbers, SSNs), and length violations. Failed checks raise `PromptSafetyError` (HTTP 422) and the prompt is never forwarded. Budget enforcement caps spending at $5/day and $25/month, with global rate limiting at 10 requests/min and per-user limiting at 5 requests/min. Exceeding limits returns `BudgetExceededError` (HTTP 402 or 429).
+
+### 5. Incident Triage
+
+When drift, latency spikes, or safety anomalies occur, engineers create incident tickets on the Incidents page. The platform offers AI-assisted drafting: Claude reads telemetry data and generates an incident summary or post-mortem, which the engineer must approve or reject before it takes effect (human-in-the-loop). The Maintenance Planner schedules rollbacks or fixes via the `MaintenancePlan` model. The IncidentDetail page provides a deep-dive view of individual incidents.
+
+### 6. Governance
+
+Every state-changing operation (service creation, evaluation run, incident update, role change) is recorded in the `AuditLog` model with an immutable timestamp, acting user, action type, and metadata. The `LoginAttempt` model tracks authentication events, enforcing lockout after 5 failed attempts within 15 minutes. The Governance page lets compliance teams filter and export audit logs as JSON. The DataPolicy page documents data handling and retention policies.
+
+### 7. Settings
+
+The Settings page gives administrators centralized control over budget limits, rate limits, safety scanner sensitivity, retry parameters, and input validation rules. Changes take effect without code modifications or redeployments.
+
+## Key Concepts
+
+### RBAC Roles
+
+| Role | Permissions |
+|------|-------------|
+| Admin | Full access to all CRUD operations, user management, and configuration |
+| Maintainer | Can manage services, incidents, and evaluations; cannot modify users or roles |
+| Viewer | Read-only access across all pages |
+
+### Drift Detection
+
+The platform compares current evaluation scores against historical baselines to detect model degradation.
+
+- **Severity:** none, warning, or critical
+- **Trend:** improving, declining, or stable
+- **Variance:** statistical spread of scores across runs
+- **Per-test tracking:** individual test case performance over time via `EvalResult`
+- **Percentiles:** P50, P95, P99 for latency and quality metrics
+- **Confidence:** low, medium, or high based on sample size
+
+### Human-in-the-Loop
+
+All LLM-generated content (incident summaries, post-mortems, maintenance recommendations) requires explicit human approval before it is saved or acted upon. The platform never auto-executes AI-drafted actions.
+
+### Sensitivity Labels
+
+Each registered service is tagged with a sensitivity label that governs data handling:
+
+- **Public:** No restrictions on data exposure
+- **Internal:** Accessible only within the organization
+- **Confidential:** Restricted access, subject to additional audit requirements
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Cmd+K | Open command palette |
+| G then D | Jump to Dashboard |
+| G then S | Jump to Services |
+| G then E | Jump to Evaluations |
+| G then I | Jump to Incidents |
+| G then G | Jump to Governance |
+| G then P | Jump to Data Policy |
+| G then T | Jump to Settings |
+| Escape | Close modal or command palette |
+| Tab / Shift+Tab | Navigate focusable elements (focus traps active in modals) |

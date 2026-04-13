@@ -70,6 +70,8 @@ export default function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     fetchDashboard();
+    const interval = setInterval(() => fetchDashboard(), 15000);
+    return () => clearInterval(interval);
   }, [activeEnv]);
 
   const evalColumns = [

@@ -19,21 +19,24 @@ export default function SettingsPage() {
   const [performance, setPerformance] = useState(null);
   const [safety, setSafety] = useState(null);
 
+  const fetchAll = async (showLoading = false) => {
+    if (showLoading) setError(null);
+    try {
+      const [c, u, p, s] = await Promise.all([
+        api.get('/dashboard/settings'),
+        api.get('/dashboard/api-usage'),
+        api.get('/dashboard/performance'),
+        api.get('/dashboard/api-safety'),
+      ]);
+      setConfig(c.data); setApiUsage(u.data); setPerformance(p.data); setSafety(s.data);
+    } catch { if (showLoading) setError('Failed to load settings.'); }
+    finally { if (showLoading) setLoading(false); }
+  };
+
   useEffect(() => {
-    const fetch = async () => {
-      setError(null);
-      try {
-        const [c, u, p, s] = await Promise.all([
-          api.get('/dashboard/settings'),
-          api.get('/dashboard/api-usage'),
-          api.get('/dashboard/performance'),
-          api.get('/dashboard/api-safety'),
-        ]);
-        setConfig(c.data); setApiUsage(u.data); setPerformance(p.data); setSafety(s.data);
-      } catch { setError('Failed to load settings.'); }
-      finally { setLoading(false); }
-    };
-    fetch();
+    fetchAll(true);
+    const interval = setInterval(() => fetchAll(false), 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const callColumns = [

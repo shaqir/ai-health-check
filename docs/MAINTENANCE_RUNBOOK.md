@@ -24,7 +24,7 @@
 
 **Fix:** Create incident with severity high | Run troubleshooting checklist (data issue, prompt change per [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md), model update, infrastructure, safety/policy) | Review per-test trends to determine if factuality or format scoring degraded.
 
-**Prevent:** Investigate when `trend_direction` is "declining" with "high" confidence, even above threshold.
+**Prevent:** Investigate when `trend_direction` is "declining" with "high" confidence, even above threshold. An alert is auto-created in the Alert system when drift is detected; review and acknowledge alerts via `GET /alerts` and `POST /alerts/{id}/acknowledge`.
 
 ---
 

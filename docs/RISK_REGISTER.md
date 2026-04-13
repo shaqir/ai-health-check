@@ -36,6 +36,7 @@ Anthropic updates Claude and response quality degrades silently.
 - Per-test tracking via `EvalResult` model stores score, latency, and response per test case per run
 - Drift severity (none/warning/critical) and trend analysis documented in [EVAL_DATASET_CARD.md](EVAL_DATASET_CARD.md)
 - APScheduler runs evaluations on a configurable recurring schedule
+- Auto-alert creation via the `Alert` model when drift is detected (alert_type, severity, message, service_id); alerts can be acknowledged via `POST /alerts/{id}/acknowledge`
 
 Residual: Small test dataset (2 cases per service) may miss category-specific degradation.
 
@@ -47,6 +48,7 @@ Claude generates plausible but incorrect root causes or summaries.
 
 - LLM output stored in `summary_draft` holding field; requires explicit approval via `approved_by`
 - `score_factuality()` in `llm_client.py` rates factual similarity 0-100 during eval runs (see [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md) for prompt template)
+- `detect_hallucination()` in `llm_client.py` scores unsupported or fabricated claims 0-100 (0 = no hallucination, 100 = severe); result stored in `EvalRun.hallucination_score` (see [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md) for prompt template)
 
 Residual: Human reviewer may lack domain knowledge to catch subtle inaccuracies.
 

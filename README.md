@@ -41,7 +41,7 @@ AIHealthCheck is an **AI Operations Control Room** that answers all four questio
 
 Every time the app talks to the AI model, it goes through this pipeline:
 
-1. **Scan the input** -- Check for prompt injection attempts, personal information (emails, phone numbers, SSNs), and length limits
+1. **Scan the input** -- Check for prompt injection attempts, personal information (emails, phone numbers, SSNs), toxicity (violence, bias, illegal content), and length limits
 2. **Check the budget** -- Block the call if daily ($5) or monthly ($25) spend limits are reached
 3. **Check rate limits** -- Throttle if the user exceeds 5 calls/minute or the system exceeds 10/minute
 4. **Call the model** -- If all checks pass, send the request. If it fails, retry up to 2 times with backoff
@@ -101,8 +101,8 @@ ai-health-check/
 │   ├── app/
 │   │   ├── main.py              # FastAPI app entry point
 │   │   ├── config.py            # 22 settings via .env
-│   │   ├── models/              # 12 database models
-│   │   ├── routers/             # 7 routers, 43 API endpoints
+│   │   ├── models/              # 13 database models
+│   │   ├── routers/             # 7 routers, 47 API endpoints
 │   │   ├── services/            # llm_client.py + safety.py
 │   │   └── middleware/          # auth, rbac, audit
 │   └── tests/                   # 45 tests across 5 files
@@ -121,6 +121,11 @@ ai-health-check/
 - Advanced drift detection with severity levels, trend analysis, and per-test tracking
 - Retry with exponential backoff for transient API failures
 - Login throttling (lockout after 5 failed attempts)
+- Hallucination detection (LLM-as-judge scoring 0-100)
+- LLM call tracing with prompt/response storage
+- Alert system with acknowledge workflow
+- Toxicity and content policy checks
+- Cost analytics by service
 - Dark/light theme with accessible design tokens (WCAG 2.2 AA)
 - Command palette (Cmd+K) with keyboard navigation
 
@@ -133,7 +138,7 @@ ai-health-check/
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
 | [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 45 tests: what they cover and how to run them |
 | [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm |
-| [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 6 LLM prompt templates and model history |
+| [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates and model history |
 | [RISK_REGISTER](docs/RISK_REGISTER.md) | 8 risks with mitigations |
 | [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 9 operational scenarios |
 | [ROADMAP](docs/ROADMAP.md) | Sprint timeline and module ownership |

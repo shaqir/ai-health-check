@@ -29,6 +29,15 @@ Scored by `score_factuality()` in `llm_client.py` (prompt template in [PROMPT_CH
 - Response parsed via regex (`\d+`), clamped to 0-100
 - On exception, defaults to 0.0
 
+### Hallucination Detection
+
+During factuality eval runs, `detect_hallucination()` in `llm_client.py` is called with the original prompt and the model's response (prompt template in [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md)).
+
+- Claude judges whether the response contains unsupported or fabricated claims, scoring 0-100 (0 = no hallucination, 100 = severe hallucination)
+- Response parsed via regex (`\d+`), clamped to 0-100
+- On exception, defaults to 0.0
+- Score stored in `EvalRun.hallucination_score` and displayed in the eval runs table
+
 ### Format (JSON)
 
 Binary scoring via `json.loads()`:

@@ -11,6 +11,7 @@ Functions:
   - test_connection()               → Used by Module 1 (Service Registry)
   - run_eval_prompt()               → Used by Module 2 (Evaluation Harness)
   - score_factuality()              → Used by Module 2 (Evaluation Scoring)
+  - detect_hallucination()          → Used by Module 2 (Hallucination Detection)
   - generate_summary()              → Used by Module 3 (Incident Triage)
   - generate_dashboard_insight()    → Used by Module 2 (Dashboard AI Summary)
   - generate_compliance_summary()   → Used by Module 4 (Compliance AI Report)

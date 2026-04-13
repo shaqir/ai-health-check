@@ -12,7 +12,7 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 | M2: Monitoring Dashboard & Evaluation | Sakir | Dashboard metrics, eval harness, drift detection |
 | M3: Incident Triage & Maintenance Planner | Osele | Incident lifecycle, LLM summaries, maintenance planning |
 | M4: Governance, Security & Compliance | Jeewanjot | Audit logging, compliance reports, user management |
-| Cross-cutting | Shared | Safety scanner, budget enforcement, login throttling, design system |
+| Cross-cutting | Shared | Safety scanner, budget enforcement, login throttling, LLM call tracing, alert system, design system |
 
 ---
 
@@ -69,18 +69,21 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 
 - Aggregates fleet-wide metrics: active service count, average latency, error rate, average quality score
 - Computes P50/P95/P99 latency percentiles from connection logs and API usage data
-- Runs evaluation harness: executes test cases against Claude, scores responses (factuality via LLM-as-judge, format via JSON parse)
+- Runs evaluation harness: executes test cases against Claude, scores responses (factuality via LLM-as-judge, format via JSON parse), and runs hallucination detection on factuality cases
 - Detects model drift with severity classification (none/warning/critical), trend analysis (improving/declining/stable), and confidence scoring
 - Provides per-test-case drift breakdown with historical score tracking
 - Generates AI-powered dashboard insights summarizing platform health
+- Traces LLM calls with full prompt/response storage for auditability
+- Aggregates cost-by-service for monthly spend analysis
+- Manages alerts auto-created on drift, with acknowledge workflow
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `backend/app/routers/dashboard.py` | 12 endpoints: metrics, trends, drift alerts, AI summary, API usage, performance, safety stats |
+| `backend/app/routers/dashboard.py` | 16 endpoints: metrics, trends, drift alerts, AI summary, API usage, performance, safety stats, LLM call traces, cost-by-service, alerts |
 | `backend/app/routers/evaluations.py` | 10 endpoints: test case CRUD, eval run execution, cost preview, drift check, drift trend |
-| `backend/app/services/llm_client.py` | `run_eval_prompt()`, `score_factuality()`, `generate_dashboard_insight()` |
+| `backend/app/services/llm_client.py` | `run_eval_prompt()`, `score_factuality()`, `generate_dashboard_insight()`, `detect_hallucination()` |
 | `backend/app/models/__init__.py` | `EvalTestCase`, `EvalRun`, `EvalResult`, `Telemetry`, `APIUsageLog` models |
 | `frontend/src/pages/DashboardPage.jsx` | Dashboard UI with metric cards, trend charts, drift alerts |
 | `frontend/src/pages/EvaluationsPage.jsx` | Eval harness UI with test case management and run history |
@@ -105,6 +108,10 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 | GET | `/api/v1/dashboard/api-usage` | Daily/monthly token and cost usage with breakdown |
 | GET | `/api/v1/dashboard/performance` | Detailed performance: percentiles, error breakdown, throughput, efficiency |
 | GET | `/api/v1/dashboard/api-safety` | Safety metrics: blocked calls, flagged prompts, risk distribution |
+| GET | `/api/v1/dashboard/api-calls/{id}` | Full LLM call trace with prompt/response text |
+| GET | `/api/v1/dashboard/cost-by-service` | Monthly cost aggregated per AI service |
+| GET | `/api/v1/dashboard/alerts` | List active alerts (auto-created on drift) |
+| POST | `/api/v1/dashboard/alerts/{id}/acknowledge` | Acknowledge an alert (admin/maintainer) |
 | POST | `/api/v1/evaluations/test-cases` | Create eval test case (admin/maintainer) |
 | GET | `/api/v1/evaluations/test-cases` | List test cases (optional service_id filter) |
 | GET | `/api/v1/evaluations/test-cases/{id}` | Get single test case |
@@ -119,10 +126,11 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 ### Database Models
 
 - `EvalTestCase` -- evaluation dataset: prompt, expected output, category (factuality/format_json)
-- `EvalRun` -- evaluation execution: aggregate quality/factuality/format scores, drift flag, run type
+- `EvalRun` -- evaluation execution: aggregate quality/factuality/format scores, drift flag, run type, `hallucination_score` (0-100, from `detect_hallucination()`)
 - `EvalResult` -- per-test-case results: individual score, latency, response text, status
 - `Telemetry` -- service performance metric samples (latency, quality scores)
-- `APIUsageLog` -- LLM cost tracking: tokens, cost, latency, status, safety flags
+- `APIUsageLog` -- LLM cost tracking: tokens, cost, latency, status, safety flags. New columns: `service_id` (FK to AIService for cost-by-service), `prompt_text` and `response_text` (2000 char max, for call tracing)
+- `Alert` -- auto-created on drift detection: type, severity, message, `service_id` (FK to AIService), acknowledged flag. See [ARCHITECTURE](ARCHITECTURE.md#5-database-models-13-models) for full schema
 
 ### Stretch Goals Achieved
 
@@ -132,6 +140,10 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 - Confidence scoring based on historical data volume
 - Cost preview before running evaluations
 - AI-generated dashboard insights
+- Hallucination detection via LLM-as-judge (score 0-100 on factuality cases)
+- Full LLM call tracing with prompt/response storage (2000 char max)
+- Cost-by-service aggregation for monthly spend analysis
+- Alert system with auto-creation on drift and acknowledge workflow
 
 For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD.md).
 
@@ -225,6 +237,7 @@ For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD
 - `AuditLog` -- immutable log: user_id, action, target_table, target_id, old_value, new_value, timestamp
 - `User` -- identity with role enum (admin/maintainer/viewer), bcrypt password hash
 - `LoginAttempt` -- email, timestamp, IP address, success boolean
+- `Alert` -- governance-relevant alerting: type, severity, message, service_id, acknowledged. Auto-created on drift; managed via dashboard endpoints (see [Module 2](#module-2-monitoring-dashboard--evaluation))
 
 ### Stretch Goals Achieved
 
@@ -246,9 +259,10 @@ These features span multiple modules and are not owned by a single team member.
 
 - 15 regex patterns for injection detection (role overrides, delimiter exploitation, system prompt extraction)
 - PII detection for email, phone, SSN, credit card
+- Toxicity checks via `scan_output()` toxicity_patterns: violence, bias, and illegal content filtering
 - Prompt length enforcement (max 10,000 characters)
 - Risk scoring 0-100; score >= 80 blocks the prompt
-- Output scanning for PII leakage and model refusal patterns
+- Output scanning for PII leakage, toxicity, and model refusal patterns
 - Raises `PromptSafetyError` (HTTP 422) when thresholds exceeded
 
 ### API Budget Enforcement
@@ -271,6 +285,31 @@ These features span multiple modules and are not owned by a single team member.
 - Records all login attempts with email, IP, timestamp
 - 5 failed attempts within 15 minutes triggers lockout
 - Lockout returns HTTP 429
+
+### LLM Call Tracing
+
+| File | Purpose |
+|------|---------|
+| `backend/app/services/llm_client.py` | Stores `prompt_text` and `response_text` (2000 char max) in `APIUsageLog` on every call |
+| `backend/app/routers/dashboard.py` | `GET /api-calls/{id}` returns full trace; `GET /cost-by-service` aggregates monthly cost per service |
+
+- Every LLM call records the prompt sent and response received in `APIUsageLog.prompt_text` / `APIUsageLog.response_text`
+- `APIUsageLog.service_id` links each call to the originating AI service for per-service cost analysis
+- Full trace retrievable via `GET /api/v1/dashboard/api-calls/{id}`
+- Inspired by LangSmith/Helicone tracing patterns
+
+### Alert System
+
+| File | Purpose |
+|------|---------|
+| `backend/app/models/__init__.py` | `Alert` model: type, severity, message, service_id, acknowledged |
+| `backend/app/routers/dashboard.py` | `GET /alerts`, `POST /alerts/{id}/acknowledge` |
+
+- Alerts are auto-created when drift detection flags a service
+- Each alert has a severity level and links to the affected AI service
+- Dashboard displays active alerts with an Acknowledge button
+- Acknowledged alerts are retained for audit trail but filtered from active view
+- Inspired by Datadog/PagerDuty alerting patterns
 
 ### Design System & Accessibility
 

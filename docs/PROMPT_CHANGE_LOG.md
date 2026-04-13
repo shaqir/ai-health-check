@@ -158,9 +158,34 @@ Output: Full response returned as `report_text`. Input serialized via `json.dump
 
 ---
 
+### detect_hallucination
+
+Module 2 (Hallucination Detection). Judges whether a model response contains unsupported or fabricated claims. Inspired by Patronus AI / Braintrust. Max tokens: 10.
+
+```
+You are a hallucination detector. Given a prompt and a model's response, rate how much the response contains unsupported or fabricated claims.
+
+PROMPT:
+{prompt}
+
+RESPONSE:
+{response_text}
+
+Score from 0 to 100:
+- 0 = fully grounded, no hallucination
+- 50 = some claims not directly supported by the prompt
+- 100 = mostly fabricated or contradicts the prompt
+
+Respond with ONLY a single integer from 0 to 100. No other text.
+```
+
+Output: Parsed via regex (`\d+`), clamped `min(max(score, 0), 100)`. Defaults to 0.0 on exception. Score stored in `EvalRun.hallucination_score`.
+
+---
+
 ## 3. Centralized Pipeline
 
-All six functions route through `_make_api_call()` in `llm_client.py`:
+All seven functions route through `_make_api_call()` in `llm_client.py`:
 
 1. **Input safety scan** -- `scan_input()` checks injection patterns, PII, and prompt length; blocks unsafe prompts (HTTP 422)
 2. **Budget check** -- `_check_budget()` verifies daily and monthly limits against `api_usage_log`; raises HTTP 402 if exceeded

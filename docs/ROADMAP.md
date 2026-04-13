@@ -6,10 +6,10 @@ Four-week sprint delivering an AI service monitoring and governance platform. Al
 
 | Phase | Timeline | Deliverables | Status |
 |-------|----------|--------------|--------|
-| 1 -- Foundation | Week 1 | Database schema (12 models), FastAPI scaffolding, React project init | Complete |
+| 1 -- Foundation | Week 1 | Database schema (13 models), FastAPI scaffolding, React project init | Complete |
 | 2 -- UI Design | Week 2 | Design system (dark/light themes), Recharts integration, 9 pages, 16 components | Complete |
-| 3 -- Backend Wiring | Week 3 | 7 routers (43 endpoints), LLM client, safety scanner, budget enforcement, drift detection, 45 tests | Complete |
-| 4 -- QA & Finalization | Week 4 | End-to-end verification, security audit, WCAG 2.2 AA accessibility, keyboard navigation, documentation | Complete |
+| 3 -- Backend Wiring | Week 3 | 7 routers (47 endpoints), LLM client (7 functions), safety scanner, budget enforcement, drift detection, 45 tests | Complete |
+| 4 -- QA & Finalization | Week 4 | End-to-end verification, security audit, WCAG 2.2 AA accessibility, keyboard navigation, documentation, market-leader features (hallucination detection, alert system, toxicity scanning) | Complete |
 
 ## Module Ownership
 

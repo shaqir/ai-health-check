@@ -15,9 +15,9 @@ React SPA (Vite 5 + Tailwind 3.4)
     |
     |  Axios + JWT interceptor
     v
-FastAPI Backend (7 routers, 43 endpoints)
+FastAPI Backend (7 routers, 47 endpoints)
     |
-    |--- SQLite (SQLAlchemy ORM, 12 models, Alembic migrations)
+    |--- SQLite (SQLAlchemy ORM, 13 models, Alembic migrations)
     |
     |--- Anthropic API (Claude Sonnet 4.6)
     |        ^
@@ -44,7 +44,7 @@ FastAPI Backend (7 routers, 43 endpoints)
 | `database.py` | SQLAlchemy engine + session factory targeting `sqlite:///./aiops.db` |
 | `seed.py` | Creates default users (admin, maintainer, viewer) and sample services |
 
-### Routers (7 routers, 43 endpoints)
+### Routers (7 routers, 47 endpoints)
 
 | Router | Prefix | Endpoints | Responsibility |
 |--------|--------|-----------|----------------|
@@ -53,7 +53,7 @@ FastAPI Backend (7 routers, 43 endpoints)
 | `evaluations.py` | `/api/v1/evaluations` | 10 | Test case CRUD, eval run execution, cost preview, drift check, drift trend |
 | `incidents.py` | `/api/v1/incidents` | 4 | Incident CRUD, LLM summary generation, human-in-the-loop approval |
 | `maintenance.py` | `/api/v1/maintenance` | 3 | Maintenance plan CRUD, admin approval |
-| `dashboard.py` | `/api/v1/dashboard` | 12 | Metrics, latency/quality/error trends, drift alerts, AI summary, API usage, performance, safety stats |
+| `dashboard.py` | `/api/v1/dashboard` | 16 | Metrics, latency/quality/error trends, drift alerts, AI summary, API usage, performance, safety stats, LLM call traces, cost-by-service, alerts |
 | `compliance.py` | `/api/v1/compliance` | 5 | Audit log queries, user management, JSON/PDF export, AI compliance report |
 
 ### Middleware (3 modules)
@@ -68,12 +68,12 @@ FastAPI Backend (7 routers, 43 endpoints)
 
 | Module | Purpose |
 |--------|---------|
-| `llm_client.py` | 6 Claude functions routed through `_make_api_call` pipeline |
-| `safety.py` | Prompt scanner: 15 injection patterns, PII detection, length limits, risk scoring |
+| `llm_client.py` | 7 Claude functions routed through `_make_api_call` pipeline |
+| `safety.py` | Prompt scanner: 15 injection patterns, PII detection, toxicity checks (violence, bias, illegal content), length limits, risk scoring |
 
 ## 4. LLM Client Pipeline
 
-All Anthropic API calls are centralized in `llm_client.py`. The 6 public functions each delegate to `_make_api_call`.
+All Anthropic API calls are centralized in `llm_client.py`. The 7 public functions each delegate to `_make_api_call`.
 
 ### `_make_api_call` Flow (6 stages)
 
@@ -96,10 +96,11 @@ All Anthropic API calls are centralized in `llm_client.py`. The 6 public functio
 | `generate_summary(service_name, severity, symptoms, checklist)` | `generate_summary` | M3 | 1024 | Draft stakeholder update + root causes |
 | `generate_dashboard_insight(metrics)` | `generate_dashboard_insight` | M2 | 1024 | Summarize platform health + action items |
 | `generate_compliance_summary(audit_data, incidents_data, drift_data)` | `generate_compliance_summary` | M4 | 1024 | Generate governance compliance report |
+| `detect_hallucination(expected, actual)` | `detect_hallucination` | M2 | 10 | LLM-as-judge hallucination score 0-100, runs on factuality eval cases |
 
 Full prompt templates are documented in [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md).
 
-## 5. Database Models (12 models)
+## 5. Database Models (13 models)
 
 This is the canonical model inventory. All models are defined in `backend/app/models/__init__.py`.
 
@@ -115,8 +116,9 @@ This is the canonical model inventory. All models are defined in `backend/app/mo
 | `MaintenancePlan` | `maintenance_plans` | Maintenance actions: rollback plan, validation steps, approval status |
 | `AuditLog` | `audit_logs` | Immutable compliance trail: all POST/PUT/DELETE with user attribution |
 | `Telemetry` | `telemetry` | Service performance telemetry: metric name, value, timestamp |
-| `APIUsageLog` | `api_usage_logs` | LLM cost tracking: tokens, cost, latency, status, safety flags, risk score |
+| `APIUsageLog` | `api_usage_logs` | LLM cost tracking: tokens, cost, latency, status, safety flags, risk score. Includes `service_id` (FK to AIService), `prompt_text`, and `response_text` (2000 char max) for call tracing |
 | `LoginAttempt` | `login_attempts` | Failed login tracking: email, timestamp, IP address, used for throttling |
+| `Alert` | `alerts` | Alert system: type, severity, message, service_id (FK to AIService), acknowledged flag. Auto-created on drift detection. Supports acknowledge workflow |
 
 ## 6. Frontend
 

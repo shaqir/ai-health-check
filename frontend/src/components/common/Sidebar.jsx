@@ -16,16 +16,22 @@ function NavLink({ to, icon: Icon, label, exact = false, shortcut }) {
     <RouterNavLink
       to={to}
       aria-current={active ? 'page' : undefined}
-      className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-150 ${
+      className={`relative flex items-center gap-3 pl-[10px] pr-3 py-2 rounded-md text-sm transition-standard ${
         active
-          ? 'bg-accent-muted text-text font-medium'
+          ? 'bg-accent-weak text-text font-medium'
           : 'text-text-muted hover:bg-surface-elevated hover:text-text'
       }`}
     >
+      {active && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-2 bottom-2 w-[2px] rounded-pill bg-accent"
+        />
+      )}
       <Icon size={16} strokeWidth={1.5} className={active ? 'text-accent' : 'text-text-subtle'} />
       <span className="flex-1">{label}</span>
       {shortcut && (
-        <kbd className="hidden lg:inline text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-sm border border-border">
+        <kbd className="hidden lg:inline text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-xs">
           {shortcut}
         </kbd>
       )}
@@ -39,33 +45,34 @@ export default function Sidebar() {
   const navigate = useNavigate();
 
   return (
-    <aside className="w-60 bg-surface text-text-muted flex flex-col h-full border-r border-border" role="navigation" aria-label="Main navigation">
-      <div className="p-4 flex items-center gap-3 border-b border-border">
-        <div className="w-7 h-7 rounded-md bg-accent flex items-center justify-center">
-          <Server size={14} strokeWidth={1.5} className="text-white" />
+    <aside
+      className="w-60 bg-[var(--material-thin)] backdrop-blur-material backdrop-saturate-material text-text-muted flex flex-col h-full border-r border-hairline"
+      role="navigation"
+      aria-label="Main navigation"
+    >
+      <div className="p-4 flex items-center gap-2.5">
+        <div className="w-6 h-6 rounded-lg bg-accent flex items-center justify-center">
+          <Server size={12} strokeWidth={2} className="text-white" />
         </div>
-        <div>
-          <h1 className="text-sm font-semibold text-text tracking-tight">AIHealthCheck</h1>
-          <p className="text-[10px] uppercase tracking-wider text-text-subtle font-medium">Control Room</p>
-        </div>
+        <h1 className="text-[13px] font-semibold text-text tracking-tight">AI Health Check</h1>
       </div>
 
       {/* Cmd+K trigger */}
-      <div className="px-3 pt-3 pb-1">
+      <div className="px-3 pb-2">
         <button
           onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-subtle bg-surface-elevated border border-border rounded-md hover:text-text hover:border-border-strong transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-subtle bg-[var(--material-thick)] rounded-pill shadow-xs hover:text-text transition-standard"
           aria-label="Open command palette"
         >
           <Search size={12} strokeWidth={1.5} />
           <span className="flex-1 text-left">Search...</span>
-          <kbd className="text-[10px] font-mono bg-surface px-1 py-0.5 rounded-sm border border-border">⌘K</kbd>
+          <kbd className="text-[10px] font-mono bg-surface px-1 py-0.5 rounded-xs">⌘K</kbd>
         </button>
       </div>
 
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
         <div className="mb-3">
-          <p className="px-3 text-[10px] font-semibold text-text-subtle uppercase tracking-wider mb-1.5">Platform</p>
+          <p className="px-3 text-[11px] font-medium text-text-subtle tracking-tight mb-1.5">Platform</p>
           <NavLink to="/" icon={LayoutDashboard} label="Dashboard" exact shortcut="G D" />
           <NavLink to="/services" icon={Server} label="Services" shortcut="G S" />
           <NavLink to="/evaluations" icon={FlaskConical} label="Evaluations" shortcut="G E" />
@@ -73,25 +80,25 @@ export default function Sidebar() {
         </div>
 
         <div>
-          <p className="px-3 text-[10px] font-semibold text-text-subtle uppercase tracking-wider mb-1.5">Administration</p>
+          <p className="px-3 text-[11px] font-medium text-text-subtle tracking-tight mb-1.5">Administration</p>
           <NavLink to="/governance" icon={Shield} label="Governance" />
           <NavLink to="/data-policy" icon={FileText} label="Data Policy" />
           <NavLink to="/settings" icon={Settings} label="API & Settings" />
         </div>
       </nav>
 
-      <div className="p-3 border-t border-border space-y-2">
+      <div className="p-3 border-t border-hairline space-y-1">
         <button
           onClick={toggle}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-text hover:bg-surface-elevated rounded-md transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard"
           aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
           {theme === 'dark' ? <Sun size={14} strokeWidth={1.5} /> : <Moon size={14} strokeWidth={1.5} />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}
         </button>
 
-        <div className="flex items-center gap-2.5 px-3 py-2 bg-surface-elevated rounded-md border border-border">
-          <div className="w-7 h-7 rounded-md bg-accent/20 flex items-center justify-center text-xs font-medium text-accent">
+        <div className="flex items-center gap-2.5 px-3 py-2">
+          <div className="w-7 h-7 rounded-full bg-accent-weak flex items-center justify-center text-xs font-medium text-accent">
             {user?.username?.[0]?.toUpperCase() || 'U'}
           </div>
           <div className="flex-1 min-w-0">
@@ -100,7 +107,7 @@ export default function Sidebar() {
           </div>
           <button
             onClick={logout}
-            className="p-1 text-text-subtle hover:text-status-failing rounded-sm transition-colors"
+            className="p-1 text-text-subtle hover:text-status-failing rounded-xs transition-standard"
             aria-label="Sign out"
           >
             <LogOut size={14} strokeWidth={1.5} />

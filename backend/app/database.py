@@ -1,10 +1,17 @@
 """
 Database engine and session factory.
 Uses SQLite for simplicity — zero config, file-based.
+
+Also enforces FK constraints on every SQLite connection. SQLite has
+foreign-key enforcement OFF by default, so orphan rows would otherwise
+slip through on cascades. We enable it at connect-time via the event
+hook below.
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
+
 from app.config import get_settings
 
 settings = get_settings()
@@ -14,6 +21,26 @@ engine = create_engine(
     connect_args={"check_same_thread": False},  # Required for SQLite
     echo=settings.debug,
 )
+
+
+@event.listens_for(Engine, "connect")
+def _enforce_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """
+    Every SQLite connection starts with PRAGMA foreign_keys = ON.
+    Without this, ForeignKey declarations are decorative — deleting a
+    parent row silently orphans its children. Applied to any Engine
+    backed by SQLite; a no-op on other backends.
+    """
+    driver = getattr(dbapi_connection, "__class__", type(dbapi_connection)).__module__
+    # sqlite3 module or pysqlite2 — either way, the SQL below is valid SQLite.
+    if "sqlite" not in driver.lower():
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

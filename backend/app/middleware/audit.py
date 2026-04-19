@@ -11,12 +11,23 @@ direct DB connection — which the hash chain detects on next verify.
 """
 
 import hashlib
+import threading
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from app.models import AuditLog
 
 GENESIS_HASH = "0" * 64
+
+# Serialises log_action() inside a single process. Without this, two
+# concurrent requests both read the same "last row", compute the same
+# prev_hash, and commit — producing two rows with the same prev_hash
+# and corrupting the chain under normal concurrent use.
+#
+# For multi-worker deployments this would need a DB-native lock
+# (SELECT ... FOR UPDATE on Postgres, or an advisory lock). For the
+# single-process SQLite dev/test environment this is sufficient.
+_AUDIT_LOCK = threading.Lock()
 
 
 def _compute_content_hash(
@@ -56,39 +67,42 @@ def log_action(
     Record an action in the audit log with a hash-chain link.
     Called after every create, update, or delete operation.
     """
-    # Link to previous row
-    prev_row = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
-    prev_hash = (prev_row.content_hash or GENESIS_HASH) if prev_row else GENESIS_HASH
+    # Hold the lock across read-of-previous, hash computation, insert,
+    # and commit so two concurrent callers never link to the same
+    # prev_hash. Keep the critical section small — just DB work.
+    with _AUDIT_LOCK:
+        prev_row = db.query(AuditLog).order_by(AuditLog.id.desc()).first()
+        prev_hash = (prev_row.content_hash or GENESIS_HASH) if prev_row else GENESIS_HASH
 
-    # Compute timestamp + hash BEFORE insert so the row is immutable once written.
-    # The append-only trigger would reject an UPDATE after flush.
-    # Use tz-naive datetime so SQLite round-trip preserves the isoformat
-    # string used in the hash (SQLite DateTime columns drop tzinfo).
-    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
-    content_hash = _compute_content_hash(
-        user_id=user_id,
-        action=action,
-        target_table=target_table,
-        target_id=target_id,
-        old_value=old_value,
-        new_value=new_value,
-        timestamp_iso=timestamp.isoformat(),
-        prev_hash=prev_hash,
-    )
+        # Compute timestamp + hash BEFORE insert so the row is immutable once written.
+        # The append-only trigger would reject an UPDATE after flush.
+        # Use tz-naive datetime so SQLite round-trip preserves the isoformat
+        # string used in the hash (SQLite DateTime columns drop tzinfo).
+        timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
+        content_hash = _compute_content_hash(
+            user_id=user_id,
+            action=action,
+            target_table=target_table,
+            target_id=target_id,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp_iso=timestamp.isoformat(),
+            prev_hash=prev_hash,
+        )
 
-    entry = AuditLog(
-        user_id=user_id,
-        action=action,
-        target_table=target_table,
-        target_id=target_id,
-        old_value=old_value,
-        new_value=new_value,
-        timestamp=timestamp,
-        prev_hash=prev_hash,
-        content_hash=content_hash,
-    )
-    db.add(entry)
-    db.commit()
+        entry = AuditLog(
+            user_id=user_id,
+            action=action,
+            target_table=target_table,
+            target_id=target_id,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=timestamp,
+            prev_hash=prev_hash,
+            content_hash=content_hash,
+        )
+        db.add(entry)
+        db.commit()
 
 
 def verify_audit_chain(db: Session) -> dict:

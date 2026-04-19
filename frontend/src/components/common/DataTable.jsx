@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { InfoTip } from './Tooltip';
 
 export default function DataTable({ columns, data, searchPlaceholder = 'Search...', onRowClick }) {
   const [search, setSearch] = useState('');
@@ -31,18 +32,18 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
     : filtered;
 
   return (
-    <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
+    <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
       {/* Search */}
-      <div className="px-4 py-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-hairline">
         <div className="relative">
-          <Search size={14} strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
+          <Search size={14} strokeWidth={1.5} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="w-full pl-9 pr-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent"
+            className="w-full pl-9 pr-3 py-2 text-sm bg-[var(--material-thick)] rounded-pill text-text placeholder-text-subtle transition-standard"
           />
         </div>
       </div>
@@ -51,11 +52,11 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
       <div className="overflow-x-auto">
         <table className="w-full text-sm" role="table">
           <thead>
-            <tr className="border-b border-border bg-surface-elevated">
+            <tr className="border-b border-hairline">
               {columns.map(col => (
                 <th
                   key={col.key}
-                  className="px-4 py-2.5 text-left text-xs font-semibold text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text transition-colors"
+                  className="px-4 py-3 text-left text-[11px] font-medium text-text-muted tracking-tight cursor-pointer select-none hover:text-text transition-standard"
                   onClick={() => handleSort(col.key)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSort(col.key)}
                   tabIndex={0}
@@ -64,6 +65,7 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
                 >
                   <span className="flex items-center gap-1">
                     {col.label}
+                    {col.tooltip && <InfoTip content={col.tooltip} size={11} />}
                     {sortKey === col.key && (
                       sortDir === 'asc'
                         ? <ChevronUp size={12} strokeWidth={1.5} />
@@ -74,10 +76,10 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
+          <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-8 text-center text-text-subtle text-sm">
+                <td colSpan={columns.length} className="px-4 py-10 text-center text-text-subtle text-sm">
                   No results found
                 </td>
               </tr>
@@ -85,7 +87,7 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
               sorted.map((row, i) => (
                 <tr
                   key={row.id || i}
-                  className={`transition-colors ${onRowClick ? 'cursor-pointer hover:bg-surface-elevated' : 'hover:bg-surface-elevated/50'}`}
+                  className={`border-b border-hairline last:border-0 transition-standard ${onRowClick ? 'cursor-pointer hover:bg-accent-weak' : 'hover:bg-surface-elevated/60'}`}
                   onClick={() => onRowClick?.(row)}
                   onKeyDown={(e) => e.key === 'Enter' && onRowClick?.(row)}
                   tabIndex={onRowClick ? 0 : undefined}
@@ -104,7 +106,7 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-2 border-t border-border text-xs text-text-subtle tabular-nums">
+      <div className="px-4 py-2 border-t border-hairline text-[11px] text-text-subtle tabular-nums">
         {sorted.length} of {data.length} {data.length === 1 ? 'record' : 'records'}
       </div>
     </div>

@@ -109,20 +109,20 @@ export default function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center pt-[20vh] bg-surface-overlay"
+      className="fixed inset-0 z-[100] flex items-start justify-center pt-[18vh] bg-[color-mix(in_oklab,black_40%,transparent)] backdrop-blur-sm"
       onClick={() => { setOpen(false); setQuery(''); }}
       role="presentation"
     >
       <div
-        className="w-full max-w-md bg-surface border border-border rounded-lg shadow-md overflow-hidden"
+        className="w-full max-w-lg rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg overflow-hidden"
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
       >
         {/* Search input */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-          <Search size={14} strokeWidth={1.5} className="text-text-subtle shrink-0" />
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-hairline">
+          <Search size={16} strokeWidth={1.5} className="text-text-subtle shrink-0" />
           <input
             ref={inputRef}
             type="text"
@@ -130,16 +130,16 @@ export default function CommandPalette() {
             onChange={e => { setQuery(e.target.value); setSelected(0); }}
             onKeyDown={handleKeyDown}
             placeholder="Type a command or search..."
-            className="flex-1 text-sm bg-transparent text-text placeholder-text-subtle outline-none"
+            className="flex-1 text-[15px] bg-transparent text-text placeholder-text-subtle outline-none"
             aria-label="Search commands"
           />
-          <kbd className="text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-sm border border-border">
+          <kbd className="text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-xs">
             esc
           </kbd>
         </div>
 
         {/* Results */}
-        <div className="max-h-64 overflow-y-auto py-1" role="listbox">
+        <div className="max-h-72 overflow-y-auto p-1.5" role="listbox">
           {filtered.length === 0 ? (
             <p className="px-4 py-6 text-sm text-text-subtle text-center">No results</p>
           ) : (
@@ -152,16 +152,16 @@ export default function CommandPalette() {
                   aria-selected={i === selected}
                   onClick={() => go(item.path)}
                   onMouseEnter={() => setSelected(i)}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                    i === selected ? 'bg-accent-muted' : ''
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left transition-standard ${
+                    i === selected ? 'bg-accent-weak shadow-xs' : ''
                   }`}
                 >
-                  <Icon size={14} strokeWidth={1.5} className={i === selected ? 'text-accent' : 'text-text-subtle'} />
+                  <Icon size={15} strokeWidth={1.5} className={i === selected ? 'text-accent' : 'text-text-subtle'} />
                   <span className={`flex-1 text-sm ${i === selected ? 'text-text font-medium' : 'text-text-muted'}`}>
                     {item.label}
                   </span>
                   {item.shortcut && (
-                    <kbd className="text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-sm border border-border">
+                    <kbd className="text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-xs">
                       {item.shortcut}
                     </kbd>
                   )}
@@ -173,10 +173,10 @@ export default function CommandPalette() {
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2 border-t border-border flex items-center gap-4 text-[10px] text-text-subtle">
-          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-sm border border-border">↑↓</kbd> navigate</span>
-          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-sm border border-border">↵</kbd> open</span>
-          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-sm border border-border">esc</kbd> close</span>
+        <div className="px-5 py-2.5 border-t border-hairline flex items-center gap-4 text-[10px] text-text-subtle">
+          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-xs">↑↓</kbd> navigate</span>
+          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-xs">↵</kbd> open</span>
+          <span><kbd className="font-mono bg-surface-elevated px-1 py-0.5 rounded-xs">esc</kbd> close</span>
         </div>
       </div>
     </div>

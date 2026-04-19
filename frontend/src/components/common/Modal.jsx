@@ -1,9 +1,19 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 export default function Modal({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-lg' }) {
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setEntered(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen]);
 
   // Focus trap + Escape key
   useEffect(() => {
@@ -45,7 +55,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-overlay"
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-[color-mix(in_oklab,black_40%,transparent)] backdrop-blur-sm transition-standard ${entered ? 'opacity-100' : 'opacity-0'}`}
       onClick={onClose}
       role="presentation"
     >
@@ -54,16 +64,16 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`${maxWidth} w-full bg-surface rounded-lg border border-border shadow-md`}
+        className={`${maxWidth} w-full rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg transition-spring ${entered ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.96]'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 id="modal-title" className="text-sm font-semibold text-text">{title}</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-hairline">
+          <h2 id="modal-title" className="text-base font-semibold text-text tracking-tight">{title}</h2>
           <button
             ref={closeRef}
             onClick={onClose}
-            className="p-1 text-text-subtle hover:text-text hover:bg-surface-elevated rounded-md transition-colors"
+            className="p-1 text-text-subtle hover:text-text hover:bg-surface-elevated rounded-pill transition-standard"
             aria-label="Close dialog"
           >
             <X size={16} strokeWidth={1.5} />
@@ -71,13 +81,13 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+        <div className="px-6 py-5 max-h-[60vh] overflow-y-auto">
           {children}
         </div>
 
         {/* Footer */}
         {footer && (
-          <div className="flex justify-end gap-2 px-5 py-3 border-t border-border">
+          <div className="flex justify-end gap-2 px-6 py-3 border-t border-hairline">
             {footer}
           </div>
         )}

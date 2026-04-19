@@ -9,13 +9,14 @@
 
 Read in this order:
 
-1. [ARCHITECTURE](ARCHITECTURE.md) — system design, 14 models, 9 routers, configuration reference.
-2. [MODULE_GUIDE](MODULE_GUIDE.md) — M1-M4 module breakdown with owners, endpoints, demo flow.
-3. [TESTING_STRATEGY](TESTING_STRATEGY.md) — 123 tests across 13 files with coverage policy.
-4. [RISK_REGISTER](RISK_REGISTER.md) — 17 risks formally tracked with mitigations and residuals.
-5. [SELF_CRITIQUE](SELF_CRITIQUE.md) — 5 methodological weaknesses the team identified in its own work.
+1. [TECHNICAL_REFERENCE](TECHNICAL_REFERENCE.md) — single consolidated reference manual covering all 14 documentation sections + presentation defence guide.
+2. [ARCHITECTURE](ARCHITECTURE.md) — system design, 14 models, 9 routers, configuration reference.
+3. [MODULE_GUIDE](MODULE_GUIDE.md) — M1-M4 module breakdown with owners, endpoints, demo flow.
+4. [TESTING_STRATEGY](TESTING_STRATEGY.md) — 123 tests across 13 files with coverage policy.
+5. [RISK_REGISTER](RISK_REGISTER.md) — 17 risks formally tracked with mitigations and residuals.
+6. [SELF_CRITIQUE](SELF_CRITIQUE.md) — 5 methodological weaknesses the team identified in its own work.
 
-Time budget: 45–60 minutes for a thorough pass.
+Time budget: 45–60 minutes for a thorough pass. If you only have 20 min, read TECHNICAL_REFERENCE alone.
 
 ---
 
@@ -62,6 +63,7 @@ Time budget: 30 minutes the night before, 10 minutes the morning of.
 
 | Doc | One-line summary |
 |---|---|
+| [TECHNICAL_REFERENCE](TECHNICAL_REFERENCE.md) | Consolidated reference manual (14 sections + presentation defence guide) |
 | [ARCHITECTURE](ARCHITECTURE.md) | System design, models, routers, configuration reference |
 | [MODULE_GUIDE](MODULE_GUIDE.md) | M1-M4 owners, files, endpoints, cross-cutting features, end-to-end demo flow |
 | [ONBOARDING](ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |

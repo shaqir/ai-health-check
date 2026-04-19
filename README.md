@@ -160,6 +160,7 @@ reviewing compliance, or rehearsing a demo.
 | Document | What's in it |
 |----------|-------------|
 | [docs/README](docs/README.md) | Reading guide by audience (grader / developer / compliance / viva) |
+| [TECHNICAL_REFERENCE](docs/TECHNICAL_REFERENCE.md) | Consolidated reference manual — 14 sections + 20-min presentation defence guide with per-speaker scripts |
 | [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |

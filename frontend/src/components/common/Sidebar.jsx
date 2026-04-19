@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import NotificationsBell from './NotificationsBell';
 
-function NavLink({ to, icon: Icon, label, exact = false, shortcut }) {
+function NavLink({ to, icon: Icon, label, exact = false }) {
   const location = useLocation();
   const active = exact
     ? location.pathname === to
@@ -31,11 +31,6 @@ function NavLink({ to, icon: Icon, label, exact = false, shortcut }) {
       )}
       <Icon size={16} strokeWidth={1.5} className={active ? 'text-accent' : 'text-text-subtle'} />
       <span className="flex-1">{label}</span>
-      {shortcut && (
-        <kbd className="hidden lg:inline text-[10px] font-mono text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-xs">
-          {shortcut}
-        </kbd>
-      )}
     </RouterNavLink>
   );
 }
@@ -74,10 +69,10 @@ export default function Sidebar() {
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
         <div className="mb-3">
           <p className="px-3 text-[11px] font-medium text-text-subtle tracking-tight mb-1.5">Platform</p>
-          <NavLink to="/" icon={LayoutDashboard} label="Dashboard" exact shortcut="G D" />
-          <NavLink to="/services" icon={Server} label="Services" shortcut="G S" />
-          <NavLink to="/evaluations" icon={FlaskConical} label="Evaluations" shortcut="G E" />
-          <NavLink to="/incidents" icon={AlertTriangle} label="Incidents" shortcut="G I" />
+          <NavLink to="/" icon={LayoutDashboard} label="Dashboard" exact />
+          <NavLink to="/services" icon={Server} label="Services" />
+          <NavLink to="/evaluations" icon={FlaskConical} label="Evaluations" />
+          <NavLink to="/incidents" icon={AlertTriangle} label="Incidents" />
         </div>
 
         <div>

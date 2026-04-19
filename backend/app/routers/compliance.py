@@ -15,7 +15,7 @@ from app.database import get_db
 from app.middleware.audit import log_action, verify_audit_chain
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AILlmDraft, AuditLog, EvalRun, Incident, User, UserRole
+from app.models import AILlmDraft, AuditLog, EvalRun, Incident, MaintenancePlan, User, UserRole
 from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_compliance_summary
 
@@ -235,6 +235,77 @@ def export_compliance_data(
             "timestamp": log.timestamp.isoformat() if log.timestamp else "",
         })
 
+    # ── Incidents (only approved summaries count as official) ──
+    inc_query = db.query(Incident).order_by(Incident.created_at.desc())
+    if req.from_date:
+        try:
+            inc_query = inc_query.filter(
+                Incident.created_at >= datetime.fromisoformat(req.from_date)
+            )
+        except ValueError:
+            pass
+    if req.to_date:
+        try:
+            inc_query = inc_query.filter(
+                Incident.created_at <= datetime.fromisoformat(req.to_date)
+            )
+        except ValueError:
+            pass
+    incidents = inc_query.limit(500).all()
+    incidents_records = [
+        {
+            "id": i.id,
+            "service_id": i.service_id,
+            "severity": i.severity.value,
+            "status": i.status.value,
+            "symptoms": (i.symptoms or "")[:500],
+            "summary": i.summary or "",  # "" if unapproved; drafts excluded
+            "root_causes": i.root_causes or "",
+            "checklist": {
+                "data_issue": i.checklist_data_issue,
+                "prompt_change": i.checklist_prompt_change,
+                "model_update": i.checklist_model_update,
+                "infrastructure": i.checklist_infrastructure,
+                "safety_policy": i.checklist_safety_policy,
+            },
+            "approved_by_user_id": i.approved_by,
+            "timeline": i.timeline.isoformat() if i.timeline else "",
+            "created_at": i.created_at.isoformat() if i.created_at else "",
+        }
+        for i in incidents
+    ]
+
+    # ── Maintenance plans ──
+    mp_query = db.query(MaintenancePlan).order_by(MaintenancePlan.created_at.desc())
+    if req.from_date:
+        try:
+            mp_query = mp_query.filter(
+                MaintenancePlan.created_at >= datetime.fromisoformat(req.from_date)
+            )
+        except ValueError:
+            pass
+    if req.to_date:
+        try:
+            mp_query = mp_query.filter(
+                MaintenancePlan.created_at <= datetime.fromisoformat(req.to_date)
+            )
+        except ValueError:
+            pass
+    plans = mp_query.limit(500).all()
+    maintenance_records = [
+        {
+            "id": p.id,
+            "incident_id": p.incident_id,
+            "risk_level": p.risk_level.value,
+            "rollback_plan": p.rollback_plan,
+            "validation_steps": p.validation_steps,
+            "approved": p.approved,
+            "scheduled_date": p.scheduled_date.isoformat() if p.scheduled_date else "",
+            "created_at": p.created_at.isoformat() if p.created_at else "",
+        }
+        for p in plans
+    ]
+
     if req.format == "pdf":
         try:
             from reportlab.lib.pagesizes import letter
@@ -256,10 +327,15 @@ def export_compliance_data(
                 elements.append(Paragraph(date_range, styles["Normal"]))
                 elements.append(Spacer(1, 0.15 * inch))
 
-            elements.append(Paragraph(f"Total Records: {len(records)}", styles["Normal"]))
+            elements.append(Paragraph(
+                f"Audit records: {len(records)} · Incidents: {len(incidents_records)} "
+                f"· Maintenance plans: {len(maintenance_records)}",
+                styles["Normal"],
+            ))
             elements.append(Spacer(1, 0.25 * inch))
 
             if records:
+                elements.append(Paragraph("Audit Log", styles["Heading2"]))
                 table_data = [["User", "Action", "Target", "Timestamp"]]
                 for r in records[:100]:
                     table_data.append([
@@ -278,6 +354,49 @@ def export_compliance_data(
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
                 ]))
                 elements.append(table)
+                elements.append(Spacer(1, 0.25 * inch))
+
+            if incidents_records:
+                elements.append(Paragraph("Incidents", styles["Heading2"]))
+                inc_table = [["ID", "Severity", "Status", "Symptoms (preview)"]]
+                for i in incidents_records[:60]:
+                    inc_table.append([
+                        str(i["id"]),
+                        i["severity"],
+                        i["status"],
+                        (i["symptoms"] or "")[:60],
+                    ])
+                t = Table(inc_table, colWidths=[0.5 * inch, 1 * inch, 1 * inch, 4 * inch])
+                t.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+                ]))
+                elements.append(t)
+                elements.append(Spacer(1, 0.25 * inch))
+
+            if maintenance_records:
+                elements.append(Paragraph("Maintenance Plans", styles["Heading2"]))
+                mp_table = [["ID", "Incident", "Risk", "Approved", "Scheduled"]]
+                for p in maintenance_records[:60]:
+                    mp_table.append([
+                        str(p["id"]),
+                        str(p["incident_id"]),
+                        p["risk_level"],
+                        "Yes" if p["approved"] else "No",
+                        (p["scheduled_date"] or "")[:19],
+                    ])
+                t = Table(mp_table, colWidths=[0.5 * inch, 0.7 * inch, 1 * inch, 0.9 * inch, 1.5 * inch])
+                t.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+                ]))
+                elements.append(t)
 
             doc.build(elements)
             buffer.seek(0)
@@ -295,7 +414,12 @@ def export_compliance_data(
 
     # Default: JSON export
     return JSONResponse(
-        content={"records": records, "total": len(records)},
+        content={
+            "records": records,
+            "total": len(records),
+            "incidents": incidents_records,
+            "maintenance_plans": maintenance_records,
+        },
         headers={"Content-Disposition": "attachment; filename=compliance_report.json"},
     )
 

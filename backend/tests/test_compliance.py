@@ -218,3 +218,124 @@ def test_audit_log_verify_denies_non_admin(client, db, viewer_token, maintainer_
         "/api/v1/compliance/audit-log/verify",
         headers=auth_header(maintainer_token),
     ).status_code == 403
+
+
+# ── Compliance export — incidents + maintenance coverage ──
+
+def test_export_json_contains_incidents_and_maintenance(client, db, admin_token, admin_user):
+    """Export must include incidents[] and maintenance_plans[] arrays, not just audit records."""
+    from app.models import (
+        AIService, Environment, SensitivityLabel,
+        Incident, Severity, IncidentStatus, MaintenancePlan,
+    )
+
+    svc = AIService(
+        name="S1", owner="T", environment=Environment.prod,
+        model_name="m", sensitivity_label=SensitivityLabel.internal,
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+
+    inc = Incident(
+        service_id=svc.id, severity=Severity.high,
+        symptoms="latency spike", status=IncidentStatus.open,
+    )
+    db.add(inc)
+    db.commit()
+    db.refresh(inc)
+
+    plan = MaintenancePlan(
+        incident_id=inc.id, risk_level=Severity.medium,
+        rollback_plan="revert deploy", validation_steps="run smoke tests",
+    )
+    db.add(plan)
+    db.commit()
+
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert "incidents" in body
+    assert "maintenance_plans" in body
+    assert len(body["incidents"]) == 1
+    assert body["incidents"][0]["severity"] == "high"
+    assert len(body["maintenance_plans"]) == 1
+    assert body["maintenance_plans"][0]["risk_level"] == "medium"
+
+
+def test_export_omits_unapproved_incident_summaries(client, db, admin_token):
+    """Only approved incident summaries should appear in the export. Drafts are excluded."""
+    from app.models import (
+        AIService, Environment, SensitivityLabel,
+        Incident, Severity, IncidentStatus,
+    )
+
+    svc = AIService(
+        name="S", owner="T", environment=Environment.prod,
+        model_name="m", sensitivity_label=SensitivityLabel.internal,
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+
+    inc = Incident(
+        service_id=svc.id, severity=Severity.low, symptoms="x",
+        status=IncidentStatus.open,
+        summary="",  # never approved
+        summary_draft="AI-drafted summary (not approved)",
+    )
+    db.add(inc)
+    db.commit()
+
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json"},
+        headers=auth_header(admin_token),
+    )
+    body = res.json()
+    assert body["incidents"][0]["summary"] == ""
+
+
+def test_export_pdf_renders_with_sections(client, db, admin_token):
+    """Smoke test: PDF mode returns non-empty bytes with all sections present."""
+    from app.models import (
+        AIService, Environment, SensitivityLabel,
+        Incident, Severity, IncidentStatus, MaintenancePlan, AuditLog,
+    )
+
+    # Seed all three kinds of records
+    svc = AIService(
+        name="S", owner="T", environment=Environment.prod,
+        model_name="m", sensitivity_label=SensitivityLabel.internal,
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+
+    from app.middleware.audit import log_action
+    log_action(db, None, "test_action", "ai_services", svc.id)
+
+    inc = Incident(service_id=svc.id, severity=Severity.low, symptoms="s")
+    db.add(inc)
+    db.commit()
+    db.refresh(inc)
+
+    db.add(MaintenancePlan(
+        incident_id=inc.id, risk_level=Severity.low,
+        rollback_plan="r", validation_steps="v",
+    ))
+    db.commit()
+
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "pdf"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    # Non-trivial byte length means the new sections rendered
+    assert len(res.content) > 2000
+    assert res.headers["content-type"] == "application/pdf"

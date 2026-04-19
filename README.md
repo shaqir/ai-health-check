@@ -163,6 +163,7 @@ ai-health-check/
 | [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
 | [RISK_REGISTER](docs/RISK_REGISTER.md) | 17 risks with mitigations and residuals |
 | [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 15 operational scenarios (incl. audit integrity, SSRF, confidential override, judge refusals) |
+| [LIVE_DEMO_WALKTHROUGH](docs/LIVE_DEMO_WALKTHROUGH.md) | Day-before rehearsal: 9-step demo script with failure modes, mitigations, and killshot moments |
 | [ROADMAP](docs/ROADMAP.md) | Sprint timeline and module ownership |
 
 ---

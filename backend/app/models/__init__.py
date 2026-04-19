@@ -268,3 +268,23 @@ class Alert(Base):
     acknowledged_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     acknowledged_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+
+
+class AILlmDraft(Base):
+    """
+    Human-in-the-loop envelope for LLM-generated content that needs human
+    approval before it counts as official. Backs dashboard AI summaries and
+    compliance AI reports. Incident summaries use a separate field pattern
+    on the Incident model (kept as-is to avoid breaking its UI).
+    """
+    __tablename__ = "ai_llm_drafts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Which surface generated this draft — keeps a single table for many uses.
+    surface = Column(String(50), nullable=False)  # "dashboard_insight" | "compliance_report"
+    surface_ref = Column(String(100), default="")  # optional external reference (date range, etc.)
+    content = Column(Text, nullable=False)
+    generated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)

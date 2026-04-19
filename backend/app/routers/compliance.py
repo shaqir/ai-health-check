@@ -15,7 +15,8 @@ from app.database import get_db
 from app.middleware.audit import log_action, verify_audit_chain
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AuditLog, EvalRun, Incident, User, UserRole
+from app.models import AILlmDraft, AuditLog, EvalRun, Incident, User, UserRole
+from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_compliance_summary
 
 router = APIRouter()
@@ -309,7 +310,7 @@ async def generate_ai_compliance_report(
     from_date: str | None = Query(None),
     to_date: str | None = Query(None),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
     if from_date:
@@ -342,4 +343,65 @@ async def generate_ai_compliance_report(
     ]
 
     result = await generate_compliance_summary(audit_data, incidents_data, drift_data)
-    return result
+
+    # HITL: persist as unapproved draft. Report is not official until
+    # an admin explicitly approves it.
+    surface_ref = f"{from_date or 'start'}_to_{to_date or 'now'}"
+    draft = create_draft(
+        db,
+        surface="compliance_report",
+        content=result.get("report_text", ""),
+        generated_by_user_id=current_user.id,
+        surface_ref=surface_ref,
+    )
+    return {
+        "draft_id": draft.id,
+        "content": draft.content,
+        "approved": False,
+        "surface": "compliance_report",
+    }
+
+
+@router.post(
+    "/ai-report/{draft_id}/approve",
+    dependencies=[Depends(require_role(["admin"]))],
+)
+def approve_ai_report(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    draft = approve_draft(db, draft_id, current_user.id)
+    return {
+        "draft_id": draft.id,
+        "approved": True,
+        "approved_by_user_id": draft.approved_by_user_id,
+        "approved_at": draft.approved_at,
+    }
+
+
+@router.get(
+    "/ai-report/recent",
+    dependencies=[Depends(require_role(["admin"]))],
+)
+def recent_ai_reports(
+    approved_only: bool = Query(True),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    q = db.query(AILlmDraft).filter(AILlmDraft.surface == "compliance_report")
+    if approved_only:
+        q = q.filter(AILlmDraft.approved_by_user_id.isnot(None))
+    rows = q.order_by(AILlmDraft.id.desc()).limit(limit).all()
+    return [
+        {
+            "draft_id": r.id,
+            "content": r.content,
+            "approved": r.approved_by_user_id is not None,
+            "approved_at": r.approved_at,
+            "created_at": r.created_at,
+            "surface_ref": r.surface_ref,
+        }
+        for r in rows
+    ]

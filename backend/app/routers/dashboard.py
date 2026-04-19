@@ -13,7 +13,8 @@ from app.config import get_settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AIService, Alert, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
+from app.models import AIService, AILlmDraft, Alert, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
+from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_dashboard_insight
 
 router = APIRouter()
@@ -318,7 +319,7 @@ def get_drift_alerts(
 )
 async def get_ai_summary(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     now = datetime.now(timezone.utc)
     day_ago = now - timedelta(hours=24)
@@ -355,7 +356,65 @@ async def get_ai_summary(
     }
 
     result = await generate_dashboard_insight(metrics)
-    return result
+
+    # HITL: persist as unapproved draft. Caller must explicitly approve
+    # before the insight counts as an official published update.
+    draft = create_draft(
+        db,
+        surface="dashboard_insight",
+        content=result.get("insight_text", ""),
+        generated_by_user_id=current_user.id,
+        surface_ref=now.strftime("%Y-%m-%d"),
+    )
+
+    return {
+        "draft_id": draft.id,
+        "content": draft.content,
+        "approved": False,
+        "surface": "dashboard_insight",
+    }
+
+
+@router.post(
+    "/ai-summary/{draft_id}/approve",
+    dependencies=[Depends(require_role(["admin", "maintainer"]))],
+)
+def approve_ai_summary(
+    draft_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    draft = approve_draft(db, draft_id, current_user.id)
+    return {
+        "draft_id": draft.id,
+        "approved": True,
+        "approved_by_user_id": draft.approved_by_user_id,
+        "approved_at": draft.approved_at,
+    }
+
+
+@router.get("/ai-summary/recent")
+def recent_ai_summaries(
+    approved_only: bool = Query(True),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    q = db.query(AILlmDraft).filter(AILlmDraft.surface == "dashboard_insight")
+    if approved_only:
+        q = q.filter(AILlmDraft.approved_by_user_id.isnot(None))
+    rows = q.order_by(AILlmDraft.id.desc()).limit(limit).all()
+    return [
+        {
+            "draft_id": r.id,
+            "content": r.content,
+            "approved": r.approved_by_user_id is not None,
+            "approved_at": r.approved_at,
+            "created_at": r.created_at,
+            "surface_ref": r.surface_ref,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/claude-health")

@@ -25,6 +25,7 @@ from app.services.safety import PromptSafetyError
 from app.models import (  # noqa: F401
     User, AIService, ConnectionLog, EvalTestCase, EvalRun, EvalResult,
     Incident, MaintenancePlan, AuditLog, Telemetry, APIUsageLog, LoginAttempt, Alert,
+    AILlmDraft,
 )
 
 # Import routers

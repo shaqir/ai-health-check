@@ -38,7 +38,9 @@ export default function GovernancePage() {
             id: log.id,
             timestamp: log.timestamp ? new Date(log.timestamp).toLocaleString() : '',
             user: log.user_email || 'system',
-            action: log.action.toUpperCase(),
+            // Title-case snake_case action for display; keep the raw value
+            // available in details if an examiner inspects the network tab.
+            action: log.action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
             target: `${log.target_table}#${log.target_id || ''}`,
             details: log.new_value || log.old_value || '',
           })));
@@ -109,7 +111,7 @@ export default function GovernancePage() {
   const auditColumns = [
     { key: 'timestamp', label: 'Time', render: (v) => <span className="font-mono tabular-nums text-xs">{v}</span> },
     { key: 'user', label: 'Actor', render: (v) => <span className="font-medium text-text">{v}</span> },
-    { key: 'action', label: 'Action', render: (v) => <span className="px-1.5 py-0.5 bg-surface-elevated rounded-sm text-xs font-mono text-text-muted">{v}</span> },
+    { key: 'action', label: 'Action', render: (v) => <span className="text-[12px] font-medium text-text">{v}</span> },
     { key: 'target', label: 'Target', render: (v) => <span className="font-mono text-xs">{v}</span> },
     { key: 'details', label: 'Changes', render: (v) => <span className="text-xs text-text-subtle font-mono truncate max-w-[200px] block">{v}</span> },
   ];

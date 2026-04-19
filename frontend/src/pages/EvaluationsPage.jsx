@@ -77,7 +77,13 @@ export default function EvaluationsPage() {
     try {
       const preview = await api.get(`/evaluations/cost-preview/${serviceId}`);
       const p = preview.data;
-      if (!confirm(`Run evaluation?\n\n${p.test_cases} test cases, ${p.api_calls} API calls\nEst. cost: $${p.estimated_cost_usd.toFixed(4)} (budget: $${p.daily_budget_usd.toFixed(2)}/day)`)) return;
+      const cents = (p.estimated_cost_usd * 100).toFixed(2);
+      if (!confirm(
+        `Run evaluation?\n\n` +
+        `${p.test_cases} test cases, ${p.api_calls} API calls\n` +
+        `Est. cost: $${p.estimated_cost_usd.toFixed(4)} (~${cents}¢)\n` +
+        `Daily budget: $${p.daily_budget_usd.toFixed(2)}`
+      )) return;
     } catch { showToast('Failed to get cost preview', 'error'); return; }
 
     setRunningService(serviceId);

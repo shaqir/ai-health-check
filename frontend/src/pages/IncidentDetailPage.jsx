@@ -95,7 +95,7 @@ export default function IncidentDetailPage() {
       setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '', scheduled_date: '', human_approved: false });
       fetchData();
     } catch (err) {
-      alert('Failed to create maintenance plan');
+      alert('Failed to create maintenance plan: ' + (err.response?.data?.detail || err.message));
     }
   };
 

@@ -1,5 +1,7 @@
 # AI Health Check Roadmap
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+
 Four-week sprint delivering an AI service monitoring and governance platform. All phases complete.
 
 ## Phase Timeline

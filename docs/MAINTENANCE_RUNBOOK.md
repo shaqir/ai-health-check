@@ -1,5 +1,7 @@
 # Maintenance Runbook
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+>
 > Canonical source for operational procedures. For risk definitions, see [RISK_REGISTER.md](RISK_REGISTER.md). For drift algorithm details, see [EVAL_DATASET_CARD.md](EVAL_DATASET_CARD.md).
 
 ---

@@ -1,5 +1,7 @@
 # AI Health Check Testing Strategy
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+
 123 tests across 13 files. Framework: pytest. All tests run offline with no real API keys.
 Coverage floor: 65% (currently ~71%).
 

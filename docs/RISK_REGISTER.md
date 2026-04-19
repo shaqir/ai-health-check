@@ -1,5 +1,7 @@
 # Risk Register
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+>
 > Canonical source for risks and mitigations. For operational response procedures, see [MAINTENANCE_RUNBOOK.md](MAINTENANCE_RUNBOOK.md).
 
 | ID | Risk | Likelihood | Impact | Status |

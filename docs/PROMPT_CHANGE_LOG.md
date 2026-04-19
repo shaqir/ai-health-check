@@ -1,5 +1,7 @@
 # Prompt and Change Log
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+>
 > Canonical source for LLM usage and prompt templates. For risk mitigations referencing these functions, see [RISK_REGISTER.md](RISK_REGISTER.md). For evaluation scoring details, see [EVAL_DATASET_CARD.md](EVAL_DATASET_CARD.md).
 
 ---

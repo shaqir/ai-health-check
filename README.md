@@ -153,8 +153,13 @@ ai-health-check/
 
 ## Documentation
 
+**New here? Start with [docs/README.md](docs/README.md)** — the reading guide
+that routes you through the docs based on whether you're grading, setting up,
+reviewing compliance, or rehearsing a demo.
+
 | Document | What's in it |
 |----------|-------------|
+| [docs/README](docs/README.md) | Reading guide by audience (grader / developer / compliance / viva) |
 | [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |

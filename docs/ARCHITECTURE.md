@@ -1,5 +1,7 @@
 # AI Health Check -- Architecture Document
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+
 ## 1. System Overview
 
 AI Health Check is a centralized AI operations platform built for the ARTI-409-A course. The frontend is a React 18 SPA (Vite 5 + Tailwind 3.4). The backend is FastAPI with SQLAlchemy ORM over SQLite. All LLM calls use Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) via the `anthropic>=0.49.0` SDK, routed through a single pipeline in `llm_client.py`. Background health checks run via APScheduler (HTTP probe every 5 min).

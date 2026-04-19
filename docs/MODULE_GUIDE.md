@@ -1,5 +1,7 @@
 # AI Health Check -- Module Guide
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+
 This document breaks down each module: what was built, who owns it, the key files, and how they connect. Use this to prepare for the individual Q&A.
 
 For system-wide architecture, database models, and configuration, see [ARCHITECTURE](ARCHITECTURE.md).

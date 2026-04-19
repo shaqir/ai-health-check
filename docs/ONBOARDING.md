@@ -1,5 +1,7 @@
 # AI Health Check Onboarding Guide
 
+> Last updated: 2026-04-18 · current as of commit `3396e21`
+
 New developer setup and platform workflow.
 
 ## Prerequisites

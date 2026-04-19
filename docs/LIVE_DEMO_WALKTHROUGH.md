@@ -16,12 +16,13 @@
 2. [Morning of](#2-morning-of-at-home-60-min-before)
 3. [T-15 min pre-flight checklist](#3-t-15-min-pre-flight-at-the-venue)
 4. [Demo narration: 9-step walkthrough](#4-demo-narration--9-step-walkthrough)
-5. [Three killshot moments](#5-three-killshot-moments-worth-1-2-letter-grades)
-6. [Recovery procedures](#6-recovery-procedures--if-it-breaks)
-7. [Post-demo Q&A phrasing](#7-post-demo-qa-phrasing)
-8. [Q&A bait to prepare for](#8-qa-bait-to-prepare-for)
-9. [Realistic timing](#9-realistic-timing)
-10. [One-page printable checklist](#10-one-page-printable-checklist)
+5. [Narrative script — stories to tell at each step](#5-narrative-script--stories-to-tell-at-each-step)
+6. [Three killshot moments](#6-three-killshot-moments-worth-1-2-letter-grades)
+7. [Recovery procedures](#7-recovery-procedures--if-it-breaks)
+8. [Post-demo Q&A phrasing](#8-post-demo-qa-phrasing)
+9. [Q&A bait to prepare for](#9-qa-bait-to-prepare-for)
+10. [Realistic timing](#10-realistic-timing)
+11. [One-page printable checklist](#11-one-page-printable-checklist)
 
 ---
 
@@ -87,7 +88,7 @@ If any of the above is missing, re-run the seed.
 
 ### Printable references
 
-- This doc — §4 walkthrough, §5 killshots, §9 timing (one page)
+- This doc — §4 walkthrough, §5 narrative script, §6 killshots, §10 timing (one page)
 - [VIVA_QA_PREP](VIVA_QA_PREP.md) — print only the 🏆 ideal-answer paragraphs (10 paragraphs, one page)
 - [SELF_CRITIQUE](SELF_CRITIQUE.md) — skim the "honest answer" lines only
 
@@ -264,7 +265,7 @@ Target ~6.5 min, max 12 min. Terminal visible at all times. If you need to show 
 **Demo-day mitigations:**
 - **Click "Verify integrity" live.** Green check + "Chain intact — N entries verified." is a visceral moment.
 - Filter the table to `Approve Summary` so the grader sees your end-to-end chain: draft → approve with note → audit.
-- **KILLSHOT**: for the tamper demo, see §5 Killshot #2 below. Rehearse only.
+- **KILLSHOT**: for the tamper demo, see §6 Killshot #2 below. Rehearse only.
 
 ### Step 9 — Compliance report is exported 🎯
 
@@ -282,7 +283,185 @@ Target ~6.5 min, max 12 min. Terminal visible at all times. If you need to show 
 
 ---
 
-## 5. Three killshot moments worth 1-2 letter grades
+## 5. Narrative script — stories to tell at each step
+
+§4 is the *operational* walkthrough — what you click, where it bites you,
+mitigations. This section is the *narrative* — the actual words to say. Read
+them aloud once tonight; if a line doesn't sit right in your voice, rewrite
+it before the demo. The examiner should feel they watched a product pitch,
+not a code walk.
+
+### Opening (20s, before you click anything)
+
+> *"Companies run 10+ AI services but have no single place to answer 'is this
+> AI working today, is it getting worse, what broke, and can I prove to an
+> auditor I'm managing it responsibly?' We built the control room that
+> answers all four. Every AI call goes through one safety pipeline; every
+> human approval leaves a fingerprint; every action lands in a tamper-evident
+> audit log. Let me walk you through a real incident from detection to
+> compliance export."*
+
+### Step 1 — Register a service · *The phone book*
+
+**Story:** *"First, we need to know what AI the business is running. This is
+the phone book — name, owner, environment, model, and crucially a
+**sensitivity label** that controls what's allowed to reach the LLM."*
+
+**Click:** Services → Register → `Demo Chatbot` /
+`https://httpbin.org/status/200` / `prod` / `claude-sonnet-4-6` / sensitivity
+= **internal** → Save → **Ping** → green dot + latency.
+
+**Punchline:** *"Notice the Ping didn't just succeed — it logged a
+connection row. Uptime tracking starts the moment a service is registered."*
+
+**🎯 Optional killshot #1 (30s):** type `http://169.254.169.254/meta-data/`
+as a second service → **400** → *"That's the AWS metadata endpoint. If any
+user could register it, we'd exfiltrate IAM credentials on every health
+check. Our SSRF guard blocks private and link-local ranges before the HTTP
+library ever sees the URL."*
+
+### Step 2 — Dashboard: monitoring at a glance · *The control room*
+
+**Story:** *"Here's what an operator sees first thing every morning. Four
+health metrics, trend arrows, response-time distribution, quality over 7
+days, and — at the top — a red banner. Something needs attention."*
+
+**Click:** Click the Dashboard logo → point to the red Active Alerts banner.
+
+**Punchline:** *"'Internal Report Generator quality dropped to 42%.' The
+platform flagged it before a human noticed. That's the entire point."*
+
+### Step 3 — Drift detection · *Not just a threshold*
+
+**Story:** *"The naive question is 'is the score below 75?' The harder
+question is 'is it slowly getting worse even while it's still above
+threshold?' We answer both."*
+
+**Click:** Evaluations → **Drift Analysis** for Internal Report Generator →
+show the chart with the red band and the trend line.
+
+**Punchline:** *"This uses split-half trend analysis — last N scores split in
+two, compare the halves. A service scoring 85% but slowly declining still
+fires. We document the algorithm in EVAL_DATASET_CARD with the judge-refused
+handling. Refused rows are excluded, not counted as zero — refusal is a
+different signal from failure."*
+
+### Step 4 — File the incident · *From alert to action*
+
+**Story:** *"An alert without an owner is noise. Filing an incident makes it
+a ticket."*
+
+**Click:** Incidents → Report → service = Internal Report Generator,
+severity = **high**, paste symptoms, check ✅ **Data Issue** and ✅ **Prompt
+Change** → Submit.
+
+**Punchline:** *"The five checkboxes aren't decoration — they feed directly
+into the LLM prompt when we generate root-cause analysis. Watch what happens
+next."*
+
+### Step 5 — The triage checklist earns its keep · *Bridge to the LLM*
+
+**Story:** *"I've told the system what I suspect. Now I'm asking the LLM to
+reason about it — but grounded in my checklist, not just
+free-association."*
+
+**Click:** Open the incident → gesture to the checklist → say the line
+below.
+
+**Punchline:** *"Without these boxes, the LLM would draft a generic
+post-mortem. With them, it reasons against the operator's actual
+hypotheses."*
+
+### Step 6 — 🎯 LLM drafts, human approves · *The killshot*
+
+**Story:** *"Here's where most AI ops tools fail the governance review —
+they let the model just do things. Ours drafts; a human approves, with a
+20-character reviewer note. No rubber-stamping."*
+
+**Click:** Generate draft → wait 5–10s → review the STAKEHOLDER UPDATE +
+ROOT CAUSES → **Approve** → paste the pre-prepared reviewer note → watch
+the counter go green → Submit → green attribution block appears.
+
+**Punchline (say BEFORE clicking approve):** *"The approve button stays
+disabled below 20 characters — enforced in the UI, re-validated in the API,
+and the character count ends up in the audit log. Approval is a legal
+artifact here, not a convenience."*
+
+**Follow-through:** Immediately navigate to Governance → Audit Log → filter
+**Approve Summary** → point to the row showing `reviewer_note_len=64` and
+the approver email.
+
+### Step 7 — Maintenance plan · *Same contract, different domain*
+
+**Story:** *"Same HITL pattern for planned work — risk level, rollback
+strategy, validation steps, scheduled date, explicit human approval."*
+
+**Click:** Back to the incident → Add plan → risk=**medium**, paste
+rollback + validation → schedule today → Submit → Approve.
+
+**Punchline:** *"We extracted this as `AILlmDraft` + `draft_service.py`.
+Incident summaries, dashboard insights, compliance reports — they all share
+one HITL abstraction. Change the contract in one place, fix it
+everywhere."*
+
+### Step 8 — 🎯 Audit log + integrity verify · *The receipt*
+
+**Story:** *"Every action left a fingerprint. Here they are — login,
+register, run, alert, incident, generate, approve, plan, plan-approve.
+Title-cased, timestamped, actor-attributed."*
+
+**Click:** Governance → Audit Log → scroll → click **Verify Integrity** →
+green banner: *"Chain intact — N entries verified."*
+
+**Punchline:** *"Every row hashes its content plus the previous row's hash.
+If anyone — even a DBA — tampers with a row after the fact, the chain
+breaks here. SQLite triggers reject UPDATE and DELETE at the database
+layer; the hash chain catches anyone who went around them. Same pattern Git
+uses for commits."*
+
+**🎯 Optional killshot #2 (tamper demo — only if rehearsed):** drop trigger
+→ UPDATE one row → click Verify again → red *"Broken at row 3."* → restore
+trigger.
+
+### Step 9 — Compliance export · *The auditor's artifact*
+
+**Story:** *"Everything we've just done needs to be defensible to someone
+who wasn't in the room. That's this button."*
+
+**Click:** Governance → date range = today → **PDF** → open the download
+side-by-side → point to the three sections (Audit Log, Incidents,
+Maintenance).
+
+**Punchline:** *"If the export truncates — say the audit log blew past
+10,000 rows — it says so loudly in a `warnings: []` array. Silent
+compliance-evidence holes are the failure mode regulators get burned by. We
+don't ship that failure mode."*
+
+### Closing (20s)
+
+> *"That's the loop: register → monitor → detect → triage → draft → approve
+> → plan → audit → export. Four modules, one HITL contract, one audit
+> chain, one safety pipeline. The code is 9 routers and 14 models on
+> FastAPI; the UI is the Apple-design-inspired React app you just saw; we
+> ship with 123 tests, 71% coverage, and a full governance audit in
+> `GOVERNANCE_AUDIT.md` that tells you exactly what it would take to run
+> this in a regulated industry. Questions?"*
+
+### Three one-line stories to memorise
+
+If you blank on anything else, these three sentences get you 80% of the
+grade:
+
+1. *"Same HITL contract, different domain — drafts, 20-char reviewer note,
+   audit log, idempotent approvals."*
+2. *"Every row is hash-chained to the previous one. Tampering breaks the
+   chain. Same pattern Git uses."*
+3. *"It's a governance-aware prototype, not a production platform — and
+   `GOVERNANCE_AUDIT.md` tells you exactly which gap is which."*
+
+---
+
+## 6. Three killshot moments worth 1-2 letter grades
 
 Pick **at least one** of these. They're the difference between "yes they built it" and "wow, they thought about threats."
 
@@ -296,7 +475,7 @@ Pick **at least one** of these. They're the difference between "yes they built i
 
 ---
 
-## 6. Recovery procedures — if it breaks
+## 7. Recovery procedures — if it breaks
 
 ### Backend 500s on any page
 
@@ -346,7 +525,7 @@ cd frontend && npm run dev
 
 ---
 
-## 7. Post-demo Q&A phrasing
+## 8. Post-demo Q&A phrasing
 
 ### Magic phrases to reach for
 
@@ -365,7 +544,7 @@ For deep individual-Q&A practice, read [VIVA_QA_PREP](VIVA_QA_PREP.md) — 10 ha
 
 ---
 
-## 8. Q&A bait to prepare for
+## 9. Q&A bait to prepare for
 
 **"What happens if two admins approve the same summary?"** → 409 Conflict. Attribution is preserved. We have a test: `test_approve_is_idempotent_409_on_second_call`.
 
@@ -381,7 +560,7 @@ For deep individual-Q&A practice, read [VIVA_QA_PREP](VIVA_QA_PREP.md) — 10 ha
 
 ---
 
-## 9. Realistic timing
+## 10. Realistic timing
 
 | Step | Target | Max acceptable |
 |---|---|---|
@@ -400,7 +579,7 @@ Budget 7–8 minutes for the walkthrough plus 3–5 for Q&A. If you hit the timi
 
 ---
 
-## 10. One-page printable checklist
+## 11. One-page printable checklist
 
 Print this. Keep it on the desk. Cross items off in the 15 min before demo:
 

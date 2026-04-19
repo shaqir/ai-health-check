@@ -72,6 +72,7 @@ Time budget: 30 minutes the night before, 10 minutes the morning of.
 | [RISK_REGISTER](RISK_REGISTER.md) | 17 risks with mitigations and residual risk notes |
 | [SELF_CRITIQUE](SELF_CRITIQUE.md) | 5 methodological weaknesses surfaced honestly |
 | [GOVERNANCE_AUDIT](GOVERNANCE_AUDIT.md) | Enterprise compliance audit (HIPAA/SOX/EU AI Act) |
+| [DOVER_MAPPING](DOVER_MAPPING.md) | Implementation mapping against the DOVER framework (Data / Oversight / Validation / Ethics / Risk) |
 | [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) | Consolidated demo guide: prep, 9-step script, killshots, recovery, one-page checklist |
 | [VIVA_QA_PREP](VIVA_QA_PREP.md) | 10 hardest Q&A questions with ideal-answer phrasing |
 

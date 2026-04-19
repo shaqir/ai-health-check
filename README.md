@@ -172,6 +172,7 @@ reviewing compliance, or rehearsing a demo.
 | [LIVE_DEMO_WALKTHROUGH](docs/LIVE_DEMO_WALKTHROUGH.md) | Consolidated demo guide: night-before / morning-of / T-15 pre-flight, 9-step script with failure modes & killshots, recovery, one-page checklist |
 | [SELF_CRITIQUE](docs/SELF_CRITIQUE.md) | Top 5 methodological weaknesses a rigorous examiner will probe, with honest-answer phrasing for the viva |
 | [GOVERNANCE_AUDIT](docs/GOVERNANCE_AUDIT.md) | Enterprise governance audit: 7 risk categories + HIPAA / SOX / EU AI Act verdict + 12-week remediation roadmap |
+| [DOVER_MAPPING](docs/DOVER_MAPPING.md) | Implementation mapping against the DOVER framework (Data / Oversight / Validation / Ethics / Risk) |
 | [VIVA_QA_PREP](docs/VIVA_QA_PREP.md) | 10 hardest questions a strict examiner will ask in a 2-minute Q&A, with ideal-answer phrasing and weak-answer traps |
 
 ---

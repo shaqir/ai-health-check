@@ -58,11 +58,47 @@ class IncidentResponse(BaseModel):
     checklist_model_update: bool
     checklist_infrastructure: bool
     checklist_safety_policy: bool
+    # HITL attribution — frontend renders "Approved by X at Y" so the
+    # reviewer_note enforcement is visibly connected to a human.
+    approved_by_email: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    reviewer_note: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+def _serialize_incident(inc: Incident, db: Session) -> IncidentResponse:
+    """Shared serializer — includes service name + approver attribution."""
+    service = db.query(AIService).filter(AIService.id == inc.service_id).first()
+    approver_email = None
+    if inc.approved_by:
+        approver = db.query(User).filter(User.id == inc.approved_by).first()
+        approver_email = approver.email if approver else None
+    return IncidentResponse(
+        id=inc.id,
+        service_id=inc.service_id,
+        service_name=service.name if service else "Unknown Service",
+        severity=inc.severity.value,
+        symptoms=inc.symptoms,
+        status=inc.status.value,
+        summary=inc.summary,
+        summary_draft=inc.summary_draft,
+        root_causes=inc.root_causes,
+        timeline=inc.timeline,
+        checklist_data_issue=inc.checklist_data_issue,
+        checklist_prompt_change=inc.checklist_prompt_change,
+        checklist_model_update=inc.checklist_model_update,
+        checklist_infrastructure=inc.checklist_infrastructure,
+        checklist_safety_policy=inc.checklist_safety_policy,
+        approved_by_email=approver_email,
+        approved_at=inc.approved_at,
+        reviewer_note=inc.reviewer_note,
+        created_at=inc.created_at,
+        updated_at=inc.updated_at,
+    )
 
 
 # ── Endpoints ──
@@ -74,29 +110,7 @@ def list_incidents(
 ):
     """List all incidents globally."""
     incidents = db.query(Incident).order_by(Incident.created_at.desc()).all()
-    
-    result = []
-    for inc in incidents:
-        service = db.query(AIService).filter(AIService.id == inc.service_id).first()
-        result.append(IncidentResponse(
-            id=inc.id,
-            service_id=inc.service_id,
-            service_name=service.name if service else "Unknown Service",
-            severity=inc.severity.value,
-            symptoms=inc.symptoms,
-            status=inc.status.value,
-            summary=inc.summary,
-            summary_draft=inc.summary_draft,
-            root_causes=inc.root_causes,
-            checklist_data_issue=inc.checklist_data_issue,
-            checklist_prompt_change=inc.checklist_prompt_change,
-            checklist_model_update=inc.checklist_model_update,
-            checklist_infrastructure=inc.checklist_infrastructure,
-            checklist_safety_policy=inc.checklist_safety_policy,
-            created_at=inc.created_at,
-            updated_at=inc.updated_at,
-        ))
-    return result
+    return [_serialize_incident(inc, db) for inc in incidents]
 
 
 @router.post(
@@ -137,24 +151,7 @@ def create_incident(
 
     log_action(db, current_user.id, "create_incident", "incidents", incident.id)
 
-    return IncidentResponse(
-        id=incident.id,
-        service_id=incident.service_id,
-        service_name=service.name,
-        severity=incident.severity.value,
-        symptoms=incident.symptoms,
-        status=incident.status.value,
-        summary=incident.summary,
-        summary_draft=incident.summary_draft,
-        root_causes=incident.root_causes,
-        checklist_data_issue=incident.checklist_data_issue,
-        checklist_prompt_change=incident.checklist_prompt_change,
-        checklist_model_update=incident.checklist_model_update,
-        checklist_infrastructure=incident.checklist_infrastructure,
-        checklist_safety_policy=incident.checklist_safety_policy,
-        created_at=incident.created_at,
-        updated_at=incident.updated_at,
-    )
+    return _serialize_incident(incident, db)
 
 
 @router.post(

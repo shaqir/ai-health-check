@@ -227,6 +227,34 @@ export default function IncidentDetailPage() {
                     </p>
                   </div>
                 )}
+
+                {/* HITL attribution — visible proof that the reviewer_note
+                    requirement and four-eyes audit trail actually fired. */}
+                {incident.summary && incident.approved_by_email && (
+                  <div className="pt-3 border-t border-hairline flex items-start gap-2 bg-status-healthy-muted rounded-lg p-3">
+                    <ShieldCheck size={14} strokeWidth={1.75} className="text-status-healthy shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] text-text">
+                        <span className="font-medium">Approved by</span>{' '}
+                        <span className="font-mono">{incident.approved_by_email}</span>
+                        {incident.approved_at && (
+                          <>
+                            {' '}
+                            <span className="text-text-muted">at</span>{' '}
+                            <span className="font-mono tabular-nums">
+                              {new Date(incident.approved_at).toLocaleString()}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                      {incident.reviewer_note && (
+                        <p className="text-[12px] text-text-muted mt-1 italic leading-snug">
+                          &ldquo;{incident.reviewer_note}&rdquo;
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

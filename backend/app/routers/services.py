@@ -17,6 +17,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, ConnectionLog, Environment, SensitivityLabel, User
 from app.services.llm_client import test_connection as llm_test_connection
+from app.services.sensitivity import enforce_sensitivity
 
 router = APIRouter()
 
@@ -273,6 +274,7 @@ def delete_service(
 async def test_service_connection(
     service_id: int,
     mode: str = Query("http", description="Test mode: 'http' for endpoint probe, 'llm' for Claude API health check"),
+    allow_confidential: bool = Query(False, description="Admin override to allow LLM for confidential services"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -281,6 +283,7 @@ async def test_service_connection(
         raise HTTPException(status_code=404, detail="Service not found")
 
     if mode == "llm":
+        enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
         result = await llm_test_connection(model=service.model_name)
     else:
         if not service.endpoint_url:

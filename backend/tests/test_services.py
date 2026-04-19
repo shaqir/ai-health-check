@@ -254,3 +254,101 @@ def test_delete_service(client, admin_token):
 def test_unauthenticated_access_blocked(client):
     response = client.get("/api/v1/services/")
     assert response.status_code == 401
+
+
+# ── Confidential sensitivity label enforcement ──
+
+def _create_confidential_service(client, admin_token, db):
+    """Helper: register a confidential-labelled service and return its id."""
+    res = client.post(
+        "/api/v1/services/",
+        json={
+            "name": "Secret Bot",
+            "owner": "Legal",
+            "environment": "prod",
+            "model_name": "claude-sonnet-4-6-20250415",
+            "sensitivity_label": "confidential",
+        },
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code in (200, 201)
+    return res.json()["id"]
+
+
+def test_confidential_service_blocks_llm_without_override(client, db, admin_token):
+    """LLM test-connection on a confidential service must be refused without override."""
+    service_id = _create_confidential_service(client, admin_token, db)
+
+    res = client.post(
+        f"/api/v1/services/{service_id}/test-connection?mode=llm",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 403
+    assert "confidential" in res.json()["detail"].lower()
+
+
+def test_confidential_service_allows_admin_override(client, db, admin_token, monkeypatch):
+    """An admin passing allow_confidential=true must be allowed through — and audited."""
+    from app.models import AuditLog
+
+    # Stub the LLM call so we don't hit the real API
+    async def _fake_test_connection(model=None):
+        return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
+
+    monkeypatch.setattr(
+        "app.routers.services.llm_test_connection", _fake_test_connection
+    )
+
+    service_id = _create_confidential_service(client, admin_token, db)
+
+    res = client.post(
+        f"/api/v1/services/{service_id}/test-connection?mode=llm&allow_confidential=true",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+
+    # The override must leave an audit trail
+    overrides = db.query(AuditLog).filter(
+        AuditLog.action == "confidential_llm_override"
+    ).all()
+    assert len(overrides) == 1
+
+
+def test_maintainer_cannot_override_confidential(client, db, admin_token, maintainer_token):
+    """Only admin may override. Maintainer with allow_confidential=true must still 403."""
+    service_id = _create_confidential_service(client, admin_token, db)
+
+    res = client.post(
+        f"/api/v1/services/{service_id}/test-connection?mode=llm&allow_confidential=true",
+        headers=auth_header(maintainer_token),
+    )
+    assert res.status_code == 403
+
+
+def test_public_service_not_gated(client, db, admin_token, monkeypatch):
+    """Public services bypass the sensitivity gate entirely."""
+    async def _fake_test_connection(model=None):
+        return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
+
+    monkeypatch.setattr(
+        "app.routers.services.llm_test_connection", _fake_test_connection
+    )
+
+    res = client.post(
+        "/api/v1/services/",
+        json={
+            "name": "Public Bot",
+            "owner": "Marketing",
+            "environment": "prod",
+            "model_name": "claude-sonnet-4-6-20250415",
+            "sensitivity_label": "public",
+        },
+        headers=auth_header(admin_token),
+    )
+    service_id = res.json()["id"]
+
+    res = client.post(
+        f"/api/v1/services/{service_id}/test-connection?mode=llm",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200

@@ -3,7 +3,7 @@ Incidents Router — Module 3: Triage & LLM Summary
 Full CRUD operations + AI-assisted summary drafting.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -17,6 +17,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.middleware.audit import log_action
 from app.services.llm_client import generate_summary
+from app.services.sensitivity import enforce_sensitivity
 
 router = APIRouter()
 
@@ -163,19 +164,22 @@ def create_incident(
 )
 async def generate_incident_summary(
     incident_id: int,
+    allow_confidential: bool = Query(False, description="Admin override for confidential services"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Calls LLM to draft a summary and identify root causes. 
+    Calls LLM to draft a summary and identify root causes.
     Saves to the draft columns for human review.
     """
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-        
+
     service = db.query(AIService).filter(AIService.id == incident.service_id).first()
-    
+    if service:
+        enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
+
     checklist = {
         "Data Issue": incident.checklist_data_issue,
         "Prompt Change": incident.checklist_prompt_change,

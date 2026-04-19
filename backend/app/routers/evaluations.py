@@ -16,6 +16,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, Alert, EvalTestCase, EvalRun, EvalResult, Telemetry, User
 from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
+from app.services.sensitivity import enforce_sensitivity
 
 router = APIRouter()
 settings = get_settings()
@@ -182,12 +183,16 @@ def delete_test_case(
 )
 async def run_evaluation(
     service_id: int,
+    allow_confidential: bool = Query(False, description="Admin override to run evals on confidential services"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     service = db.query(AIService).filter(AIService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+
+    # Gate confidential services — admin-only with explicit override
+    enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
 
     test_cases = (
         db.query(EvalTestCase)

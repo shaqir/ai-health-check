@@ -12,8 +12,8 @@ import LoadingSkeleton from '../components/common/LoadingSkeleton';
 const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
 const ENV_OPTIONS = ['dev', 'staging', 'prod'];
 
-const INPUT_CLS = 'w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent';
-const LABEL_CLS = 'block text-xs font-medium text-text-muted mb-1.5';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function ServicesPage() {
   const { canEdit } = useAuth();
@@ -112,22 +112,22 @@ export default function ServicesPage() {
         <div className="flex items-center gap-2">
           {/* Search */}
           <div className="relative w-52">
-            <Search size={14} strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
+            <Search size={14} strokeWidth={1.5} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
             <input
               type="text"
               placeholder="Search services..."
               aria-label="Search services"
-              className="w-full pl-9 pr-3 py-1.5 text-sm bg-surface border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent"
+              className="w-full pl-9 pr-3 py-1.5 text-sm bg-[var(--material-thick)] rounded-pill text-text placeholder-text-subtle transition-standard"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
           {/* View toggle */}
-          <div className="flex bg-surface border border-border rounded-md p-0.5" role="group" aria-label="View mode">
+          <div className="flex bg-[var(--material-thick)] rounded-pill p-0.5" role="group" aria-label="View mode">
             <button
               onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-sm transition-colors ${viewMode === 'grid' ? 'bg-surface-elevated text-text' : 'text-text-subtle hover:text-text'}`}
+              className={`p-1.5 rounded-pill transition-standard ${viewMode === 'grid' ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-subtle hover:text-text'}`}
               aria-label="Grid view"
               aria-pressed={viewMode === 'grid'}
             >
@@ -135,7 +135,7 @@ export default function ServicesPage() {
             </button>
             <button
               onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-sm transition-colors ${viewMode === 'list' ? 'bg-surface-elevated text-text' : 'text-text-subtle hover:text-text'}`}
+              className={`p-1.5 rounded-pill transition-standard ${viewMode === 'list' ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-subtle hover:text-text'}`}
               aria-label="List view"
               aria-pressed={viewMode === 'list'}
             >
@@ -146,9 +146,9 @@ export default function ServicesPage() {
           {canEdit && (
             <button
               onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-md text-xs font-medium hover:bg-accent-hover transition-colors"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
             >
-              <Plus size={14} strokeWidth={1.5} /> Register
+              <Plus size={14} strokeWidth={1.75} /> Register
             </button>
           )}
         </div>
@@ -161,7 +161,7 @@ export default function ServicesPage() {
           title="No services found"
           description={search ? 'Try a different search term.' : 'Get started by registering a new AI service.'}
           action={canEdit && !search && (
-            <button onClick={() => setShowAddModal(true)} className="px-3 py-1.5 text-xs font-medium text-accent bg-accent-muted rounded-md hover:bg-accent/20 transition-colors">
+            <button onClick={() => setShowAddModal(true)} className="px-3.5 py-1.5 text-[12px] font-medium text-accent bg-accent-weak rounded-pill hover:bg-accent-muted transition-standard">
               Register service
             </button>
           )}
@@ -174,18 +174,18 @@ export default function ServicesPage() {
             const statusDot = !test ? 'bg-status-unknown' : test.loading ? 'bg-status-degraded' : test.status === 'healthy' ? 'bg-status-healthy' : 'bg-status-failing';
 
             return (
-              <div key={s.id} className="bg-surface rounded-lg border border-border shadow-sm flex flex-col group">
-                <div className="p-4 flex-1">
+              <div key={s.id} className="bg-surface rounded-xl border border-hairline shadow-xs hover:shadow-sm transition-standard flex flex-col group">
+                <div className="p-5 flex-1">
                   {/* Top row: name + delete */}
                   <div className="flex justify-between items-start mb-3">
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text truncate" title={s.name}>{s.name}</h3>
-                      <p className="text-xs text-text-muted">{s.owner}</p>
+                      <h3 className="text-[15px] font-semibold text-text tracking-tight truncate" title={s.name}>{s.name}</h3>
+                      <p className="text-[12px] text-text-muted mt-0.5">{s.owner}</p>
                     </div>
                     {canEdit && (
                       <button
                         onClick={() => setDeleteConfirmId(s.id)}
-                        className="p-1 text-text-subtle hover:text-status-failing hover:bg-status-failing-muted rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1.5 text-text-subtle hover:text-status-failing hover:bg-status-failing-muted rounded-pill transition-standard opacity-0 group-hover:opacity-100"
                         aria-label={`Delete ${s.name}`}
                       >
                         <Trash2 size={14} strokeWidth={1.5} />
@@ -200,25 +200,25 @@ export default function ServicesPage() {
                   </div>
 
                   {/* Model */}
-                  <p className="text-xs font-mono text-text-muted bg-surface-elevated px-2 py-1 rounded-md border border-border truncate" title={s.model_name}>
+                  <p className="text-[11px] font-mono text-text-muted bg-surface-elevated px-2 py-1 rounded-md truncate" title={s.model_name}>
                     {s.model_name}
                   </p>
                 </div>
 
                 {/* Footer: status + ping */}
-                <div className="px-4 py-2.5 border-t border-border flex items-center justify-between">
+                <div className="px-5 py-3 border-t border-hairline flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${statusDot}`} aria-hidden="true" />
-                    <span className="text-xs font-medium text-text-muted">{statusLabel}</span>
+                    <span className="text-[12px] font-medium text-text-muted">{statusLabel}</span>
                     {test && !test.loading && test.latency_ms > 0 && (
-                      <span className="text-xs font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                      <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
                     )}
                   </div>
                   {canEdit && (
                     <button
                       onClick={() => handleTestConnection(s.id)}
                       disabled={test?.loading}
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-text-muted hover:text-accent bg-surface-elevated border border-border rounded-md transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-text-muted hover:text-accent bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
                       aria-label={`Ping ${s.name}`}
                     >
                       {test?.loading ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Wifi size={12} strokeWidth={1.5} />}
@@ -233,15 +233,15 @@ export default function ServicesPage() {
       )}
 
       {/* Add Service Modal */}
-      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Register AI Service" footer={
+      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Register AI service" footer={
         <>
-          <button onClick={() => setShowAddModal(false)} className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-md transition-colors">
+          <button onClick={() => setShowAddModal(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
             Cancel
           </button>
           <button
             onClick={handleCreate}
             disabled={isSubmitting || !form.name || !form.owner || !form.model_name}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-xs font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover disabled:opacity-50 transition-standard"
           >
             {isSubmitting ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : 'Register'}
           </button>
@@ -284,12 +284,12 @@ export default function ServicesPage() {
       </Modal>
 
       {/* Delete Confirmation */}
-      <Modal isOpen={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="Delete Service" maxWidth="max-w-sm" footer={
+      <Modal isOpen={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="Delete service" maxWidth="max-w-sm" footer={
         <>
-          <button onClick={() => setDeleteConfirmId(null)} className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-md transition-colors">
+          <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
             Cancel
           </button>
-          <button onClick={handleDelete} className="px-3 py-1.5 bg-status-failing text-white text-xs font-medium rounded-md hover:opacity-90 transition-opacity">
+          <button onClick={handleDelete} className="px-4 py-1.5 bg-status-failing text-white text-[12px] font-medium rounded-pill hover:opacity-90 transition-standard">
             Delete
           </button>
         </>

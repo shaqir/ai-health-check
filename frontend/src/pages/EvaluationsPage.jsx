@@ -11,8 +11,8 @@ import DriftAnalysis from '../components/evaluations/DriftAnalysis';
 import TestCasesSection from '../components/evaluations/TestCasesSection';
 import EvalRunsSection from '../components/evaluations/EvalRunsSection';
 
-const INPUT_CLS = 'w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent';
-const LABEL_CLS = 'block text-xs font-medium text-text-muted mb-1.5';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function EvaluationsPage() {
   const { canEdit } = useAuth();
@@ -94,8 +94,8 @@ export default function EvaluationsPage() {
 
       <PageHeader title="Evaluations" description="Test cases, evaluation runs, and drift detection.">
         {canEdit && (
-          <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-md text-xs font-medium hover:bg-accent-hover transition-colors">
-            <Plus size={14} strokeWidth={1.5} /> Add Test Case
+          <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard">
+            <Plus size={14} strokeWidth={1.75} /> Add test case
           </button>
         )}
       </PageHeader>
@@ -111,9 +111,9 @@ export default function EvaluationsPage() {
                 key={svcId}
                 onClick={() => handleRunEval(svcId)}
                 disabled={runningService !== null}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-status-healthy text-white rounded-md text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-status-healthy text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
               >
-                {runningService === svcId ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Play size={12} strokeWidth={1.5} />}
+                {runningService === svcId ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Play size={12} strokeWidth={1.75} />}
                 {svc?.name || `#${svcId}`} ({count})
               </button>
             );
@@ -130,10 +130,10 @@ export default function EvaluationsPage() {
       <EvalRunsSection evalRuns={evalRuns} />
 
       {/* Create modal */}
-      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Add Test Case" footer={
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Add test case" footer={
         <>
-          <button onClick={() => setShowCreateModal(false)} className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-md transition-colors">Cancel</button>
-          <button onClick={handleCreateTestCase} disabled={!form.service_id || !form.prompt || !form.expected_output} className="px-3 py-1.5 bg-accent text-white text-xs font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 transition-colors">Create</button>
+          <button onClick={() => setShowCreateModal(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">Cancel</button>
+          <button onClick={handleCreateTestCase} disabled={!form.service_id || !form.prompt || !form.expected_output} className="px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover disabled:opacity-50 transition-standard">Create</button>
         </>
       }>
         <form className="space-y-3" onSubmit={handleCreateTestCase}>

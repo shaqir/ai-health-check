@@ -10,7 +10,7 @@ export default function TestCasesSection({ testCases, services }) {
       return <span className="font-medium text-text">{svc?.name || `#${v}`}</span>;
     }},
     { key: 'category', label: 'Category', render: (v) => (
-      <span className={`px-1.5 py-0.5 rounded-sm text-[10px] font-medium ${v === 'factuality' ? 'bg-severity-low-muted text-severity-low' : 'bg-status-paused-muted text-status-paused'}`}>
+      <span className={`px-2 py-0.5 rounded-pill text-[10px] font-medium tracking-tight ${v === 'factuality' ? 'bg-severity-low-muted text-severity-low' : 'bg-status-paused-muted text-status-paused'}`}>
         {v}
       </span>
     )},
@@ -19,7 +19,7 @@ export default function TestCasesSection({ testCases, services }) {
 
   return (
     <div>
-      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Test Cases</h3>
+      <h3 className="text-[13px] font-semibold text-text tracking-tight mb-3">Test cases</h3>
       {testCases.length > 0 ? (
         <DataTable columns={columns} data={testCases} searchPlaceholder="Search test cases..." />
       ) : (

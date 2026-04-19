@@ -9,7 +9,7 @@ import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
 
-const INPUT_CLS = 'w-full px-2 py-1.5 text-sm bg-surface-elevated border border-border rounded-md text-text focus:outline-none focus:border-accent';
+const INPUT_CLS = 'w-full px-3 py-1.5 text-sm bg-[var(--material-thick)] rounded-md text-text transition-standard';
 
 export default function GovernancePage() {
   const { user, isAdmin } = useAuth();
@@ -116,19 +116,19 @@ export default function GovernancePage() {
       {toast.visible && <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, visible: false })} />}
 
       <PageHeader title="Governance" description="Audit logs, role-based access control, and compliance exports.">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-accent-muted border border-accent/20 rounded-md">
-          <Shield size={12} strokeWidth={1.5} className="text-accent" />
-          <span className="text-xs font-medium text-accent capitalize">{user?.role}</span>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-accent-weak rounded-pill">
+          <Shield size={12} strokeWidth={1.75} className="text-accent" />
+          <span className="text-[11px] font-medium text-accent capitalize tracking-tight">{user?.role}</span>
         </div>
       </PageHeader>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         {/* Audit Log — main content */}
         <div className="xl:col-span-2">
-          <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-              <History size={14} strokeWidth={1.5} className="text-text-subtle" />
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Audit Log</h3>
+          <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-hairline flex items-center gap-2">
+              <History size={14} strokeWidth={1.75} className="text-text-subtle" />
+              <h3 className="text-[13px] font-semibold text-text tracking-tight">Audit log</h3>
             </div>
             {auditLogs.length > 0 ? (
               <DataTable columns={auditColumns} data={auditLogs} searchPlaceholder="Search audit events..." />
@@ -143,30 +143,30 @@ export default function GovernancePage() {
         {/* Sidebar */}
         <div className="space-y-4">
           {/* Export */}
-          <div className="bg-surface rounded-lg border border-border shadow-sm">
-            <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-              <Download size={14} strokeWidth={1.5} className="text-text-subtle" />
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Compliance Export</h3>
+          <div className="bg-surface rounded-xl border border-hairline shadow-xs">
+            <div className="px-5 py-3.5 border-b border-hairline flex items-center gap-2">
+              <Download size={14} strokeWidth={1.75} className="text-text-subtle" />
+              <h3 className="text-[13px] font-semibold text-text tracking-tight">Compliance export</h3>
             </div>
-            <div className="p-4 space-y-3">
-              <p className="text-xs text-text-subtle leading-relaxed">
+            <div className="p-5 space-y-3">
+              <p className="text-[12px] text-text-subtle leading-relaxed">
                 Export audit trail, incidents, and telemetry for compliance review.
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] font-medium text-text-subtle uppercase tracking-wider mb-1">From</label>
+                  <label className="block text-[11px] font-medium text-text-subtle tracking-tight mb-1">From</label>
                   <input type="date" className={INPUT_CLS} value={exportRange.from} onChange={e => setExportRange({ ...exportRange, from: e.target.value })} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-text-subtle uppercase tracking-wider mb-1">To</label>
+                  <label className="block text-[11px] font-medium text-text-subtle tracking-tight mb-1">To</label>
                   <input type="date" className={INPUT_CLS} value={exportRange.to} onChange={e => setExportRange({ ...exportRange, to: e.target.value })} />
                 </div>
               </div>
-              <div className="flex gap-2 pt-2 border-t border-border">
-                <button onClick={() => handleExport('pdf')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-xs font-medium text-text-muted bg-surface-elevated border border-border rounded-md hover:text-text transition-colors">
+              <div className="flex gap-2 pt-3 border-t border-hairline">
+                <button onClick={() => handleExport('pdf')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard">
                   <FileText size={12} strokeWidth={1.5} /> PDF
                 </button>
-                <button onClick={() => handleExport('json')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-xs font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors">
+                <button onClick={() => handleExport('json')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-white bg-accent rounded-pill hover:bg-accent-hover transition-standard">
                   <FileJson size={12} strokeWidth={1.5} /> JSON
                 </button>
               </div>
@@ -175,20 +175,20 @@ export default function GovernancePage() {
 
           {/* RBAC */}
           {isAdmin ? (
-            <div className="bg-surface rounded-lg border border-border shadow-sm">
-              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                <UserCog size={14} strokeWidth={1.5} className="text-text-subtle" />
-                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">User Roles</h3>
+            <div className="bg-surface rounded-xl border border-hairline shadow-xs">
+              <div className="px-5 py-3.5 border-b border-hairline flex items-center gap-2">
+                <UserCog size={14} strokeWidth={1.75} className="text-text-subtle" />
+                <h3 className="text-[13px] font-semibold text-text tracking-tight">User roles</h3>
               </div>
-              <div className="divide-y divide-border">
+              <div>
                 {users.map(u => (
-                  <div key={u.id} className="px-4 py-3 flex items-center justify-between hover:bg-surface-elevated transition-colors">
+                  <div key={u.id} className="px-5 py-3 flex items-center justify-between border-b border-hairline last:border-0 hover:bg-accent-weak transition-standard">
                     <div>
                       <p className="text-sm font-medium text-text">{u.email}</p>
                       <p className="text-[10px] text-text-subtle font-mono">Joined {u.lastActive}</p>
                     </div>
                     <select
-                      className="px-2 py-1 text-xs bg-surface-elevated border border-border rounded-md text-text focus:outline-none focus:border-accent capitalize"
+                      className="px-3 py-1 text-[12px] bg-[var(--material-thick)] rounded-pill text-text transition-standard capitalize"
                       value={u.role}
                       onChange={e => handleChangeRole(u.id, e.target.value)}
                       disabled={u.email === user?.email}

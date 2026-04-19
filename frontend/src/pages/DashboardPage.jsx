@@ -13,17 +13,11 @@ import DataTable from '../components/common/DataTable';
 import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
-
-/* Shared chart config — token-aware */
-const GRID_STROKE = 'var(--color-border)';
-const AXIS_TICK = { fontSize: 11, fill: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)' };
-const TOOLTIP_STYLE = {
-  backgroundColor: 'var(--color-surface-elevated)',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-md)',
-  fontSize: '12px',
-  color: 'var(--color-text)',
-};
+import { InfoTip } from '../components/common/Tooltip';
+import {
+  GRID_STROKE, AXIS_TICK, TOOLTIP_STYLE,
+  CHART_GRID_DASH, CHART_LINE_STROKE, CHART_BAR_RADIUS, CHART_BAR_SIZE,
+} from '../components/common/chartStyle';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -111,16 +105,16 @@ export default function DashboardPage() {
     <div className="space-y-5">
       {/* Header + env filter */}
       <PageHeader title="Dashboard" description="Platform health across all connected AI services">
-        <div className="flex items-center bg-surface border border-border rounded-md p-0.5" role="tablist" aria-label="Environment filter">
+        <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Environment filter">
           {['all', 'production', 'staging'].map((tab) => (
             <button
               key={tab}
               role="tab"
               aria-selected={activeEnv === tab}
               onClick={() => setActiveEnv(tab)}
-              className={`px-3 py-1 text-xs font-medium rounded-sm capitalize transition-colors ${
+              className={`px-3 py-1 text-[12px] font-medium rounded-pill capitalize transition-standard ${
                 activeEnv === tab
-                  ? 'bg-surface-elevated text-text shadow-sm'
+                  ? 'bg-surface-elevated text-text shadow-xs'
                   : 'text-text-muted hover:text-text'
               }`}
             >
@@ -130,32 +124,32 @@ export default function DashboardPage() {
         </div>
       </PageHeader>
 
-      {/* Active Alerts (inspired by Datadog/PagerDuty) */}
+      {/* Active Alerts */}
       {alerts.length > 0 && (
-        <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <AlertCircle size={14} strokeWidth={1.5} className="text-status-failing" />
-              <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Active Alerts</span>
+        <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
+          <div className="px-5 py-3 border-b border-hairline flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} strokeWidth={1.75} className="text-status-failing" />
+              <span className="text-[13px] font-semibold text-text tracking-tight">Active alerts</span>
             </div>
-            <span className="text-xs font-mono tabular-nums text-text-subtle">{alerts.length}</span>
+            <span className="text-[11px] font-mono tabular-nums text-text-subtle">{alerts.length}</span>
           </div>
-          <div className="divide-y divide-border">
+          <div>
             {alerts.map(a => (
-              <div key={a.id} className="flex items-center justify-between px-4 py-2.5">
-                <div className="flex items-center gap-2.5">
+              <div key={a.id} className="flex items-center justify-between px-5 py-3 border-b border-hairline last:border-0">
+                <div className="flex items-center gap-3">
                   <span className={`w-2 h-2 rounded-full ${a.severity === 'critical' ? 'bg-status-failing' : 'bg-status-degraded'}`} />
                   <span className="text-sm text-text">{a.message}</span>
-                  <span className="text-xs text-text-subtle font-mono">{a.service_name}</span>
+                  <span className="text-[11px] text-text-subtle font-mono">{a.service_name}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-text-subtle font-mono tabular-nums">{a.created_at}</span>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[11px] text-text-subtle font-mono tabular-nums">{a.created_at}</span>
                   <button
                     onClick={async () => {
                       await api.post(`/dashboard/alerts/${a.id}/acknowledge`);
                       fetchDashboard();
                     }}
-                    className="px-2 py-1 text-xs font-medium text-text-muted bg-surface-elevated border border-border rounded-md hover:text-text transition-colors"
+                    className="px-2.5 py-1 text-[11px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard"
                   >
                     Ack
                   </button>
@@ -168,9 +162,9 @@ export default function DashboardPage() {
 
       {/* Legacy drift alert for backward compat */}
       {alerts.length === 0 && driftAlerts.length > 0 && (
-        <div className="flex items-center justify-between gap-4 px-4 py-3 bg-status-failing-muted border border-status-failing/20 rounded-lg" role="alert">
+        <div className="flex items-center justify-between gap-4 px-5 py-3.5 bg-status-failing-muted rounded-xl" role="alert">
           <div className="flex items-center gap-3">
-            <AlertCircle size={16} strokeWidth={1.5} className="text-status-failing shrink-0" />
+            <AlertCircle size={16} strokeWidth={1.75} className="text-status-failing shrink-0" />
             <p className="text-sm text-text">
               <span className="font-medium">Drift detected</span>
               <span className="text-text-muted"> — {driftAlerts[0].service_name} quality dropped to </span>
@@ -180,7 +174,7 @@ export default function DashboardPage() {
           </div>
           <button
             onClick={() => navigate('/incidents')}
-            className="shrink-0 px-3 py-1.5 text-xs font-medium bg-status-failing text-white rounded-md hover:opacity-90 transition-opacity"
+            className="shrink-0 px-3 py-1.5 text-[11px] font-medium bg-status-failing text-white rounded-pill hover:opacity-90 transition-standard"
           >
             Create incident
           </button>
@@ -189,26 +183,63 @@ export default function DashboardPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MetricCard title="Active Services" value={metrics.active_services} icon={Server} trend="neutral" color="slate" />
-        <MetricCard title="Avg Quality" value={`${metrics.avg_quality_score.toFixed(1)}%`} icon={Activity} trend={metrics.quality_trend} color="green" />
-        <MetricCard title="Error Rate" value={`${metrics.error_rate_pct.toFixed(1)}%`} icon={AlertTriangle} trend={metrics.error_trend} color="amber" />
-        <MetricCard title="Avg Latency" value={`${metrics.avg_latency_ms.toFixed(0)}ms`} icon={Clock} trend={metrics.latency_trend} color="blue" />
+        <MetricCard
+          title="Active Services"
+          value={metrics.active_services}
+          icon={Server}
+          trend="neutral"
+          color="slate"
+          tooltip="Count of AI services registered in the platform that are currently enabled."
+        />
+        <MetricCard
+          title="Avg Quality"
+          value={`${metrics.avg_quality_score.toFixed(1)}%`}
+          icon={Activity}
+          trend={metrics.quality_trend}
+          color="green"
+          tooltip="Rolling average of evaluation scores (0–100%) across all recent runs. Higher is better. Measures how well the AI's answers match expected outputs."
+        />
+        <MetricCard
+          title="Error Rate"
+          value={`${metrics.error_rate_pct.toFixed(1)}%`}
+          icon={AlertTriangle}
+          trend={metrics.error_trend}
+          color="amber"
+          tooltip="Percentage of LLM calls that failed or tripped a safety check in the last 24 hours. Includes API errors, timeouts, and blocked prompts."
+        />
+        <MetricCard
+          title="Avg Latency"
+          value={`${metrics.avg_latency_ms.toFixed(0)}ms`}
+          icon={Clock}
+          trend={metrics.latency_trend}
+          color="blue"
+          tooltip="Mean response time across all LLM calls in the last 24 hours. Lower is better. See the percentile tiles below for tail-latency."
+        />
       </div>
 
       {/* Latency percentiles bar */}
-      <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
-        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Latency Percentiles (24h)</h3>
+      <div className="bg-surface rounded-xl border border-hairline shadow-xs p-6">
+        <div className="flex items-baseline justify-between mb-4">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight flex items-center gap-1.5">
+            Response times
+            <InfoTip content="How fast the AI replies for a typical user vs. the slowest users. Percentiles matter more than averages — a single 10-second outlier can hide the fact that most users are fine. Showing the last 24 hours." />
+          </h3>
+          <span className="text-[11px] text-text-subtle tracking-tight">Last 24 hours</span>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: 'P50', value: metrics.p50_latency_ms, color: 'text-accent' },
-            { label: 'P95', value: metrics.p95_latency_ms, color: 'text-status-degraded' },
-            { label: 'P99', value: metrics.p99_latency_ms, color: 'text-status-failing' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="flex items-baseline justify-between px-3 py-2 bg-surface-elevated rounded-md border border-border">
-              <span className="text-xs font-medium text-text-muted">{label}</span>
-              <span className={`text-sm font-semibold font-mono tabular-nums ${color}`}>
-                {(value || 0).toFixed(0)}ms
-              </span>
+            { label: 'Typical Response', sub: 'Median — P50 · half of requests are faster', value: metrics.p50_latency_ms, color: 'text-accent' },
+            { label: 'Slow Response', sub: '95th percentile — P95 · only 5% are slower', value: metrics.p95_latency_ms, color: 'text-status-degraded' },
+            { label: 'Worst Response', sub: '99th percentile — P99 · only 1% are slower', value: metrics.p99_latency_ms, color: 'text-status-failing' },
+          ].map(({ label, sub, value, color }) => (
+            <div key={label} className="flex flex-col gap-1 px-4 py-3 bg-surface-elevated rounded-lg border border-hairline">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] font-medium text-text-muted">{label}</span>
+                <span className={`text-lg font-semibold font-mono tabular-nums tracking-tight ${color}`}>
+                  {(value || 0).toFixed(0)}ms
+                </span>
+              </div>
+              <span className="text-[11px] text-text-subtle leading-snug">{sub}</span>
             </div>
           ))}
         </div>
@@ -217,40 +248,49 @@ export default function DashboardPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Latency */}
-        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Response Latency (24h)</h3>
+        <div className="bg-surface rounded-xl border border-hairline shadow-xs p-6">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4 flex items-center gap-1.5">
+            Response latency · last 24 hours
+            <InfoTip content="How long the AI takes to reply, in milliseconds, bucketed over time. Spikes often precede incidents." />
+          </h3>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={latencyData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <CartesianGrid strokeDasharray={CHART_GRID_DASH} vertical={false} stroke={GRID_STROKE} />
                 <XAxis dataKey="time" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
                 <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} tickFormatter={(v) => `${v}ms`} />
                 <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}ms`, 'Latency']} />
-                <Line type="monotone" dataKey="ms" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 3, strokeWidth: 1.5, fill: 'var(--color-surface)' }} />
+                <Line type="monotone" dataKey="ms" stroke="var(--chart-1)" strokeWidth={CHART_LINE_STROKE} dot={{ r: 3, strokeWidth: 1.5, fill: 'var(--color-surface)' }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Quality */}
-        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Quality Scores per Run</h3>
+        <div className="bg-surface rounded-xl border border-hairline shadow-xs p-6">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4 flex items-center gap-1.5">
+            Quality scores per run
+            <InfoTip content="Each bar is one evaluation run. Score 0–100% based on how closely AI responses matched expected answers. Drift is flagged below the threshold." />
+          </h3>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={qualityData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <CartesianGrid strokeDasharray={CHART_GRID_DASH} vertical={false} stroke={GRID_STROKE} />
                 <XAxis dataKey="run" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
                 <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
                 <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Quality']} cursor={{ fill: 'var(--color-surface-elevated)' }} />
-                <Bar dataKey="score" fill="var(--chart-2)" radius={[3, 3, 0, 0]} barSize={28} />
+                <Bar dataKey="score" fill="var(--chart-2)" radius={CHART_BAR_RADIUS} barSize={CHART_BAR_SIZE} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         {/* Error trend — full width */}
-        <div className="bg-surface rounded-lg border border-border p-4 shadow-sm lg:col-span-2">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Error Rate Trend (%)</h3>
+        <div className="bg-surface rounded-xl border border-hairline shadow-xs p-6 lg:col-span-2">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4 flex items-center gap-1.5">
+            Error rate trend
+            <InfoTip content="Percentage of LLM calls that failed or were blocked, over time. Covers API errors, timeouts, and safety-scanner blocks." />
+          </h3>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={errorData}>
@@ -260,11 +300,11 @@ export default function DashboardPage() {
                     <stop offset="95%" stopColor="var(--chart-3)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={GRID_STROKE} />
+                <CartesianGrid strokeDasharray={CHART_GRID_DASH} vertical={false} stroke={GRID_STROKE} />
                 <XAxis dataKey="time" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
                 <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} dx={-8} tickFormatter={(v) => `${v}%`} />
                 <RechartsTooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Error Rate']} />
-                <Area type="monotone" dataKey="rate" stroke="var(--chart-3)" strokeWidth={2} fillOpacity={1} fill="url(#errorGrad)" />
+                <Area type="monotone" dataKey="rate" stroke="var(--chart-3)" strokeWidth={CHART_LINE_STROKE} fillOpacity={1} fill="url(#errorGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -273,7 +313,7 @@ export default function DashboardPage() {
 
       {/* Recent evaluations */}
       <div>
-        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Recent Evaluations</h3>
+        <h3 className="text-[13px] font-semibold text-text tracking-tight mb-3">Recent evaluations</h3>
         {recentEvals.length > 0 ? (
           <DataTable columns={evalColumns} data={recentEvals} searchPlaceholder="Search evaluations..." />
         ) : (

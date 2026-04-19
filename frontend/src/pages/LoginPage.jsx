@@ -9,6 +9,8 @@ const DEMO_CREDS = [
   { role: 'Viewer', email: 'viewer@aiops.local', pwd: 'viewer123', desc: 'Read-only' },
 ];
 
+const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -39,26 +41,23 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-sm">
-        {/* Header */}
-        <div className="flex items-center gap-2.5 mb-8">
-          <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center">
-            <Server size={16} strokeWidth={1.5} className="text-white" />
+      <div className="w-full max-w-[380px]">
+        {/* Wordmark */}
+        <div className="flex items-center justify-center gap-2.5 mb-10">
+          <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center">
+            <Server size={14} strokeWidth={2} className="text-white" />
           </div>
-          <div>
-            <h1 className="text-sm font-semibold text-text tracking-tight">AIHealthCheck</h1>
-            <p className="text-[10px] text-text-subtle uppercase tracking-wider">Control Room</p>
-          </div>
+          <h1 className="text-[15px] font-semibold text-text tracking-tight">AI Health Check</h1>
         </div>
 
         {/* Form card */}
-        <div className="bg-surface border border-border rounded-lg p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-text mb-1">Sign in</h2>
-          <p className="text-xs text-text-muted mb-5">Enter your credentials to access the dashboard.</p>
+        <div className="rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg p-8">
+          <h2 className="text-display-sm font-semibold text-text mb-1.5">Sign in</h2>
+          <p className="text-[13px] text-text-muted mb-6">Enter your credentials to access the dashboard.</p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             <div>
-              <label htmlFor="email" className="block text-xs font-medium text-text-muted mb-1.5">
+              <label htmlFor="email" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
                 Email
               </label>
               <input
@@ -66,7 +65,7 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent transition-colors"
+                className={INPUT_CLS}
                 placeholder="admin@aiops.local"
                 required
                 autoComplete="email"
@@ -74,7 +73,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-xs font-medium text-text-muted mb-1.5">
+              <label htmlFor="password" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
                 Password
               </label>
               <input
@@ -82,7 +81,7 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent transition-colors"
+                className={INPUT_CLS}
                 placeholder="Enter password"
                 required
                 autoComplete="current-password"
@@ -90,8 +89,8 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium bg-status-failing-muted text-status-failing border border-status-failing/20 rounded-md" role="alert">
-                <span className="w-1.5 h-1.5 rounded-full bg-status-failing shrink-0" aria-hidden="true" />
+              <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12px] font-medium bg-status-failing-muted text-status-failing rounded-md" role="alert">
+                <span className="w-1 h-1 rounded-full bg-status-failing shrink-0" aria-hidden="true" />
                 {error}
               </div>
             )}
@@ -100,19 +99,19 @@ export default function LoginPage() {
               type="submit"
               disabled={loading}
               aria-busy={loading}
-              className="w-full py-2 bg-accent hover:bg-accent-hover text-white rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full py-2.5 mt-2 bg-accent hover:bg-accent-hover text-white rounded-pill text-sm font-medium transition-standard flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {loading && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
+              {loading && <Loader2 size={14} strokeWidth={1.75} className="animate-spin" />}
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
         </div>
 
         {/* Demo credentials */}
-        <div className="mt-4 bg-surface border border-border rounded-lg shadow-sm overflow-hidden">
+        <div className="mt-4 rounded-2xl bg-surface border border-hairline shadow-xs overflow-hidden">
           <button
             onClick={() => setShowDemo(!showDemo)}
-            className="w-full flex items-center justify-between px-4 py-3 text-xs font-medium text-text-muted hover:text-text transition-colors"
+            className="w-full flex items-center justify-between px-5 py-3 text-[12px] font-medium text-text-muted hover:text-text transition-standard"
             aria-expanded={showDemo}
           >
             <span>Demo credentials</span>
@@ -123,16 +122,16 @@ export default function LoginPage() {
           </button>
 
           {showDemo && (
-            <div className="border-t border-border">
+            <div className="border-t border-hairline">
               {DEMO_CREDS.map((cred, i) => (
                 <button
                   key={i}
                   type="button"
                   onClick={() => handleDemoClick(cred.email, cred.pwd)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-surface-elevated transition-colors border-b border-border last:border-b-0"
+                  className="w-full flex items-center justify-between px-5 py-2.5 text-left hover:bg-accent-weak transition-standard border-b border-hairline last:border-b-0"
                 >
                   <div>
-                    <p className="text-xs font-medium text-text">{cred.role}</p>
+                    <p className="text-[12px] font-medium text-text">{cred.role}</p>
                     <p className="text-[10px] text-text-subtle font-mono">{cred.email}</p>
                   </div>
                   <span className="text-[10px] font-medium text-accent">{cred.desc}</span>

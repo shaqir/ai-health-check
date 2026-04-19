@@ -5,12 +5,12 @@ import StatusBadge from '../components/common/StatusBadge';
 export default function DataPolicyPage() {
   return (
     <div className="space-y-5 max-w-4xl">
-      <PageHeader title="Data Policy" description="How AIHealthCheck handles data and interacts with external LLM providers." />
+      <PageHeader title="Data Policy" description="How AI Health Check handles data and interacts with external LLM providers." />
 
       {/* Architecture diagram */}
-      <div className="bg-surface rounded-lg border border-border p-5 shadow-sm">
-        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4">Data Flow</h3>
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3 p-4 bg-surface-elevated rounded-md border border-border">
+      <div className="bg-surface rounded-xl border border-hairline p-6 shadow-xs">
+        <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4">Data flow</h3>
+        <div className="flex flex-col md:flex-row items-center justify-between gap-3 p-5 bg-surface-elevated rounded-xl border border-hairline">
           <FlowNode icon={Globe} label="User" sublabel="Browser" />
           <ArrowRight size={16} strokeWidth={1.5} className="text-text-subtle hidden md:block" />
           <div className="flex flex-col gap-2 w-full md:w-40">
@@ -62,10 +62,10 @@ export default function DataPolicyPage() {
       </div>
 
       {/* Safety note */}
-      <div className="flex items-start gap-3 px-4 py-3 bg-status-healthy-muted border border-status-healthy/20 rounded-lg">
-        <Shield size={14} strokeWidth={1.5} className="text-status-healthy shrink-0 mt-0.5" />
-        <div className="text-xs text-text-muted">
-          <span className="font-medium text-text">Prompt Safety Scanner active.</span> All inputs are checked
+      <div className="flex items-start gap-3 px-4 py-3.5 bg-status-healthy-muted rounded-xl">
+        <Shield size={14} strokeWidth={1.75} className="text-status-healthy shrink-0 mt-0.5" />
+        <div className="text-[12px] text-text-muted">
+          <span className="font-medium text-text">Prompt safety scanner active.</span> All inputs are checked
           for injection patterns, PII, and length limits before reaching Claude. Blocked calls are logged
           with safety flags and risk scores. Budget enforcement prevents cost overruns.
         </div>
@@ -78,8 +78,8 @@ export default function DataPolicyPage() {
 
 function PolicySection({ icon: Icon, title, children }) {
   return (
-    <section className="bg-surface rounded-lg border border-border p-4 shadow-sm">
-      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 flex items-center gap-1.5">
+    <section className="bg-surface rounded-xl border border-hairline p-5 shadow-xs">
+      <h3 className="text-[13px] font-semibold text-text tracking-tight mb-2 flex items-center gap-2">
         <Icon size={12} strokeWidth={1.5} /> {title}
       </h3>
       <div className="text-sm text-text-muted leading-relaxed">{children}</div>
@@ -89,11 +89,11 @@ function PolicySection({ icon: Icon, title, children }) {
 
 function FlowNode({ icon: Icon, label, sublabel }) {
   return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="w-10 h-10 rounded-md bg-surface border border-border flex items-center justify-center">
-        <Icon size={16} strokeWidth={1.5} className="text-text-subtle" />
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="w-11 h-11 rounded-xl bg-surface shadow-xs flex items-center justify-center">
+        <Icon size={16} strokeWidth={1.75} className="text-text-subtle" />
       </div>
-      <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">{label}</span>
+      <span className="text-[11px] font-medium text-text tracking-tight">{label}</span>
       {sublabel && <span className="text-[10px] text-text-subtle">{sublabel}</span>}
     </div>
   );
@@ -101,8 +101,8 @@ function FlowNode({ icon: Icon, label, sublabel }) {
 
 function FlowBox({ label, sublabel }) {
   return (
-    <div className="px-3 py-2 bg-surface border border-border rounded-md text-center">
-      <p className="text-xs font-medium text-text">{label}</p>
+    <div className="px-3 py-2 bg-surface rounded-lg border border-hairline shadow-xs text-center">
+      <p className="text-[12px] font-medium text-text">{label}</p>
       {sublabel && <p className="text-[10px] text-text-subtle">{sublabel}</p>}
     </div>
   );

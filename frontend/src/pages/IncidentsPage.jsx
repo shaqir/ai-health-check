@@ -10,8 +10,8 @@ import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low'];
-const INPUT_CLS = 'w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-md text-text placeholder-text-subtle focus:outline-none focus:border-accent';
-const LABEL_CLS = 'block text-xs font-medium text-text-muted mb-1.5';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 const CHECKLIST_ITEMS = [
   { key: 'checklist_data_issue', label: 'Data format issue (inputs/outputs)' },
@@ -89,19 +89,19 @@ export default function IncidentsPage() {
         {canEdit && (
           <button
             onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-status-failing text-white rounded-md text-xs font-medium hover:opacity-90 transition-opacity"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-status-failing text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard"
           >
-            <Plus size={14} strokeWidth={1.5} /> Report
+            <Plus size={14} strokeWidth={1.75} /> Report
           </button>
         )}
       </PageHeader>
 
       {/* Create form */}
       {showForm && (
-        <form onSubmit={handleCreate} className="bg-surface rounded-lg border border-border p-5 shadow-sm">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-4 flex items-center gap-2">
-            <AlertTriangle size={14} strokeWidth={1.5} className="text-status-failing" />
-            Report New Incident
+        <form onSubmit={handleCreate} className="bg-surface rounded-xl border border-hairline p-6 shadow-xs">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4 flex items-center gap-2">
+            <AlertTriangle size={14} strokeWidth={1.75} className="text-status-failing" />
+            Report new incident
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
@@ -131,9 +131,9 @@ export default function IncidentsPage() {
             </div>
 
             {/* Right column: checklist */}
-            <div className="bg-surface-elevated p-4 rounded-md border border-border">
-              <h4 className="text-xs font-semibold text-text-muted mb-1 flex items-center gap-1.5">
-                <CheckSquare size={12} strokeWidth={1.5} /> Triage Checklist
+            <div className="bg-surface-elevated p-4 rounded-xl">
+              <h4 className="text-[13px] font-semibold text-text tracking-tight mb-1 flex items-center gap-2">
+                <CheckSquare size={12} strokeWidth={1.75} /> Triage checklist
               </h4>
               <p className="text-[11px] text-text-subtle mb-3">Check items that apply or have been ruled out.</p>
               <div className="space-y-2.5">
@@ -141,7 +141,7 @@ export default function IncidentsPage() {
                   <label key={key} className="flex items-center gap-2.5 text-sm text-text cursor-pointer">
                     <input
                       type="checkbox"
-                      className="w-3.5 h-3.5 rounded-sm border-border-strong accent-accent"
+                      className="w-3.5 h-3.5 rounded-xs accent-accent"
                       checked={form[key]}
                       onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
                     />
@@ -152,11 +152,11 @@ export default function IncidentsPage() {
             </div>
           </div>
 
-          <div className="flex gap-2 pt-4 border-t border-border">
-            <button type="submit" className="px-3 py-1.5 bg-status-failing text-white rounded-md text-xs font-medium hover:opacity-90 transition-opacity">
-              Save Incident
+          <div className="flex gap-2 pt-4 border-t border-hairline">
+            <button type="submit" className="px-4 py-1.5 bg-status-failing text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard">
+              Save incident
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text border border-border rounded-md hover:bg-surface-elevated transition-colors">
+            <button type="button" onClick={() => setShowForm(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard">
               Cancel
             </button>
           </div>
@@ -176,7 +176,7 @@ export default function IncidentsPage() {
             <Link
               to={`/incidents/${inc.id}`}
               key={inc.id}
-              className="block bg-surface rounded-lg border border-border p-4 hover:border-border-strong transition-colors"
+              className="block bg-surface rounded-xl border border-hairline p-5 shadow-xs hover:shadow-sm transition-standard"
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">

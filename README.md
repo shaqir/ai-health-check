@@ -166,6 +166,7 @@ ai-health-check/
 | [LIVE_DEMO_WALKTHROUGH](docs/LIVE_DEMO_WALKTHROUGH.md) | Day-before rehearsal: 9-step demo script with failure modes, mitigations, and killshot moments |
 | [SELF_CRITIQUE](docs/SELF_CRITIQUE.md) | Top 5 methodological weaknesses a rigorous examiner will probe, with honest-answer phrasing for the viva |
 | [GOVERNANCE_AUDIT](docs/GOVERNANCE_AUDIT.md) | Enterprise governance audit: 7 risk categories + HIPAA / SOX / EU AI Act verdict + 12-week remediation roadmap |
+| [VIVA_QA_PREP](docs/VIVA_QA_PREP.md) | 10 hardest questions a strict examiner will ask in a 2-minute Q&A, with ideal-answer phrasing and weak-answer traps |
 | [ROADMAP](docs/ROADMAP.md) | Sprint timeline and module ownership |
 
 ---

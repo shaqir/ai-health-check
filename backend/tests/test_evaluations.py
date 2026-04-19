@@ -156,3 +156,75 @@ def test_drift_check(client, db, admin_token):
     data = res.json()
     assert "drift_detected" in data
     assert "threshold" in data
+
+
+# ── Drift alert auto-creation ──
+
+@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=30.0)
+@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=50.0)
+def test_drift_critical_creates_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
+    """Quality far below threshold must auto-create a critical Alert row."""
+    from app.models import Alert
+
+    mock_run.return_value = {"response_text": "wrong", "latency_ms": 100}
+
+    svc = _create_service(db)
+    db.add(EvalTestCase(
+        service_id=svc.id, prompt="q", expected_output="a", category="factuality",
+    ))
+    db.commit()
+
+    res = client.post(f"/api/v1/evaluations/run/{svc.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert res.json()["drift_flagged"] is True
+
+    alerts = db.query(Alert).filter(Alert.alert_type == "drift").all()
+    assert len(alerts) == 1
+    assert alerts[0].severity == "critical"
+    assert alerts[0].service_id == svc.id
+
+
+@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=95.0)
+@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=10.0)
+def test_healthy_score_creates_no_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
+    """No drift = no alert."""
+    from app.models import Alert
+
+    mock_run.return_value = {"response_text": "correct", "latency_ms": 100}
+
+    svc = _create_service(db)
+    db.add(EvalTestCase(
+        service_id=svc.id, prompt="q", expected_output="a", category="factuality",
+    ))
+    db.commit()
+
+    res = client.post(f"/api/v1/evaluations/run/{svc.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert res.json()["drift_flagged"] is False
+
+    alerts = db.query(Alert).filter(Alert.alert_type == "drift").all()
+    assert len(alerts) == 0
+
+
+@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=20.0)
+@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=60.0)
+def test_drift_alert_creation_audited(mock_halluc, mock_run, mock_score, client, db, admin_token):
+    """Alert creation must itself leave an audit trail."""
+    from app.models import AuditLog
+
+    mock_run.return_value = {"response_text": "wrong", "latency_ms": 100}
+
+    svc = _create_service(db)
+    db.add(EvalTestCase(
+        service_id=svc.id, prompt="q", expected_output="a", category="factuality",
+    ))
+    db.commit()
+
+    client.post(f"/api/v1/evaluations/run/{svc.id}", headers=auth_header(admin_token))
+
+    alert_logs = db.query(AuditLog).filter(AuditLog.action == "alert_created").all()
+    assert len(alert_logs) == 1
+    assert alert_logs[0].target_table == "alerts"

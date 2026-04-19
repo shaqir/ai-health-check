@@ -50,6 +50,12 @@ def _check_login_throttle(email: str, db: Session):
     ).scalar()
 
     if failed_count >= settings.max_login_attempts:
+        # Surface lockouts in the audit log so repeated brute-force
+        # attempts are visible during compliance review.
+        log_action(
+            db, None, "login_lockout", "users", None,
+            new_value=f"email={email},failed_count={failed_count}",
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many failed login attempts. Try again in {settings.login_lockout_minutes} minutes.",
@@ -78,6 +84,13 @@ def login(
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         _record_login_attempt(email, False, ip_address, db)
+        # Mirror to audit log so governance reviewers see auth failures
+        # alongside all other state changes. user_id is None because the
+        # credential didn't match any user (don't leak which exists).
+        log_action(
+            db, None, "login_failed", "users", None,
+            new_value=f"email={email},ip={ip_address}",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -85,6 +98,10 @@ def login(
 
     # Successful login
     _record_login_attempt(email, True, ip_address, db)
+    log_action(
+        db, user.id, "login_success", "users", user.id,
+        new_value=f"ip={ip_address}",
+    )
 
     token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
     return TokenResponse(

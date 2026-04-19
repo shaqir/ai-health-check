@@ -331,13 +331,19 @@ async def run_evaluation(
     # Auto-create alert on drift (inspired by Datadog/PagerDuty)
     if drift_flagged:
         severity = "critical" if quality_score < settings.drift_threshold else "warning"
-        db.add(Alert(
+        alert = Alert(
             alert_type="drift",
             severity=severity,
             message=f"{service.name} quality dropped to {quality_score}% (threshold: {settings.drift_threshold}%)",
             service_id=service_id,
-        ))
+        )
+        db.add(alert)
         db.commit()
+        db.refresh(alert)
+        log_action(
+            db, current_user.id, "alert_created", "alerts",
+            alert.id, new_value=f"drift|{severity}|service={service_id}|score={quality_score}",
+        )
 
     return EvalRunDetailResponse(
         id=eval_run.id,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileJson, FileText, Download, Users, UserCog, History, Shield } from 'lucide-react';
+import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -23,6 +23,7 @@ export default function GovernancePage() {
     from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     to: new Date().toISOString().split('T')[0],
   });
+  const [integrity, setIntegrity] = useState(null); // { valid, total, broken_at, reason }
 
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
@@ -30,17 +31,18 @@ export default function GovernancePage() {
     const fetchData = async () => {
       setError(null);
       try {
-        const res = await api.get('/compliance/audit-log');
-        setAuditLogs(res.data.map(log => ({
-          id: log.id,
-          timestamp: log.timestamp ? new Date(log.timestamp).toLocaleString() : '',
-          user: log.user_email || 'system',
-          action: log.action.toUpperCase(),
-          target: `${log.target_table}#${log.target_id || ''}`,
-          details: log.new_value || log.old_value || '',
-        })));
-
+        // Audit log is admin-only (server-side) — skip the fetch for non-admins
         if (isAdmin) {
+          const res = await api.get('/compliance/audit-log');
+          setAuditLogs(res.data.map(log => ({
+            id: log.id,
+            timestamp: log.timestamp ? new Date(log.timestamp).toLocaleString() : '',
+            user: log.user_email || 'system',
+            action: log.action.toUpperCase(),
+            target: `${log.target_table}#${log.target_id || ''}`,
+            details: log.new_value || log.old_value || '',
+          })));
+
           const userRes = await api.get('/compliance/users');
           setUsers(userRes.data.map(u => ({
             id: u.id, email: u.email, role: u.role,
@@ -55,6 +57,20 @@ export default function GovernancePage() {
     };
     fetchData();
   }, [isAdmin]);
+
+  const handleVerifyIntegrity = async () => {
+    try {
+      const res = await api.get('/compliance/audit-log/verify');
+      setIntegrity(res.data);
+      if (res.data.valid) {
+        showToast(`Audit chain verified — ${res.data.total} entries intact`, 'success');
+      } else {
+        showToast(`Integrity FAILURE at id ${res.data.broken_at}: ${res.data.reason}`, 'error');
+      }
+    } catch (err) {
+      showToast('Integrity check failed: ' + (err.response?.data?.detail || err.message), 'error');
+    }
+  };
 
   const handleExport = async (format) => {
     showToast(`Exporting ${format.toUpperCase()}...`, 'info');
@@ -142,6 +158,52 @@ export default function GovernancePage() {
 
         {/* Sidebar */}
         <div className="space-y-4">
+          {/* Audit log integrity — admin only */}
+          {isAdmin && (
+            <div className="bg-surface rounded-xl border border-hairline shadow-xs">
+              <div className="px-5 py-3.5 border-b border-hairline flex items-center gap-2">
+                <ShieldCheck size={14} strokeWidth={1.75} className="text-text-subtle" />
+                <h3 className="text-[13px] font-semibold text-text tracking-tight">Audit log integrity</h3>
+              </div>
+              <div className="p-5 space-y-3">
+                <p className="text-[12px] text-text-subtle leading-relaxed">
+                  Walk the hash chain to detect tampering. Every audit row is linked to
+                  the previous via SHA-256; any modification or deletion breaks the chain.
+                </p>
+                <button
+                  onClick={handleVerifyIntegrity}
+                  className="w-full flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-white bg-accent rounded-pill hover:bg-accent-hover transition-standard"
+                >
+                  <ShieldCheck size={12} strokeWidth={1.5} /> Verify integrity
+                </button>
+                {integrity && (
+                  <div
+                    className={`flex items-start gap-2 p-2.5 rounded-md text-[11px] ${
+                      integrity.valid
+                        ? 'bg-status-healthy-muted text-status-healthy'
+                        : 'bg-status-failing-muted text-status-failing'
+                    }`}
+                  >
+                    {integrity.valid ? (
+                      <ShieldCheck size={14} strokeWidth={1.75} />
+                    ) : (
+                      <ShieldAlert size={14} strokeWidth={1.75} />
+                    )}
+                    <div>
+                      {integrity.valid ? (
+                        <span>Chain intact — {integrity.total} entries verified.</span>
+                      ) : (
+                        <span>
+                          BROKEN at id {integrity.broken_at}: {integrity.reason}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Export */}
           <div className="bg-surface rounded-xl border border-hairline shadow-xs">
             <div className="px-5 py-3.5 border-b border-hairline flex items-center gap-2">

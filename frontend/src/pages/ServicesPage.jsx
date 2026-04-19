@@ -74,12 +74,27 @@ export default function ServicesPage() {
   };
 
   const handleTestConnection = async (id) => {
+    const service = services.find((s) => s.id === id);
+    const isConfidential = service?.sensitivity_label === 'confidential';
+    let qs = '';
+
+    if (isConfidential) {
+      const ok = window.confirm(
+        `"${service.name}" is labelled CONFIDENTIAL.\n\n` +
+        `Running the LLM test-connection will send a prompt to an external model. ` +
+        `Only admins can override. Proceed?`
+      );
+      if (!ok) return;
+      qs = '?mode=llm&allow_confidential=true';
+    }
+
     setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
     try {
-      const res = await api.post(`/services/${id}/test-connection`);
+      const res = await api.post(`/services/${id}/test-connection${qs}`);
       setTestResults((prev) => ({ ...prev, [id]: { ...res.data, status: res.data.status === 'success' ? 'healthy' : 'failed' } }));
     } catch (err) {
-      setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: err.message } }));
+      const detail = err.response?.data?.detail || err.message;
+      setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
     }
   };
 

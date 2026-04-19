@@ -60,6 +60,20 @@ export default function EvaluationsPage() {
   };
 
   const handleRunEval = async (serviceId) => {
+    const service = services.find((s) => s.id === serviceId);
+    const isConfidential = service?.sensitivity_label === 'confidential';
+    let qs = '';
+
+    if (isConfidential) {
+      const ok = window.confirm(
+        `"${service.name}" is labelled CONFIDENTIAL.\n\n` +
+        `Running evaluations will send prompts to an external LLM. ` +
+        `Only admins can override. Proceed?`
+      );
+      if (!ok) return;
+      qs = '?allow_confidential=true';
+    }
+
     try {
       const preview = await api.get(`/evaluations/cost-preview/${serviceId}`);
       const p = preview.data;
@@ -68,7 +82,7 @@ export default function EvaluationsPage() {
 
     setRunningService(serviceId);
     try {
-      const res = await api.post(`/evaluations/run/${serviceId}`);
+      const res = await api.post(`/evaluations/run/${serviceId}${qs}`);
       const r = res.data;
       showToast(`Quality: ${r.quality_score}% ${r.drift_flagged ? '— drift detected' : ''}`, r.drift_flagged ? 'error' : 'success');
       fetchData();

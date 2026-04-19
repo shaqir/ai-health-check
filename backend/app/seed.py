@@ -10,7 +10,9 @@ from app.database import engine, SessionLocal, Base
 from app.models import (
     User, UserRole, AIService, Environment, SensitivityLabel,
     EvalTestCase, EvalRun, EvalResult, ConnectionLog, Telemetry,
+    Alert,
 )
+from app.middleware.audit import log_action
 from app.middleware.auth import hash_password
 
 
@@ -104,13 +106,25 @@ def seed():
     print(f"[Seed] Created {len(test_cases)} eval test cases")
 
     # ── Create historical eval runs (5 runs spread over 7 days) ──
+    # Deliberately include a drift scenario on the second service so the
+    # dashboard shows an Active Alerts banner on first login — no need
+    # to run a live eval that depends on Claude's mood for the demo to
+    # show something interesting.
     eval_runs = []
-    for svc in services:
+    for svc_idx, svc in enumerate(services):
         for i in range(5):
             days_ago = 6 - i
-            quality = round(random.uniform(70, 98), 1)
-            factuality = round(random.uniform(65, 100), 1)
-            format_s = round(random.uniform(80, 100), 1)
+            # Service 2 (index 1): last run drops to 42% — a clean
+            # critical-drift scenario visible on the Dashboard.
+            is_drift_demo = (svc_idx == 1 and i == 4)
+            if is_drift_demo:
+                quality = 42.0
+                factuality = 38.0
+                format_s = 50.0
+            else:
+                quality = round(random.uniform(82, 98), 1)
+                factuality = round(random.uniform(80, 100), 1)
+                format_s = round(random.uniform(85, 100), 1)
             eval_runs.append(EvalRun(
                 service_id=svc.id,
                 quality_score=quality,
@@ -122,7 +136,8 @@ def seed():
             ))
     db.add_all(eval_runs)
     db.commit()
-    print(f"[Seed] Created {len(eval_runs)} historical eval runs")
+    print(f"[Seed] Created {len(eval_runs)} historical eval runs "
+          f"(with 1 pre-flagged drift scenario)")
 
     # ── Create eval results (per-test-case scores for each run) ──
     eval_results = []
@@ -188,6 +203,32 @@ def seed():
     db.add_all(telemetry)
     db.commit()
     print(f"[Seed] Created {len(telemetry)} telemetry entries")
+
+    # ── Alert for the pre-seeded drift scenario ──
+    # Matches the drift_flagged=True run on service index 1. Examiners
+    # see the Dashboard "Active Alerts" banner on first login without
+    # having to run a live eval.
+    drift_service = services[1]
+    alert = Alert(
+        alert_type="drift",
+        severity="critical",
+        message=(
+            f"{drift_service.name} quality dropped to 42.0% "
+            f"(threshold: 75.0%)"
+        ),
+        service_id=drift_service.id,
+        acknowledged=False,
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    # Audit the alert creation so the governance trail is complete for
+    # the demo's end-to-end narrative.
+    log_action(
+        db, None, "alert_created", "alerts",
+        alert.id, new_value=f"drift|critical|service={drift_service.id}|score=42.0",
+    )
+    print(f"[Seed] Created 1 drift alert for '{drift_service.name}' (demo-ready)")
 
     db.close()
     print("[Seed] Done!")

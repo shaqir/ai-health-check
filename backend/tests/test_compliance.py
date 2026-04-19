@@ -300,6 +300,69 @@ def test_export_omits_unapproved_incident_summaries(client, db, admin_token):
     assert body["incidents"][0]["summary"] == ""
 
 
+def test_export_rejects_malformed_from_date(client, db, admin_token):
+    """Silent date drops are how compliance evidence becomes wrong.
+    A typo'd from_date must return 400, not 'oh we'll just drop the filter'."""
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json", "from_date": "2024-15-01"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 400
+    assert "from_date" in res.json()["detail"]
+
+
+def test_export_rejects_malformed_to_date(client, db, admin_token):
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json", "to_date": "tomorrow"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 400
+
+
+def test_export_rejects_inverted_date_range(client, db, admin_token):
+    """from_date > to_date is a user error that should not silently return everything."""
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json", "from_date": "2026-12-01", "to_date": "2026-01-01"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 400
+
+
+def test_audit_log_list_rejects_malformed_date(client, db, admin_token):
+    """Same guard on the audit list endpoint."""
+    res = client.get(
+        "/api/v1/compliance/audit-log?from_date=not-a-date",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 400
+
+
+def test_export_reports_truncation_warning(client, db, admin_token, monkeypatch):
+    """When more rows exist than the cap, the export must surface a warning
+    so a reviewer sees that older data was dropped."""
+    from app.routers import export as export_mod
+    monkeypatch.setattr(export_mod, "EXPORT_ROW_LIMIT", 3)
+
+    # Generate 5 audit rows
+    from app.middleware.audit import log_action
+    for i in range(5):
+        log_action(db, None, f"act_{i}", "t", i)
+
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["audit_total_in_range"] == 5
+    assert body["total"] == 3
+    assert any("truncated" in w.lower() for w in body["warnings"])
+
+
 def test_export_pdf_renders_with_sections(client, db, admin_token):
     """Smoke test: PDF mode returns non-empty bytes with all sections present."""
     from app.models import (

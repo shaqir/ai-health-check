@@ -10,7 +10,7 @@ Compliance export + AI report router (Module 4).
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -23,6 +23,32 @@ from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_compliance_summary
 
 router = APIRouter()
+
+# Raised from 500 after the hostile QA pass flagged compliance evidence
+# silently dropping older rows. 10000 keeps a full year of typical audit
+# activity in one export. Truncation past this is reported as a warning.
+EXPORT_ROW_LIMIT = 10000
+
+
+def _parse_date_or_400(value: str | None, field_name: str) -> datetime | None:
+    """
+    Strict ISO-8601 parser for query dates. Returns None if value is empty.
+    Raises 400 if value is provided but malformed — previously the parse
+    error was silently swallowed, causing "date filter dropped, export
+    returned everything" bugs in compliance evidence.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid {field_name} '{value}' — use YYYY-MM-DD or ISO-8601. "
+                f"Silent date drops would break compliance evidence."
+            ),
+        )
 
 
 class ExportRequest(BaseModel):
@@ -40,24 +66,33 @@ def export_compliance_data(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Strict date parsing — reject malformed dates instead of silently
+    # dropping the filter (previous bug: typo in `from_date` returned the
+    # entire DB as if no filter was set).
+    from_dt = _parse_date_or_400(req.from_date, "from_date")
+    to_dt = _parse_date_or_400(req.to_date, "to_date")
+    if from_dt and to_dt and from_dt > to_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"from_date ({req.from_date}) must be <= to_date ({req.to_date})",
+        )
+
+    warnings: list[str] = []
+
     # ── Audit log ──
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
-    if req.from_date:
-        try:
-            query = query.filter(
-                AuditLog.timestamp >= datetime.fromisoformat(req.from_date)
-            )
-        except ValueError:
-            pass
-    if req.to_date:
-        try:
-            query = query.filter(
-                AuditLog.timestamp <= datetime.fromisoformat(req.to_date)
-            )
-        except ValueError:
-            pass
+    if from_dt:
+        query = query.filter(AuditLog.timestamp >= from_dt)
+    if to_dt:
+        query = query.filter(AuditLog.timestamp <= to_dt)
 
-    logs = query.limit(500).all()
+    audit_total = query.count()
+    logs = query.limit(EXPORT_ROW_LIMIT).all()
+    if audit_total > EXPORT_ROW_LIMIT:
+        warnings.append(
+            f"Audit log truncated: showing the {EXPORT_ROW_LIMIT} most recent of "
+            f"{audit_total} total rows in the date range. Narrow the range to see older events."
+        )
     records = []
     for log in logs:
         user = db.query(User).filter(User.id == log.user_id).first() if log.user_id else None
@@ -73,21 +108,17 @@ def export_compliance_data(
 
     # ── Incidents (only approved summaries count as official) ──
     inc_query = db.query(Incident).order_by(Incident.created_at.desc())
-    if req.from_date:
-        try:
-            inc_query = inc_query.filter(
-                Incident.created_at >= datetime.fromisoformat(req.from_date)
-            )
-        except ValueError:
-            pass
-    if req.to_date:
-        try:
-            inc_query = inc_query.filter(
-                Incident.created_at <= datetime.fromisoformat(req.to_date)
-            )
-        except ValueError:
-            pass
-    incidents = inc_query.limit(500).all()
+    if from_dt:
+        inc_query = inc_query.filter(Incident.created_at >= from_dt)
+    if to_dt:
+        inc_query = inc_query.filter(Incident.created_at <= to_dt)
+    inc_total = inc_query.count()
+    incidents = inc_query.limit(EXPORT_ROW_LIMIT).all()
+    if inc_total > EXPORT_ROW_LIMIT:
+        warnings.append(
+            f"Incidents truncated: {inc_total} in range, "
+            f"only {EXPORT_ROW_LIMIT} most recent included."
+        )
     incidents_records = [
         {
             "id": i.id,
@@ -113,21 +144,17 @@ def export_compliance_data(
 
     # ── Maintenance plans ──
     mp_query = db.query(MaintenancePlan).order_by(MaintenancePlan.created_at.desc())
-    if req.from_date:
-        try:
-            mp_query = mp_query.filter(
-                MaintenancePlan.created_at >= datetime.fromisoformat(req.from_date)
-            )
-        except ValueError:
-            pass
-    if req.to_date:
-        try:
-            mp_query = mp_query.filter(
-                MaintenancePlan.created_at <= datetime.fromisoformat(req.to_date)
-            )
-        except ValueError:
-            pass
-    plans = mp_query.limit(500).all()
+    if from_dt:
+        mp_query = mp_query.filter(MaintenancePlan.created_at >= from_dt)
+    if to_dt:
+        mp_query = mp_query.filter(MaintenancePlan.created_at <= to_dt)
+    mp_total = mp_query.count()
+    plans = mp_query.limit(EXPORT_ROW_LIMIT).all()
+    if mp_total > EXPORT_ROW_LIMIT:
+        warnings.append(
+            f"Maintenance plans truncated: {mp_total} in range, "
+            f"only {EXPORT_ROW_LIMIT} most recent included."
+        )
     maintenance_records = [
         {
             "id": p.id,
@@ -168,6 +195,14 @@ def export_compliance_data(
                 f"· Maintenance plans: {len(maintenance_records)}",
                 styles["Normal"],
             ))
+            # Truncation warnings surfaced prominently so a compliance
+            # reviewer can't miss that older rows are missing.
+            for w in warnings:
+                elements.append(Spacer(1, 0.1 * inch))
+                elements.append(Paragraph(
+                    f"<font color='red'><b>WARNING:</b> {w}</font>",
+                    styles["Normal"],
+                ))
             elements.append(Spacer(1, 0.25 * inch))
 
             def _styled_table(data, col_widths):
@@ -237,8 +272,13 @@ def export_compliance_data(
         content={
             "records": records,
             "total": len(records),
+            "audit_total_in_range": audit_total,
             "incidents": incidents_records,
+            "incidents_total_in_range": inc_total,
             "maintenance_plans": maintenance_records,
+            "maintenance_total_in_range": mp_total,
+            "warnings": warnings,
+            "row_limit_per_section": EXPORT_ROW_LIMIT,
         },
         headers={"Content-Disposition": "attachment; filename=compliance_report.json"},
     )
@@ -256,17 +296,14 @@ async def generate_ai_compliance_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from_dt = _parse_date_or_400(from_date, "from_date")
+    to_dt = _parse_date_or_400(to_date, "to_date")
+
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
-    if from_date:
-        try:
-            query = query.filter(AuditLog.timestamp >= datetime.fromisoformat(from_date))
-        except ValueError:
-            pass
-    if to_date:
-        try:
-            query = query.filter(AuditLog.timestamp <= datetime.fromisoformat(to_date))
-        except ValueError:
-            pass
+    if from_dt:
+        query = query.filter(AuditLog.timestamp >= from_dt)
+    if to_dt:
+        query = query.filter(AuditLog.timestamp <= to_dt)
 
     logs = query.limit(50).all()
     audit_data = [

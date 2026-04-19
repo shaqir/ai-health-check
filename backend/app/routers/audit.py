@@ -4,7 +4,7 @@ Audit log router (Module 4). Admin-only.
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -42,21 +42,27 @@ def list_audit_logs(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Strict date parsing — silently dropping a malformed filter would
+    # give reviewers the wrong answer.
+    def _parse(value: str | None, field: str):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid {field} '{value}' — use YYYY-MM-DD or ISO-8601",
+            )
+
+    from_dt = _parse(from_date, "from_date")
+    to_dt = _parse(to_date, "to_date")
+
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
-
-    if from_date:
-        try:
-            dt = datetime.fromisoformat(from_date)
-            query = query.filter(AuditLog.timestamp >= dt)
-        except ValueError:
-            pass
-
-    if to_date:
-        try:
-            dt = datetime.fromisoformat(to_date)
-            query = query.filter(AuditLog.timestamp <= dt)
-        except ValueError:
-            pass
+    if from_dt:
+        query = query.filter(AuditLog.timestamp >= from_dt)
+    if to_dt:
+        query = query.filter(AuditLog.timestamp <= to_dt)
 
     if action:
         query = query.filter(AuditLog.action == action)

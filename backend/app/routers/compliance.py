@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.audit import log_action
+from app.middleware.audit import log_action, verify_audit_chain
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AuditLog, EvalRun, Incident, User, UserRole
@@ -108,6 +108,21 @@ def list_audit_logs(
         ))
 
     return result
+
+
+@router.get(
+    "/audit-log/verify",
+    dependencies=[Depends(require_role(["admin"]))],
+)
+def verify_audit_log(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """
+    Walk the audit log hash chain and report integrity.
+    Returns: {total, valid, broken_at, reason}
+    """
+    return verify_audit_chain(db)
 
 
 # ── User Management ──

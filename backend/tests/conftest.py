@@ -23,7 +23,24 @@ TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def setup_db():
     """Create all tables before each test, drop after."""
     Base.metadata.create_all(bind=engine)
+    # Install the append-only triggers on the test engine too.
+    from app.main import _install_audit_log_triggers
+    from app.database import engine as app_engine
+    # Temporarily swap the engine used by the installer so triggers land
+    # on the test DB, then restore.
+    import app.main as main_module
+    orig_engine = main_module.engine
+    main_module.engine = engine
+    try:
+        _install_audit_log_triggers()
+    finally:
+        main_module.engine = orig_engine
     yield
+    # Drop triggers so next test's create_all doesn't conflict
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_log_no_update"))
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_log_no_delete"))
     Base.metadata.drop_all(bind=engine)
 
 

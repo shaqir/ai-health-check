@@ -206,6 +206,11 @@ class AuditLog(Base):
     old_value = Column(Text, default="")
     new_value = Column(Text, default="")
     timestamp = Column(DateTime, default=utcnow)
+    # Tamper-evidence hash chain. Each row commits to its content + the
+    # previous row's hash, so any UPDATE/DELETE is detectable by replaying
+    # the chain. DB triggers also block direct mutation (see main.py).
+    content_hash = Column(String(64), default="")
+    prev_hash = Column(String(64), default="")
 
 
 class Telemetry(Base):

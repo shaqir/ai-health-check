@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import text
 
 from fastapi.responses import JSONResponse
 
@@ -81,11 +82,39 @@ def scheduled_health_check():
         db.close()
 
 
+def _install_audit_log_triggers():
+    """
+    Install SQLite triggers that block UPDATE and DELETE on audit_log.
+    Defence-in-depth alongside the hash chain: application code literally
+    cannot mutate past audit rows without a direct DB connection that
+    disables the triggers. Production would use Postgres row permissions
+    instead; this keeps the SQLite dev/test env honest.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+            BEFORE UPDATE ON audit_log
+            BEGIN
+                SELECT RAISE(ABORT, 'audit_log is append-only: UPDATE blocked');
+            END
+        """))
+        conn.execute(text("""
+            CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+            BEFORE DELETE ON audit_log
+            BEGIN
+                SELECT RAISE(ABORT, 'audit_log is append-only: DELETE blocked');
+            END
+        """))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Create all tables (dev only — use Alembic migrations in production)
     Base.metadata.create_all(bind=engine)
+    _install_audit_log_triggers()
 
     # Start background scheduler
     scheduler.add_job(

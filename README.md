@@ -165,6 +165,7 @@ ai-health-check/
 | [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 15 operational scenarios (incl. audit integrity, SSRF, confidential override, judge refusals) |
 | [LIVE_DEMO_WALKTHROUGH](docs/LIVE_DEMO_WALKTHROUGH.md) | Day-before rehearsal: 9-step demo script with failure modes, mitigations, and killshot moments |
 | [SELF_CRITIQUE](docs/SELF_CRITIQUE.md) | Top 5 methodological weaknesses a rigorous examiner will probe, with honest-answer phrasing for the viva |
+| [GOVERNANCE_AUDIT](docs/GOVERNANCE_AUDIT.md) | Enterprise governance audit: 7 risk categories + HIPAA / SOX / EU AI Act verdict + 12-week remediation roadmap |
 | [ROADMAP](docs/ROADMAP.md) | Sprint timeline and module ownership |
 
 ---

@@ -3,11 +3,11 @@ Incidents Router — Module 3: Triage & LLM Summary
 Full CRUD operations + AI-assisted summary drafting.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models import (
@@ -204,6 +204,16 @@ async def generate_incident_summary(
     return {"message": "Draft generated successfully", "draft": result["summary_draft"]}
 
 
+class ApproveSummaryRequest(BaseModel):
+    # Mandatory reviewer note. At least 20 non-whitespace chars forces
+    # the human in the loop to articulate what they read rather than
+    # rubber-stamp the LLM's output. Closes the hostile-QA finding
+    # where an attacker-authored incident (via prompt injection in
+    # symptoms) could produce a draft that an admin approved without
+    # reading carefully.
+    reviewer_note: str = Field(..., min_length=20, max_length=2000)
+
+
 @router.post(
     "/{incident_id}/approve-summary",
     response_model=dict,
@@ -211,6 +221,7 @@ async def generate_incident_summary(
 )
 def approve_summary(
     incident_id: int,
+    req: ApproveSummaryRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -218,15 +229,44 @@ def approve_summary(
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-        
+
+    # Idempotency guard — re-approving a previously approved incident
+    # silently overwrote approved_by, losing attribution under races.
+    if incident.summary and incident.approved_by:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Summary already approved by user {incident.approved_by}"
+                f"{f' at {incident.approved_at.isoformat()}' if incident.approved_at else ''}"
+            ),
+        )
+
     if not incident.summary_draft:
         raise HTTPException(status_code=400, detail="No draft summary exists to approve")
-        
+
+    # Normalize and re-check length after stripping whitespace — catches
+    # 20 spaces as insufficient.
+    note = req.reviewer_note.strip()
+    if len(note) < 20:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="reviewer_note must contain at least 20 non-whitespace characters",
+        )
+
     incident.summary = incident.summary_draft
     incident.summary_draft = ""
     incident.approved_by = current_user.id
+    incident.approved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    incident.reviewer_note = note
     db.commit()
-    
-    log_action(db, current_user.id, "approve_summary", "incidents", incident.id)
-    
-    return {"message": "Summary approved and published"}
+
+    log_action(
+        db, current_user.id, "approve_summary", "incidents", incident.id,
+        new_value=f"reviewer_note_len={len(note)}",
+    )
+
+    return {
+        "message": "Summary approved and published",
+        "approved_by": current_user.id,
+        "approved_at": incident.approved_at,
+    }

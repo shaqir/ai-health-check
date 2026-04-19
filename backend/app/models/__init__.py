@@ -166,6 +166,10 @@ class Incident(Base):
     root_causes = Column(Text, default="")
     summary_draft = Column(Text, default="")  # Pending approval
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    # Mandatory reviewer note on approval — makes the human in the loop
+    # articulate what they read instead of rubber-stamping the LLM's output.
+    reviewer_note = Column(Text, default="")
     # Troubleshooting checklist
     checklist_data_issue = Column(Boolean, default=False)
     checklist_prompt_change = Column(Boolean, default=False)

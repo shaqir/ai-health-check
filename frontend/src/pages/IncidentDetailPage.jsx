@@ -68,11 +68,22 @@ export default function IncidentDetailPage() {
   };
 
   const handleApproveSummary = async () => {
+    // Force the reviewer to articulate what they read. The backend also
+    // enforces min length — this dialog is UX, not security.
+    const note = window.prompt(
+      'Reviewer note (required, min 20 chars):\n\n' +
+      'Briefly confirm what you verified — e.g. "Read full draft; root causes match symptoms timeline; no hallucinated claims."'
+    );
+    if (note === null) return;
+    if (note.trim().length < 20) {
+      alert('Reviewer note must be at least 20 non-whitespace characters.');
+      return;
+    }
     try {
-      await api.post(`/incidents/${id}/approve-summary`);
+      await api.post(`/incidents/${id}/approve-summary`, { reviewer_note: note });
       fetchData();
     } catch (err) {
-      alert('Failed to approve summary');
+      alert('Failed to approve summary: ' + (err.response?.data?.detail || err.message));
     }
   };
 

@@ -49,11 +49,9 @@ Time budget: 90 minutes. The governance audit alone is ~30 minutes.
 
 Read in this order:
 
-1. [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) — 9-step demo script with failure modes and killshot moments.
-2. [DEMO_DAY_CHECKLIST](DEMO_DAY_CHECKLIST.md) — night-before / morning-of / T-15-min / recovery procedures.
-3. [VIVA_QA_PREP](VIVA_QA_PREP.md) — 10 hardest questions with ideal-answer phrasing.
-4. [SELF_CRITIQUE](SELF_CRITIQUE.md) — honest-answer material for methodology probes.
-5. [FINAL_POLISH](FINAL_POLISH.md) — last-mile polish checklist if you have time before demo day.
+1. [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) — consolidated demo guide: night-before / morning-of / T-15 pre-flight / 9-step script with failure modes and killshot moments / recovery procedures / one-page checklist.
+2. [VIVA_QA_PREP](VIVA_QA_PREP.md) — 10 hardest questions with ideal-answer phrasing.
+3. [SELF_CRITIQUE](SELF_CRITIQUE.md) — honest-answer material for methodology probes.
 
 Time budget: 30 minutes the night before, 10 minutes the morning of.
 
@@ -72,13 +70,10 @@ Time budget: 30 minutes the night before, 10 minutes the morning of.
 | [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
 | [MAINTENANCE_RUNBOOK](MAINTENANCE_RUNBOOK.md) | 15 operational scenarios with trigger / check / fix / prevent |
 | [RISK_REGISTER](RISK_REGISTER.md) | 17 risks with mitigations and residual risk notes |
-| [ROADMAP](ROADMAP.md) | Sprint timeline and module ownership |
 | [SELF_CRITIQUE](SELF_CRITIQUE.md) | 5 methodological weaknesses surfaced honestly |
 | [GOVERNANCE_AUDIT](GOVERNANCE_AUDIT.md) | Enterprise compliance audit (HIPAA/SOX/EU AI Act) |
-| [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) | 9-step demo rehearsal with failure modes and mitigations |
-| [DEMO_DAY_CHECKLIST](DEMO_DAY_CHECKLIST.md) | Operational logistics for demo day: prep, recovery, one-page checklist |
+| [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) | Consolidated demo guide: prep, 9-step script, killshots, recovery, one-page checklist |
 | [VIVA_QA_PREP](VIVA_QA_PREP.md) | 10 hardest Q&A questions with ideal-answer phrasing |
-| [FINAL_POLISH](FINAL_POLISH.md) | Near-final submission checklist (15 items across 5 categories) |
 
 ---
 

@@ -1468,13 +1468,10 @@ demonstrably designed for production. Thank you."*
 | `docs/PROMPT_CHANGE_LOG.md` | LLM prompt templates + model history |
 | `docs/MAINTENANCE_RUNBOOK.md` | 15 operational scenarios |
 | `docs/RISK_REGISTER.md` | 17 risks with mitigations + residuals |
-| `docs/ROADMAP.md` | Sprint timeline |
 | `docs/SELF_CRITIQUE.md` | 5 methodological gaps |
 | `docs/GOVERNANCE_AUDIT.md` | HIPAA / SOX / EU AI Act posture |
-| `docs/LIVE_DEMO_WALKTHROUGH.md` | 9-step demo script |
-| `docs/DEMO_DAY_CHECKLIST.md` | Day-of operational logistics |
+| `docs/LIVE_DEMO_WALKTHROUGH.md` | Consolidated demo guide: prep, 9-step script, killshots, recovery, one-page checklist |
 | `docs/VIVA_QA_PREP.md` | 10 hardest Q&A questions + ideal answers |
-| `docs/FINAL_POLISH.md` | Near-final submission review |
 | `docs/TECHNICAL_REFERENCE.md` | This document |
 
 ## Appendix B — Key Numbers

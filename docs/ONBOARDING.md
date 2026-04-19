@@ -67,8 +67,8 @@ UI runs at `http://localhost:5173`.
 | Topic | Link |
 |-------|------|
 | System architecture | [ARCHITECTURE](ARCHITECTURE.md) |
+| Module breakdown | [MODULE_GUIDE](MODULE_GUIDE.md) |
 | Test coverage | [TESTING_STRATEGY](TESTING_STRATEGY.md) |
-| Sprint timeline | [ROADMAP](ROADMAP.md) |
 | Drift detection methodology | [EVAL_DATASET_CARD](EVAL_DATASET_CARD.md) |
 | Incident response procedures | [MAINTENANCE_RUNBOOK](MAINTENANCE_RUNBOOK.md) |
 | Risk assessment | [RISK_REGISTER](RISK_REGISTER.md) |

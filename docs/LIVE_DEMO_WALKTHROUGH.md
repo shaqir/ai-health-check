@@ -1,32 +1,174 @@
-# 🎬 Live Demo Walkthrough — AI Health Check
+# 🎬 Live Demo Walkthrough & Day-Of Checklist — AI Health Check
 
-This is your rehearsal. Assume the examiner is watching every click. It walks each of the 9 steps with: **what they see**, **where it bites you live**, and **demo-day mitigations** drawn from the actual code. Plus a pre-flight checklist and three "killshot" moments that move the grade from B+ to A.
-
----
-
-## 🧰 Pre-flight checklist (do this 15 minutes before)
-
-1. **Backend up**: `uvicorn app.main:app --reload --port 8000` → browse http://localhost:8000/docs and confirm routes load. The lifespan hook installs the audit-log triggers; if it's not visible in logs, the hash-chain demo will fail.
-2. **Frontend up**: `npm run dev` → browse http://localhost:5173 and log in as **admin@aiops.local / admin123**. Don't log in as viewer first; tokens don't revoke.
-3. **Seed the DB**: run `python -m app.seed` if you've reset. Verifies 3 services exist, 6 test cases exist, a handful of historical eval runs exist so the dashboard isn't empty.
-4. **Warm the LLM**: hit Dashboard → "Generate insight" once **before** the grader arrives so DNS + Anthropic TLS is established. Cold first call can take 8-10 seconds.
-5. **Narrow the export date range**: set From = today, To = today. Default 7-day window will show too much noise.
-6. **Open the right tabs in order**: Dashboard → Services → Evaluations → Incidents → Governance. Use the Cmd+K palette to navigate; it's impressive.
-7. **Have copy-paste ready** in a local text file:
-   - Reviewer note: `Read full draft — root causes match the checklist findings. Stakeholder update is factual with no fabricated claims.`
-   - Symptoms: `Quality score dropped to 42% on the 14:32 UTC scheduled eval. Factuality failing on 3/6 test cases; no infra changes since yesterday.`
-   - Rollback plan: `Revert eval prompt to v1.3 (commit a7c8f2). Re-deploy via standard deploy pipeline.`
-   - Validation steps: `Run full eval suite, confirm quality ≥ 85%, monitor P95 latency for 30 minutes post-deploy.`
+> Last updated: 2026-04-19 · current as of commit `4a831a8`
+>
+> Complete demo-day guide: night-before prep → morning-of boot →
+> T-15 min checks → 9-step narration → killshot moments → recovery
+> procedures → post-demo viva phrasing → one-page printable checklist.
+> Assume the examiner is watching every click. Every section is
+> tested against the actual code.
 
 ---
 
-## Step 1 — Register a service
+## Contents
+
+1. [Night before](#1-night-before)
+2. [Morning of](#2-morning-of-at-home-60-min-before)
+3. [T-15 min pre-flight checklist](#3-t-15-min-pre-flight-at-the-venue)
+4. [Demo narration: 9-step walkthrough](#4-demo-narration--9-step-walkthrough)
+5. [Three killshot moments](#5-three-killshot-moments-worth-1-2-letter-grades)
+6. [Recovery procedures](#6-recovery-procedures--if-it-breaks)
+7. [Post-demo Q&A phrasing](#7-post-demo-qa-phrasing)
+8. [Q&A bait to prepare for](#8-qa-bait-to-prepare-for)
+9. [Realistic timing](#9-realistic-timing)
+10. [One-page printable checklist](#10-one-page-printable-checklist)
+
+---
+
+## 1. Night before
+
+### Code + data
+
+```bash
+# Pull latest
+git checkout main && git pull
+
+# Set demo-mode env flags in backend/.env
+echo "SCHEDULER_ENABLED=false" >> backend/.env
+echo "LOG_SQL=false" >> backend/.env
+
+# Rebuild the DB with fresh seed (includes the pre-seeded drift scenario)
+cd backend
+lsof -ti:8000 -sTCP:LISTEN | xargs kill 2>/dev/null
+rm -f aiops.db
+source venv/bin/activate
+python -m app.seed
+```
+
+Expected seed output:
+
+```
+[Seed] Created 3 default users (admin, maintainer, viewer)
+[Seed] Created 3 sample AI services
+[Seed] Created 6 eval test cases
+[Seed] Created 15 historical eval runs (with 1 pre-flagged drift scenario)
+[Seed] Created 1 drift alert for 'Internal Report Generator' (demo-ready)
+```
+
+### Smoke test the full stack
+
+```bash
+# Terminal 1 — backend
+cd backend && source venv/bin/activate && uvicorn app.main:app --port 8000
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+```
+
+Browser: http://localhost:5173 → login `admin@aiops.local / admin123` → Dashboard should show:
+
+- 3 active services
+- **Red "Active Alerts" banner** ("Internal Report Generator quality dropped to 42.0%")
+- Recent evaluations table with mixed-quality rows
+- Charts populated with 7 days of data
+
+If any of the above is missing, re-run the seed.
+
+### Copy-paste snippets (have in a local text file)
+
+- **Reviewer note** (for incident approve):
+  > Read full draft — root causes match the checklist findings. Stakeholder update is factual with no fabricated claims.
+- **Symptoms** (for incident create):
+  > Quality score dropped to 42% on the 14:32 UTC scheduled eval. Factuality failing on 3/6 test cases; no infra changes since yesterday.
+- **Rollback plan**:
+  > Revert eval prompt to v1.3 (commit a7c8f2). Re-deploy via standard deploy pipeline.
+- **Validation steps**:
+  > Run full eval suite, confirm quality ≥ 85%, monitor P95 latency for 30 minutes post-deploy.
+
+### Printable references
+
+- This doc — §4 walkthrough, §5 killshots, §9 timing (one page)
+- [VIVA_QA_PREP](VIVA_QA_PREP.md) — print only the 🏆 ideal-answer paragraphs (10 paragraphs, one page)
+- [SELF_CRITIQUE](SELF_CRITIQUE.md) — skim the "honest answer" lines only
+
+### Hardware
+
+- Laptop charged to 100 %, charger in bag
+- HDMI / USB-C / Thunderbolt adapter for the venue projector
+- Backup: screen-record the full 9-step demo tonight as a fallback (phone on tripod, or `brew install --cask obs` if you don't have OBS)
+
+---
+
+## 2. Morning of (at home, 60 min before)
+
+```bash
+# Quick full boot + verify
+cd ai-health-check
+git status              # should be clean
+git log --oneline -1    # should be 4a831a8 or newer
+
+# Backend
+cd backend && source venv/bin/activate && uvicorn app.main:app --port 8000
+# Expect: "[Startup] Background scheduler DISABLED (SCHEDULER_ENABLED=false)"
+
+# Frontend (new terminal)
+cd frontend && npm run dev
+```
+
+Open browser, log in, click through each page quickly (Dashboard → Services → Evaluations → Incidents → Governance → Settings → Data Policy). Watch the terminal for any errors. If any page 500s, something drifted overnight — rebuild the DB.
+
+### Browser / desktop prep
+
+- **Zoom level**: 125 % or 150 % so projector viewers can read
+- **Full-screen the browser** (not presentation mode — just maximized so the URL bar stays visible)
+- **Close all other tabs**
+- **Mute notifications**: macOS Focus → Do Not Disturb
+- **Close Slack, Messages, email, calendar popups**
+- **Projector test**: mirror vs extend; practice both so you know which one the venue is set for
+
+### Terminal layout
+
+Keep ONE terminal visible with backend logs. The examiner may glance at it; you want clean output, not SQL noise. That's what `LOG_SQL=false` is for.
+
+### Warm the LLM
+
+Before the grader arrives, hit Dashboard once and click "Generate insight" (or any action that triggers a Claude call). Establishes the DNS + TLS connection so the demo call isn't cold.
+
+---
+
+## 3. T-15 min pre-flight (at the venue)
+
+```bash
+# Kill anything stale, full restart
+cd backend && lsof -ti:8000 -sTCP:LISTEN | xargs kill 2>/dev/null
+source venv/bin/activate && uvicorn app.main:app --port 8000
+
+# Frontend in new terminal
+cd frontend && npm run dev
+```
+
+Log in as admin in the browser. **Leave the tab on the Dashboard**. First thing the examiner sees: a real-looking platform with a real-looking alert.
+
+### Last sanity checks
+
+- [ ] Dashboard shows the red Active Alerts banner
+- [ ] Clicking into any service page loads without error
+- [ ] ⌘K command palette opens (shows your keyboard-shortcut polish)
+- [ ] Theme toggle works (dark ↔ light, both look clean)
+
+---
+
+## 4. Demo narration — 9-step walkthrough
+
+Target ~6.5 min, max 12 min. Terminal visible at all times. If you need to show audit-log details, have a second browser tab open to http://localhost:8000/docs (FastAPI OpenAPI page) — it's a credibility boost.
+
+### Step 1 — Register a service
 
 **What they see:** Services page → "Register" button → fill name / owner / environment / model / sensitivity / endpoint → submit. New card appears with the sensitivity badge. Click **Ping** → green healthy dot with latency in ms.
 
 **Where it bites you live:**
 - **SSRF validator will reject anything local.** `http://localhost:8000/health` or `http://127.0.0.1` returns HTTP 400 *"Hostname resolves to blocked range"*. Looks like your app is broken. It's not — it's the protection working against you.
-- **Confidential sensitivity triggers a JS `confirm()` on Ping.** If you pick "confidential" in the demo service, you'll get an unexpected modal the second you click Ping.
+- **Confidential sensitivity triggers a modal on Ping.** If you pick "confidential" in the demo service, you'll get an unexpected override dialog the second you click Ping.
 - **`example.com` subdomains don't resolve** on some networks. `staging.example.com` will 400. Use a real public URL like `https://httpbin.org/status/200`.
 
 **Demo-day mitigations:**
@@ -34,149 +176,196 @@ This is your rehearsal. Assume the examiner is watching every click. It walks ea
 - Set sensitivity = **internal** for the demo service. Save confidential for a separate "watch this security feature" moment (Killshot #1 below).
 - If asked "what about localhost?" → say it out loud: *"That's deliberately blocked. Let me show you."* Attempt to register `http://169.254.169.254/meta-data/` → grader sees the 400 → **that's a killshot moment for the SSRF guard.**
 
----
-
-## Step 2 — Monitoring detects a quality drop
+### Step 2 — Monitoring detects a quality drop
 
 **What they see:** Dashboard loads. Four metric cards with trend arrows. Response-time distribution (Typical/Slow/Worst). Line chart for latency, bar chart for quality per run, area chart for error rate. Recent evaluations table.
 
 **Where it bites you live:**
-- **Fresh DB has zero eval runs** → cards show 0%, charts are empty. The dashboard looks unimpressive.
-- **Scheduler fires mid-demo**. Every 5 min the health check runs → new ConnectionLog rows appear → metrics shift unexpectedly.
-- **The "Generate insight" endpoint now creates a draft** (not a response). If you forget this, you'll click and say "where did it go?" — it's in the draft table waiting for approval.
+- **Fresh DB has zero eval runs** → cards show 0 %, charts are empty. The dashboard looks unimpressive. *(Already fixed: seed now pre-populates 15 runs + a drift scenario.)*
+- **Scheduler fires mid-demo**. Disabled via `SCHEDULER_ENABLED=false`.
+- **The "Generate insight" endpoint creates a draft** (not a direct response). If you click it and nothing appears to change, check the dashboard — it's in the draft table waiting for approval.
 
 **Demo-day mitigations:**
-- Before the demo, run 5-10 evals against each seeded service so the trend charts have a visible slope.
-- Temporarily raise `health_check_schedule_minutes` to 60 so the scheduler doesn't interfere during the 10-minute window.
 - Hover over a metric card's (i) icon to show the tooltip — demonstrates your UX polish and the tooltips you added.
 
----
+### Step 3 — Drift flag triggers
 
-## Step 3 — Drift flag triggers
-
-**What they see:** Evaluations page → click **Run** next to a service → cost-preview modal ("$0.012 estimated") → confirm → progress indicator → results row appears with `drift_flagged = true` and a **critical** severity badge. Dashboard gains a red **Active Alerts** banner.
+**What they see:** Evaluations page → click **Run** next to a service → unified cost-preview + confidential-warning modal (from the Modal refactor) → confirm → progress indicator → results row appears with `drift_flagged = true` and a **critical** severity badge. Dashboard gains a red **Active Alerts** banner.
 
 **Where it bites you live:**
-- **The eval takes 5-15 seconds.** Dead air on stage. Grader wonders if it crashed.
-- **Claude might score well enough to NOT trigger drift.** You run the demo eval hoping for a failure — and get 85%. Now what?
-- **Budget race test may have consumed calls.** If earlier demos/tests ate today's $5 budget, this returns 402.
-- **If the service is confidential**, the eval requires `?allow_confidential=true` → frontend shows the override confirm. Fine but slows you down.
+- **The eval takes 5–15 seconds.** Dead air on stage.
+- **Claude might score well enough to NOT trigger drift.** You run the demo eval hoping for a failure — and get 85 %.
+- **Budget may have been consumed.** 402 response if today's $5 budget is spent.
+- **If the service is confidential**, the eval requires admin override — handled by the modal, pass through cleanly.
 
 **Demo-day mitigations:**
-- **Plant a guaranteed-failure test case.** Create an EvalTestCase with `expected_output="Paris"` for prompt `"What is the capital of France?"` but re-word the prompt deliberately to induce a long-winded answer that won't fullmatch. Or expected_output that's clearly different from what Claude produces.
-- **Narrate during the wait**: *"Each test case is going through our pipeline — input safety scan, budget check under concurrency lock, API call, output scan, usage log. This is why the timing feels deliberate."*
-- **Backup**: have a pre-recorded EvalRun in the DB with `drift_flagged=True, quality_score=42`. If live fails, refresh → still see the drift alert on Dashboard.
+- **The pre-seeded drift scenario is already visible.** You don't have to run a live eval to show drift — it's on the Dashboard from the moment you log in.
+- **Narrate during any live wait**: *"Each test case is going through our pipeline — input safety scan, budget check under concurrency lock, API call, output scan, usage log."*
 - **Show the cost-preview modal** *before* confirming. Demonstrates cost awareness: *"The app estimates the spend before any call is made."*
 
----
-
-## Step 4 — Incident is created
+### Step 4 — Incident is created
 
 **What they see:** Incidents page → "Report" → form with service dropdown, severity, symptoms, 5-checkbox triage list, timeline → submit → list shows new INC-N row with red severity badge.
 
 **Where it bites you live:**
 - **Required fields are ambiguous.** Grader may see unclear validation messages if you forget symptoms.
-- **No auto-link from alert to incident.** Your Alert row and new Incident are related conceptually but not via FK. If asked "how does the alert tie to the incident?" — be honest: it's traceable via service_id + timestamp + audit log, not a direct FK.
+- **No auto-link from alert to incident.** If asked "how does the alert tie to the incident?" — be honest: it's traceable via service_id + timestamp + audit log, not a direct FK.
 
 **Demo-day mitigations:**
 - Paste the pre-prepared symptoms (above) and pre-check `Data Issue` and `Prompt Change` — the two checkboxes that match the drift scenario.
 - Narrate: *"I'm picking the same service the alert fired on. The drift severity was critical, so I'm picking severity=high."*
 
----
-
-## Step 5 — Triage checklist is used
+### Step 5 — Triage checklist is used
 
 **What they see:** Incident detail page → left column shows the 5 checklist items with Yes/No indicators → Symptoms paragraph → right column is where the summary will land.
 
 **Where it bites you live:**
 - **Checklist doesn't "do" anything visually** until you generate the LLM summary. Grader may ask "so what?"
-- **If you forget to check items at creation, the LLM gets "No" for all** and produces a generic summary.
 
 **Demo-day mitigations:**
 - Explicitly narrate: *"These five checkboxes feed directly into the LLM prompt for root-cause analysis. Watch."* Then move to Step 6. The LLM output will reference the checked items, closing the loop.
 
----
+### Step 6 — LLM generates summary (human approves) 🎯
 
-## Step 6 — LLM generates summary (human approves) 🎯
-
-**What they see:** Click **Generate draft** → wait → draft appears with "STAKEHOLDER UPDATE" + "ROOT CAUSES" sections → yellow pending banner → click **Approve** → `window.prompt` appears asking for reviewer note → paste the pre-prepared note → submit → green approved state, summary published.
+**What they see:** Click **Generate draft** → wait → draft appears with "STAKEHOLDER UPDATE" + "ROOT CAUSES" sections → yellow pending banner → click **Approve** → `ReviewerNoteModal` opens with textarea + live character counter → paste the pre-prepared note → submit enables → green approved attribution block renders with email + timestamp + quoted reviewer note.
 
 **Where it bites you live:**
-- **LLM call is 5-10s.** Silence.
-- **`window.prompt` looks crude** on screen. Some graders may mistake it for a bug.
-- **Short note rejection**: if the note is <20 chars, the frontend alerts AND the backend 400s. Don't try "lgtm" for laughs — it'll reject and feel like a failure.
-- **Double-click the approve button**: second click returns 409 Conflict. If the first click had a transient error and you retry, you'll hit this.
-- **Budget/rate limit:** if earlier LLM calls exhausted quota, the generate 402/429s with a clear message but the moment is dead.
+- **LLM call is 5–10s.** Silence.
+- **Short note rejection**: if the note is <20 chars, the submit button is greyed out (UX validation) and the backend also 400s (security validation). Don't try `"lgtm"` for laughs.
+- **Double-click the approve button**: second click returns 409 Conflict. If the first click had a transient error and you retry, you'll hit this — the modal's `busy` prop blocks it but be mindful.
+- **Budget/rate limit:** if earlier LLM calls exhausted quota, the generate 402/429s.
 
 **Demo-day mitigations:**
-- **Say the approval contract out loud BEFORE clicking**: *"Notice: the approve button requires a reviewer note of at least 20 characters. This forces the human in the loop to articulate what they verified — not rubber-stamp. I've prepared one."*
-- Paste the pre-typed note, submit, then **immediately navigate to Governance → Audit Log** and filter for `approve_summary` → show the `new_value` contains `reviewer_note_len=64`. This is the moment the grader writes down "HITL works."
-- If the LLM call is slow, narrate the pipeline: *"This is going through safety scan, budget check, then Anthropic, then output scan, then drafting. Designed for governance, not speed."*
+- **Say the approval contract out loud BEFORE clicking**: *"Notice: the approve button requires a reviewer note of at least 20 characters. This forces the human in the loop to articulate what they verified — not rubber-stamp. The submit button stays disabled until the threshold is met."*
+- Paste the pre-typed note, submit, then **immediately navigate to Governance → Audit Log** and show the `approve_summary` row with the `new_value` containing `reviewer_note_len=64`. This is the moment the grader writes down "HITL works."
+- After approval, **go back to the incident detail page** to show the green attribution block — *"Approved by admin@aiops.local at 2026-04-19 14:32"* with the reviewer note in italics below.
 
----
+### Step 7 — Maintenance plan is created
 
-## Step 7 — Maintenance plan is created
-
-**What they see:** Same incident detail page → "Add plan" → form with risk level, rollback plan, validation steps, scheduled date, "human_approved" checkbox → submit → plan appears in the timeline view (with the hairline spine and ringed node dots you added in the UI redesign). Click **Approve** → green "Approved" state.
+**What they see:** Same incident detail page → "Add plan" → form with risk level, rollback plan, validation steps, scheduled date, "human_approved" checkbox → submit → plan appears in the timeline view (hairline spine and ringed node dots from the UI redesign). Click **Approve** → green "Approved" state.
 
 **Where it bites you live:**
-- **Two-step: create then approve.** If you forget the approve step, the plan sits as pending. Grader may miss the distinction.
+- **Two-step: create then approve.** If you forget the approve step, the plan sits as pending.
 - **Admin-only approval.** If demoing as maintainer, the approve button 403s.
-- **`scheduled_date` input** is a native `datetime-local` picker — can be fiddly on stage.
 
 **Demo-day mitigations:**
 - Stay as **admin** for the whole demo.
 - Show the Approve button change state visibly — the ringed dot on the timeline flips green.
 - Narrate the architectural rhyme: *"Same human-in-the-loop pattern as the incident summary. Different domain, same contract."*
 
----
+### Step 8 — Audit log records actions 🎯
 
-## Step 8 — Audit log records actions 🎯
-
-**What they see:** Governance page → audit log table populated with the demo's recent actions (login_success, create_service, run_evaluation, alert_created, create_incident, generate_summary_draft, approve_summary, create_maintenance_plan, approve_maintenance_plan). Each row shows timestamp, user, action, target.
+**What they see:** Governance page → audit log table populated with the demo's recent actions (`Login Success`, `Create Service`, `Run Evaluation`, `Alert Created`, `Create Incident`, `Generate Summary Draft`, `Approve Summary`, `Create Maintenance Plan`, `Approve Maintenance Plan`). Actions are title-cased. Each row shows timestamp, user, action, target.
 
 **Where it bites you live:**
-- **Viewer-role users see a blank page** (audit log is admin-gated). If you accidentally logged in as viewer to "test RBAC," the audit log won't load.
-- **No obvious way to prove it's tamper-proof** unless you click the Verify button — which most demos skip.
+- **Viewer-role users see a blank page** (audit log is admin-gated).
 - **Audit log can have thousands of rows** from the scheduler or older runs. Noisy.
 
 **Demo-day mitigations:**
-- **Click "Verify integrity" live.** Green check + "Chain intact — 47 entries verified." is a visceral moment.
-- Filter the table to `approve_summary` so the grader sees your end-to-end chain: draft → approve with note → audit.
-- **KILLSHOT**: open a SQL shell on the side, run `UPDATE audit_log SET action='tampered' WHERE id=3` (the SQLite trigger will block this via the app path, so you'll need to use `sqlite3 aiops.db` directly, DROP the trigger, update, recreate). Click Verify again → red "BROKEN at id 3" with the specific reason. Grader writes "tamper evidence works." This is a **9/10 → 10/10 moment**. Rehearse it; if it works, it's worth it. If rehearsal breaks, skip.
+- **Click "Verify integrity" live.** Green check + "Chain intact — N entries verified." is a visceral moment.
+- Filter the table to `Approve Summary` so the grader sees your end-to-end chain: draft → approve with note → audit.
+- **KILLSHOT**: for the tamper demo, see §5 Killshot #2 below. Rehearse only.
 
----
-
-## Step 9 — Compliance report is exported 🎯
+### Step 9 — Compliance report is exported 🎯
 
 **What they see:** Governance page → date range picker (set to today) → click **PDF** → file downloads → open → title page, three sections (Audit Log, Incidents, Maintenance Plans) with styled tables. Also show JSON to demonstrate the structured payload.
 
 **Where it bites you live:**
-- **Date range mismatch.** Default 7 days back; if your demo day is a Monday and seed data was from Friday, you may get either nothing or too much.
+- **Date range mismatch.** Default 7 days back. Set to today only before demo.
 - **Row truncation** if seed data is large — the red warning banner shows up but grader may see it as a bug.
-- **PDF generation takes ~1 second.** Tiny but noticeable.
-- **Reviewer unfamiliar with JSON** → the export JSON looks overwhelming.
+- **PDF generation takes ~1 second.**
 
 **Demo-day mitigations:**
 - Pre-set date range to **today only**.
 - Open the downloaded PDF side-by-side with the Governance page. Point to the three sections.
-- Show the JSON in a separate tab and highlight the `warnings: []` array: *"When the export truncates, it says so loudly. No silent compliance evidence holes. Here's the test that proves it..."*  — then briefly show `test_export_reports_truncation_warning` in the test file.
+- Show the JSON in a separate tab and highlight the `warnings: []` array: *"When the export truncates, it says so loudly. No silent compliance evidence holes. Here's the test that proves it..."*
 
 ---
 
-## 🎯 Three killshot moments worth 1-2 letter grades
+## 5. Three killshot moments worth 1-2 letter grades
 
 Pick **at least one** of these. They're the difference between "yes they built it" and "wow, they thought about threats."
 
 1. **SSRF live block.** During Service registration, type `http://169.254.169.254/meta-data/` and hit submit. The backend returns *"Unsafe endpoint URL: hostname resolves to blocked range."* Narrate: *"The AWS metadata service lives at that address. If any user could register it as a 'service' we'd exfiltrate IAM credentials on every health check. Blocked."*
 
-2. **Audit integrity verify live.** Click **Verify integrity** → green. Then (rehearsed) tamper a row → click again → red with broken_at. Narrate: *"Every row is chained by SHA-256. We detect after-the-fact tampering. Same pattern as Git."*
+2. **Audit integrity verify live + optional tamper.**
+   Click **Verify integrity** → green. Then (rehearsed) tamper a row → click again → red with broken_at. Narrate: *"Every row is chained by SHA-256. We detect after-the-fact tampering. Same pattern as Git."*
+   Tamper requires: `sqlite3 backend/aiops.db` direct connection, `DROP TRIGGER audit_log_no_update`, `UPDATE audit_log SET action='tampered' WHERE id=3`, recreate trigger. Rehearse tonight; if it works, keep it; if it's flaky, skip — the green-verify alone is enough.
 
-3. **HITL reviewer note.** Click Approve on an incident summary. Show the `window.prompt`. Narrate: *"Approval requires 20+ characters of reviewer note. Enforced by Pydantic at the request layer, re-checked after whitespace strip on the server. No silent rubber-stamping."* Then paste, submit, and go show the audit log row with `reviewer_note_len=N`.
+3. **HITL reviewer note.** Click Approve on an incident summary. Show the `ReviewerNoteModal` — live character counter going red → green as you type. Narrate: *"Approval requires 20+ characters of reviewer note. Enforced by Pydantic at the request layer, re-checked after whitespace strip on the server. No silent rubber-stamping."* Then paste, submit, and go show the audit log row with `reviewer_note_len=N`.
 
 ---
 
-## 📊 Q&A bait to prepare for
+## 6. Recovery procedures — if it breaks
+
+### Backend 500s on any page
+
+Check the terminal for the stack trace. Usually one of:
+
+- **DB schema drift** (models changed, DB is old) → nuclear reset below
+- **Missing env var** (ANTHROPIC_API_KEY empty) → set and restart
+- **Port conflict** → `lsof -ti:8000 | xargs kill`
+
+### Nuclear reset (30 seconds, always works)
+
+```bash
+cd backend
+lsof -ti:8000 -sTCP:LISTEN | xargs kill 2>/dev/null
+rm -f aiops.db
+source venv/bin/activate
+python -m app.seed
+uvicorn app.main:app --port 8000
+```
+
+Then reload the browser tab and log in again. You'll lose any state generated during the previous demo attempt, but you're back to the pre-seeded baseline in under a minute.
+
+### Claude API rate-limited or budget exceeded
+
+- Stay calm. Say: *"We've hit today's $5 budget cap — which is a governance feature, not a bug. The app refuses to exceed the cap."*
+- Pivot to the pre-seeded drift alert (Dashboard has it already) and narrate the compliance export path instead.
+- Don't attempt another eval run — it'll 402 on screen.
+
+### Frontend white-screens
+
+```bash
+# Hard refresh
+Cmd+Shift+R
+# Or restart dev server
+cd frontend && npm run dev
+```
+
+### Network is down (venue wifi failed)
+
+- Local demo still works — everything runs on localhost except Claude API calls.
+- You can still show: Dashboard, Services, Evaluations (no live run), Incidents (no generate-summary), Governance (including audit log verify), compliance export.
+- Skip steps 3 and 6 from the walkthrough. Pre-seeded drift covers you.
+
+### Projector disconnects mid-demo
+
+- Pause, unplug + replug, keep narrating. *"Our system handles outages gracefully — let me show you the offline path while that reconnects..."* — then reference the pre-seeded drift.
+
+---
+
+## 7. Post-demo Q&A phrasing
+
+### Magic phrases to reach for
+
+- *"It's a heuristic. A production implementation would do X."*
+- *"In-app adversary yes, privileged host no."*
+- *"Forcing function for deliberation, not enforcement."*
+- *"Documented in X.md §Y."*
+
+### If the examiner asks "could this run in production?"
+
+Don't say yes. Don't say no. Say:
+
+> *"We've mapped it against HIPAA, SOX, and EU AI Act in [GOVERNANCE_AUDIT.md](GOVERNANCE_AUDIT.md). The short version: not without a 6–12 week remediation program on MFA, encryption at rest, a vendor BAA, four-eyes approval, and external audit-log anchoring. We built a governance-aware prototype with real security-hardening work — the compliance wrapper is documented as the gap."*
+
+For deep individual-Q&A practice, read [VIVA_QA_PREP](VIVA_QA_PREP.md) — 10 hardest questions with prepared ideal answers.
+
+---
+
+## 8. Q&A bait to prepare for
 
 **"What happens if two admins approve the same summary?"** → 409 Conflict. Attribution is preserved. We have a test: `test_approve_is_idempotent_409_on_second_call`.
 
@@ -192,7 +381,7 @@ Pick **at least one** of these. They're the difference between "yes they built i
 
 ---
 
-## ⏱ Realistic timing
+## 9. Realistic timing
 
 | Step | Target | Max acceptable |
 |---|---|---|
@@ -207,6 +396,26 @@ Pick **at least one** of these. They're the difference between "yes they built i
 | 9. Export | 30s | 60s |
 | **Total** | **~6.5 min** | **~12 min** |
 
-Budget 7-8 minutes for the walkthrough plus 3-5 for Q&A. If you hit the timing, you project command of the system — which is half the grade.
+Budget 7–8 minutes for the walkthrough plus 3–5 for Q&A. If you hit the timing, you project command of the system — which is half the grade.
+
+---
+
+## 10. One-page printable checklist
+
+Print this. Keep it on the desk. Cross items off in the 15 min before demo:
+
+- [ ] Laptop at 100 % + charger plugged in
+- [ ] `git log --oneline -1` shows `4a831a8` or newer
+- [ ] `backend/.env` has `SCHEDULER_ENABLED=false` and `LOG_SQL=false`
+- [ ] Backend running on :8000 — terminal shows "scheduler DISABLED"
+- [ ] Frontend running on :5173 — no Vite errors in terminal
+- [ ] Browser at http://localhost:5173 on the Login page
+- [ ] Login works with `admin@aiops.local / admin123`
+- [ ] Dashboard shows the red Active Alerts banner
+- [ ] ⌘K command palette opens
+- [ ] Notifications muted (Do Not Disturb on)
+- [ ] Copy-paste snippets open in a separate text file
+- [ ] Backup video recorded from last night's run
+- [ ] VIVA_QA_PREP ideal answers printed
 
 Go get the A.

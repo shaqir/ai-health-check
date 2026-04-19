@@ -20,6 +20,7 @@ Functions:
 import json
 import random as _random
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -28,6 +29,12 @@ from app.config import get_settings
 from app.database import SessionLocal
 
 settings = get_settings()
+
+# Serialise the check-then-reserve sequence for budget + rate limits so
+# concurrent callers can't all see a below-threshold count, all proceed,
+# and collectively exceed the limit. Single-process scope; multi-worker
+# would need Redis INCR + TTL.
+_BUDGET_LOCK = threading.Lock()
 
 # Initialize the Anthropic client once
 _client = None
@@ -179,16 +186,91 @@ def _check_budget(user_id: int | None = None) -> dict | None:
         db.close()
 
 
+def _reserve_slot(
+    caller: str, model: str, max_tokens: int,
+    user_id: int | None, service_id: int | None,
+) -> int:
+    """
+    Insert a placeholder APIUsageLog row with status='reserved' so
+    concurrent callers see the slot taken. Uses a worst-case cost
+    estimate so budget checks converge. Returns the row id.
+    """
+    from app.models import APIUsageLog
+
+    # Worst-case cost: assume full max_tokens, all output (more expensive)
+    worst_cost = _estimate_cost(0, max_tokens)
+
+    db = SessionLocal()
+    try:
+        row = APIUsageLog(
+            user_id=user_id,
+            service_id=service_id,
+            caller=caller,
+            model=model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_usd=worst_cost,
+            latency_ms=0.0,
+            status="reserved",
+        )
+        db.add(row)
+        db.commit()
+        return row.id
+    finally:
+        db.close()
+
+
+def _finalize_reservation(
+    row_id: int, input_tokens: int, output_tokens: int,
+    latency_ms: float, status: str,
+    safety_flags: str = "", risk_score: int = 0,
+    prompt_text: str = "", response_text: str = "",
+) -> None:
+    """Update the reserved row with real usage numbers."""
+    from app.models import APIUsageLog
+
+    total = input_tokens + output_tokens
+    cost = _estimate_cost(input_tokens, output_tokens)
+
+    db = SessionLocal()
+    try:
+        row = db.query(APIUsageLog).filter(APIUsageLog.id == row_id).first()
+        if not row:
+            return
+        row.input_tokens = input_tokens
+        row.output_tokens = output_tokens
+        row.total_tokens = total
+        row.estimated_cost_usd = cost
+        row.latency_ms = latency_ms
+        row.status = status
+        row.safety_flags = safety_flags
+        row.risk_score = risk_score
+        row.prompt_text = prompt_text[:2000]
+        row.response_text = response_text[:2000]
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
                    max_retries: int = 2, user_id: int | None = None,
                    service_id: int | None = None, **kwargs):
     """
     Centralized API call with safety scanning, budget enforcement, retry logic,
     categorized error logging, and per-user rate limiting.
+
+    Concurrency: the budget/rate-limit check and the reservation INSERT
+    happen under a single process-wide lock. Without this, N concurrent
+    callers can all observe count<limit, all proceed, and collectively
+    exceed the budget/rate limit. The actual API call happens OUTSIDE
+    the lock so slow calls don't block other evaluators.
     """
     from app.services.safety import scan_input, scan_output, PromptSafetyError
 
-    # 1. Safety scan on input
+    # 1. Safety scan on input (cheap, pre-reservation)
     input_text = " ".join(
         m.get("content", "") for m in messages if isinstance(m, dict)
     )
@@ -207,24 +289,27 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             risk_score=safety_result["risk_score"],
         )
 
-    # 2. Budget and rate limit checks
-    budget_check = _check_budget(user_id=user_id)
-    if budget_check:
-        exceeded = budget_check["exceeded"]
-        if exceeded in ("rate_limit", "user_rate_limit"):
+    # 2. Atomic budget check + reservation. The lock prevents the race
+    # where N concurrent callers all pass the check before any write.
+    with _BUDGET_LOCK:
+        budget_check = _check_budget(user_id=user_id)
+        if budget_check:
+            exceeded = budget_check["exceeded"]
+            if exceeded in ("rate_limit", "user_rate_limit"):
+                raise BudgetExceededError(
+                    f"Rate limit exceeded: {budget_check['spent']} / {budget_check['limit']} calls/min. "
+                    f"Wait a moment and try again.",
+                    exceeded_type="rate_limit",
+                )
             raise BudgetExceededError(
-                f"Rate limit exceeded: {budget_check['spent']} / {budget_check['limit']} calls/min. "
-                f"Wait a moment and try again.",
-                exceeded_type="rate_limit",
+                f"API {exceeded} budget exceeded: "
+                f"${budget_check['spent']:.4f} / ${budget_check['limit']:.2f}. "
+                f"Increase the limit in .env or wait for the next period.",
+                exceeded_type=exceeded,
             )
-        raise BudgetExceededError(
-            f"API {exceeded} budget exceeded: "
-            f"${budget_check['spent']:.4f} / ${budget_check['limit']:.2f}. "
-            f"Increase the limit in .env or wait for the next period.",
-            exceeded_type=exceeded,
-        )
+        reservation_id = _reserve_slot(caller, model, max_tokens, user_id, service_id)
 
-    # 3. Make the API call with retries
+    # 3. Make the API call with retries (outside the lock)
     client = _get_client()
 
     for attempt in range(max_retries + 1):
@@ -248,9 +333,8 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             if output_scan["flags"]:
                 safety_flags_str += ("," if safety_flags_str else "") + ",".join(output_scan["flags"])
 
-            _log_usage(
-                caller, model, input_tokens, output_tokens, latency_ms, "success",
-                user_id=user_id, service_id=service_id,
+            _finalize_reservation(
+                reservation_id, input_tokens, output_tokens, latency_ms, "success",
                 safety_flags=safety_flags_str, risk_score=safety_result["risk_score"],
                 prompt_text=input_text, response_text=output_text,
             )
@@ -259,38 +343,35 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
         except anthropic.RateLimitError:
             latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
-                _log_usage(caller, model, 0, 0, latency_ms, f"retry_{attempt}", user_id=user_id)
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _log_usage(caller, model, 0, 0, latency_ms, "error_rate_limit", user_id=user_id)
+                _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_rate_limit")
                 raise
 
         except anthropic.APIConnectionError:
             latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
-                _log_usage(caller, model, 0, 0, latency_ms, f"retry_{attempt}", user_id=user_id)
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _log_usage(caller, model, 0, 0, latency_ms, "error_timeout", user_id=user_id)
+                _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_timeout")
                 raise
 
         except anthropic.InternalServerError:
             latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
-                _log_usage(caller, model, 0, 0, latency_ms, f"retry_{attempt}", user_id=user_id)
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _log_usage(caller, model, 0, 0, latency_ms, "error_server", user_id=user_id)
+                _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_server")
                 raise
 
         except anthropic.AuthenticationError:
             latency_ms = round((time.time() - start) * 1000, 1)
-            _log_usage(caller, model, 0, 0, latency_ms, "error_auth", user_id=user_id)
+            _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_auth")
             raise
 
         except anthropic.BadRequestError:
             latency_ms = round((time.time() - start) * 1000, 1)
-            _log_usage(caller, model, 0, 0, latency_ms, "error_bad_request", user_id=user_id)
+            _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_bad_request")
             raise
 
         except (BudgetExceededError, PromptSafetyError):
@@ -298,7 +379,7 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
 
         except Exception:
             latency_ms = round((time.time() - start) * 1000, 1)
-            _log_usage(caller, model, 0, 0, latency_ms, "error_unknown", user_id=user_id)
+            _finalize_reservation(reservation_id, 0, 0, latency_ms, "error_unknown")
             raise
 
 

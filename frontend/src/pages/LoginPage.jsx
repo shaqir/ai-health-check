@@ -9,7 +9,7 @@ const DEMO_CREDS = [
   { role: 'Viewer', email: 'viewer@aiops.local', pwd: 'viewer123', desc: 'Read-only' },
 ];
 
-const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');

@@ -3,12 +3,15 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, CheckSquare, Clock, ShieldCheck, FileText, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../utils/api';
+import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
-import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import ReviewerNoteModal from '../components/common/ReviewerNoteModal';
+import ConfirmModal from '../components/common/ConfirmModal';
+import Toast from '../components/common/Toast';
+import DateTimeField from '../components/common/DateTimeField';
 
-const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 const CHECKLIST_LABELS = {
@@ -39,6 +42,10 @@ export default function IncidentDetailPage() {
   // modal visible; busy = API call in flight.
   const [reviewerNoteOpen, setReviewerNoteOpen] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [planToApprove, setPlanToApprove] = useState(null);
+  const [approvingPlan, setApprovingPlan] = useState(false);
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
     setError(null);
@@ -64,9 +71,10 @@ export default function IncidentDetailPage() {
     setGenerating(true);
     try {
       await api.post(`/incidents/${id}/generate-summary`);
+      showToast('Draft generated', 'success');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to generate summary');
+      showToast(err.response?.data?.detail || 'Failed to generate summary', 'error');
     } finally {
       setGenerating(false);
     }
@@ -83,9 +91,10 @@ export default function IncidentDetailPage() {
     try {
       await api.post(`/incidents/${id}/approve-summary`, { reviewer_note: note });
       setReviewerNoteOpen(false);
+      showToast('Summary approved', 'success');
       fetchData();
     } catch (err) {
-      alert('Failed to approve summary: ' + (err.response?.data?.detail || err.message));
+      showToast('Failed to approve summary: ' + (err.response?.data?.detail || err.message), 'error');
     } finally {
       setApproving(false);
     }
@@ -97,9 +106,25 @@ export default function IncidentDetailPage() {
       await api.post('/maintenance', { ...maintForm, incident_id: parseInt(id) });
       setShowMaintForm(false);
       setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '', scheduled_date: '', human_approved: false });
+      showToast('Maintenance plan created', 'success');
       fetchData();
     } catch (err) {
-      alert('Failed to create maintenance plan: ' + (err.response?.data?.detail || err.message));
+      showToast('Failed to create maintenance plan: ' + (err.response?.data?.detail || err.message), 'error');
+    }
+  };
+
+  const confirmApprovePlan = async () => {
+    if (!planToApprove) return;
+    setApprovingPlan(true);
+    try {
+      await api.post(`/maintenance/${planToApprove.id}/approve`);
+      setPlanToApprove(null);
+      showToast('Maintenance plan approved', 'success');
+      fetchData();
+    } catch (err) {
+      showToast('Failed to approve plan: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setApprovingPlan(false);
     }
   };
 
@@ -119,23 +144,27 @@ export default function IncidentDetailPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
-      {/* Breadcrumb + header */}
-      <div>
-        <Link to="/incidents" className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text transition-standard mb-3">
-          <ArrowLeft size={12} strokeWidth={1.5} /> Back to Incidents
+      <PageHeader
+        title={`Incident INC-${incident.id}`}
+        description={`Service: ${incident.service_name}`}
+      >
+        <Link
+          to="/incidents"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard"
+        >
+          <ArrowLeft size={12} strokeWidth={1.5} /> Back
         </Link>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-display-sm font-semibold text-text font-mono tracking-tight">INC-{incident.id}</h1>
-            <StatusBadge status={incident.severity} />
-            <StatusBadge status={incident.status} />
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] text-text-subtle">Reported</p>
-            <p className="text-[12px] font-mono tabular-nums text-text-muted">{new Date(incident.created_at).toLocaleString()}</p>
-          </div>
-        </div>
-        <p className="text-[13px] text-text-muted mt-1.5">Service: <span className="font-medium text-text">{incident.service_name}</span></p>
+      </PageHeader>
+
+      {/* Secondary metadata strip — sits below the sticky bar, preserves
+          the at-a-glance severity/status/reported-at info. */}
+      <div className="flex flex-wrap items-center gap-3 text-[12px] text-text-muted">
+        <StatusBadge status={incident.severity} />
+        <StatusBadge status={incident.status} />
+        <span className="flex items-center gap-1.5 font-mono tabular-nums text-text-subtle">
+          <Clock size={12} strokeWidth={1.5} />
+          Reported {new Date(incident.created_at).toLocaleString()}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -182,9 +211,14 @@ export default function IncidentDetailPage() {
                 <button
                   onClick={handleGenerateSummary}
                   disabled={generating}
-                  className="px-3.5 py-1.5 text-[12px] font-medium bg-accent-weak text-accent rounded-pill hover:bg-accent-muted disabled:opacity-50 transition-standard"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium bg-accent-weak text-accent rounded-pill hover:bg-accent-muted disabled:opacity-50 transition-standard"
                 >
-                  {generating ? 'Drafting...' : 'Generate draft'}
+                  {generating ? (
+                    <>
+                      <Loader2 size={12} strokeWidth={1.75} className="animate-spin" />
+                      Drafting…
+                    </>
+                  ) : 'Generate draft'}
                 </button>
               )}
             </div>
@@ -204,11 +238,16 @@ export default function IncidentDetailPage() {
                       <p className="text-[12px] text-text-muted mb-2.5">Review the AI-generated update below. Once approved, it will be published to the official record.</p>
                       {canEdit && (
                         <div className="flex gap-2">
-                          <button onClick={handleApproveSummary} className="px-3 py-1 bg-status-degraded text-white text-[12px] font-medium rounded-pill hover:opacity-90 transition-standard">
+                          <button onClick={handleApproveSummary} className="px-3 py-1 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard">
                             Approve &amp; publish
                           </button>
-                          <button onClick={handleGenerateSummary} disabled={generating} className="px-3 py-1 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard disabled:opacity-50">
-                            Regenerate
+                          <button onClick={handleGenerateSummary} disabled={generating} className="inline-flex items-center gap-1.5 px-3 py-1 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard disabled:opacity-50">
+                            {generating ? (
+                              <>
+                                <Loader2 size={12} strokeWidth={1.75} className="animate-spin" />
+                                Drafting…
+                              </>
+                            ) : 'Regenerate'}
                           </button>
                         </div>
                       )}
@@ -281,7 +320,7 @@ export default function IncidentDetailPage() {
 
             {/* Create form */}
             {showMaintForm && (
-              <form onSubmit={handleCreateMaintenance} className="mb-5 p-5 bg-surface-elevated rounded-xl space-y-3">
+              <form onSubmit={handleCreateMaintenance} className="mb-5 p-5 bg-surface-elevated rounded-xl border border-hairline space-y-3">
                 <div>
                   <label className={LABEL_CLS}>Risk Level</label>
                   <select className={INPUT_CLS} value={maintForm.risk_level} onChange={e => setMaintForm({ ...maintForm, risk_level: e.target.value })}>
@@ -296,17 +335,20 @@ export default function IncidentDetailPage() {
                   <label className={LABEL_CLS}>Validation Steps</label>
                   <textarea required className={`${INPUT_CLS} resize-none`} rows="2" value={maintForm.validation_steps} onChange={e => setMaintForm({ ...maintForm, validation_steps: e.target.value })} />
                 </div>
-                <div>
-                  <label className={LABEL_CLS}>Scheduled Date</label>
-                  <input type="datetime-local" className={INPUT_CLS} value={maintForm.scheduled_date} onChange={e => setMaintForm({ ...maintForm, scheduled_date: e.target.value })} />
-                </div>
+                <DateTimeField
+                  label="Scheduled Date"
+                  value={maintForm.scheduled_date}
+                  onChange={(v) => setMaintForm({ ...maintForm, scheduled_date: v })}
+                  placeholder="When should this change be applied?"
+                  presets={['plus1h', 'tomorrow9am', 'nextWeek']}
+                />
                 <label className="flex items-center gap-2 text-sm text-text cursor-pointer">
                   <input type="checkbox" className="w-3.5 h-3.5 rounded-xs accent-accent" checked={maintForm.human_approved} onChange={e => setMaintForm({ ...maintForm, human_approved: e.target.checked })} />
                   I have reviewed and approve this plan
                 </label>
                 <div className="flex gap-2 pt-2">
-                  <button type="submit" className="px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard">Submit</button>
-                  <button type="button" onClick={() => setShowMaintForm(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted bg-surface rounded-pill hover:text-text transition-standard">Cancel</button>
+                  <button type="submit" className="px-3.5 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard">Submit</button>
+                  <button type="button" onClick={() => setShowMaintForm(false)} className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface rounded-pill hover:text-text transition-standard">Cancel</button>
                 </div>
               </form>
             )}
@@ -326,9 +368,19 @@ export default function IncidentDetailPage() {
                       />
                       <div className="flex items-center justify-between mb-2.5">
                         <StatusBadge status={plan.risk_level} />
-                        <span className={`text-[11px] font-medium ${plan.approved ? 'text-status-healthy' : 'text-text-subtle'}`}>
-                          {plan.approved ? 'Approved' : 'Pending approval'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[11px] font-medium ${plan.approved ? 'text-status-healthy' : 'text-text-subtle'}`}>
+                            {plan.approved ? 'Approved' : 'Pending approval'}
+                          </span>
+                          {canEdit && !plan.approved && (
+                            <button
+                              onClick={() => setPlanToApprove(plan)}
+                              className="px-2.5 py-1 text-[11px] font-medium bg-accent-weak text-accent rounded-pill hover:bg-accent-muted transition-standard"
+                            >
+                              Approve
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {plan.scheduled_date && (
                         <p className="text-[12px] text-text-muted font-mono tabular-nums mb-3 flex items-center gap-1.5">
@@ -339,11 +391,11 @@ export default function IncidentDetailPage() {
                       <div className="space-y-2.5">
                         <div>
                           <h5 className="text-[11px] font-medium text-text-subtle tracking-tight mb-1">Rollback strategy</h5>
-                          <p className="text-[13px] text-text bg-surface-elevated p-2.5 rounded-lg">{plan.rollback_plan}</p>
+                          <p className="text-[13px] text-text bg-surface-elevated border border-hairline p-2.5 rounded-lg">{plan.rollback_plan}</p>
                         </div>
                         <div>
                           <h5 className="text-[11px] font-medium text-text-subtle tracking-tight mb-1">Validation steps</h5>
-                          <p className="text-[13px] text-text bg-surface-elevated p-2.5 rounded-lg">{plan.validation_steps}</p>
+                          <p className="text-[13px] text-text bg-surface-elevated border border-hairline p-2.5 rounded-lg">{plan.validation_steps}</p>
                         </div>
                       </div>
                     </div>
@@ -364,6 +416,24 @@ export default function IncidentDetailPage() {
         onSubmit={submitReviewerNote}
         busy={approving}
       />
+
+      <ConfirmModal
+        isOpen={!!planToApprove}
+        onClose={() => (approvingPlan ? null : setPlanToApprove(null))}
+        onConfirm={confirmApprovePlan}
+        title="Approve maintenance plan"
+        description={`Approving a ${planToApprove?.risk_level ?? ''} risk plan for INC-${incident.id}. The approval is recorded in the audit log.`}
+        confirmLabel={approvingPlan ? 'Approving…' : 'Approve plan'}
+        busy={approvingPlan}
+      />
+
+      {toast.visible && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ ...toast, visible: false })}
+        />
+      )}
     </div>
   );
 }

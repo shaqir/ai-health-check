@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Clock, AlertTriangle, Server, AlertCircle, FlaskConical } from 'lucide-react';
+import { Activity, Clock, AlertTriangle, Server, FlaskConical } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer
@@ -34,29 +34,23 @@ export default function DashboardPage() {
   const [qualityData, setQualityData] = useState([]);
   const [errorData, setErrorData] = useState([]);
   const [recentEvals, setRecentEvals] = useState([]);
-  const [driftAlerts, setDriftAlerts] = useState([]);
-  const [alerts, setAlerts] = useState([]);
 
   const fetchDashboard = async () => {
     setError(null);
     try {
       const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
-      const [metricsRes, latencyRes, qualityRes, errorRes, evalsRes, driftRes, alertsRes] = await Promise.all([
+      const [metricsRes, latencyRes, qualityRes, errorRes, evalsRes] = await Promise.all([
         api.get('/dashboard/metrics', { params: envParam }),
         api.get('/dashboard/latency-trend', { params: envParam }),
         api.get('/dashboard/quality-trend', { params: envParam }),
         api.get('/dashboard/error-trend', { params: envParam }),
         api.get('/dashboard/recent-evals'),
-        api.get('/dashboard/drift-alerts'),
-        api.get('/dashboard/alerts?active_only=true'),
       ]);
       setMetrics(metricsRes.data);
       setLatencyData(latencyRes.data);
       setQualityData(qualityRes.data);
       setErrorData(errorRes.data);
       setRecentEvals(evalsRes.data);
-      setDriftAlerts(driftRes.data);
-      setAlerts(alertsRes.data);
     } catch (err) {
       setError('Failed to load dashboard data.');
     } finally {
@@ -123,63 +117,6 @@ export default function DashboardPage() {
           ))}
         </div>
       </PageHeader>
-
-      {/* Active Alerts */}
-      {alerts.length > 0 && (
-        <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
-          <div className="px-5 py-3 border-b border-hairline flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertCircle size={14} strokeWidth={1.75} className="text-status-failing" />
-              <span className="text-[13px] font-semibold text-text tracking-tight">Active alerts</span>
-            </div>
-            <span className="text-[11px] font-mono tabular-nums text-text-subtle">{alerts.length}</span>
-          </div>
-          <div>
-            {alerts.map(a => (
-              <div key={a.id} className="flex items-center justify-between px-5 py-3 border-b border-hairline last:border-0">
-                <div className="flex items-center gap-3">
-                  <span className={`w-2 h-2 rounded-full ${a.severity === 'critical' ? 'bg-status-failing' : 'bg-status-degraded'}`} />
-                  <span className="text-sm text-text">{a.message}</span>
-                  <span className="text-[11px] text-text-subtle font-mono">{a.service_name}</span>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[11px] text-text-subtle font-mono tabular-nums">{a.created_at}</span>
-                  <button
-                    onClick={async () => {
-                      await api.post(`/dashboard/alerts/${a.id}/acknowledge`);
-                      fetchDashboard();
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard"
-                  >
-                    Ack
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Legacy drift alert for backward compat */}
-      {alerts.length === 0 && driftAlerts.length > 0 && (
-        <div className="flex items-center justify-between gap-4 px-5 py-3.5 bg-status-failing-muted rounded-xl" role="alert">
-          <div className="flex items-center gap-3">
-            <AlertCircle size={16} strokeWidth={1.75} className="text-status-failing shrink-0" />
-            <p className="text-sm text-text">
-              <span className="font-medium">Drift detected</span>
-              <span className="text-text-muted"> — {driftAlerts[0].service_name} quality dropped to </span>
-              <span className="font-mono tabular-nums font-medium">{driftAlerts[0].score}%</span>
-              <span className="text-text-muted"> (threshold: {driftAlerts[0].threshold}%)</span>
-            </p>
-          </div>
-          <button
-            onClick={() => navigate('/incidents')}
-            className="shrink-0 px-3 py-1.5 text-[11px] font-medium bg-status-failing text-white rounded-pill hover:opacity-90 transition-standard"
-          >
-            Create incident
-          </button>
-        </div>
-      )}
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

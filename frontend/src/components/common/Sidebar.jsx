@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Server, AlertTriangle, FlaskConical,
   Shield, FileText, Settings, LogOut, Sun, Moon, Search
 } from 'lucide-react';
+import NotificationsBell from './NotificationsBell';
 
 function NavLink({ to, icon: Icon, label, exact = false, shortcut }) {
   const location = useLocation();
@@ -88,6 +89,8 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-3 border-t border-hairline space-y-1">
+        <NotificationsBell />
+
         <button
           onClick={toggle}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard"

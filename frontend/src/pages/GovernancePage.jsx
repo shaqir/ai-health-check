@@ -9,7 +9,7 @@ import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
 
-const INPUT_CLS = 'w-full px-3 py-1.5 text-sm bg-[var(--material-thick)] rounded-md text-text transition-standard';
+const INPUT_CLS = 'w-full px-3 py-1.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text transition-standard focus:border-accent focus:bg-surface';
 
 export default function GovernancePage() {
   const { user, isAdmin } = useAuth();

@@ -12,7 +12,7 @@ import DriftAnalysis from '../components/evaluations/DriftAnalysis';
 import TestCasesSection from '../components/evaluations/TestCasesSection';
 import EvalRunsSection from '../components/evaluations/EvalRunsSection';
 
-const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function EvaluationsPage() {

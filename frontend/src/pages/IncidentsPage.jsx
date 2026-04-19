@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Plus, AlertTriangle, CheckSquare, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
@@ -8,9 +8,11 @@ import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
+import Toast from '../components/common/Toast';
+import DateTimeField from '../components/common/DateTimeField';
 
 const SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low'];
-const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 const CHECKLIST_ITEMS = [
@@ -30,12 +32,16 @@ const INITIAL_FORM = {
 
 export default function IncidentsPage() {
   const { canEdit } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [incidents, setIncidents] = useState([]);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(INITIAL_FORM);
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
     setError(null);
@@ -58,15 +64,46 @@ export default function IncidentsPage() {
 
   useEffect(() => { fetchData(); }, []);
 
+  // Prefill the form when navigated here from an alert's "Create incident"
+  // button (router state carries {prefill: {service_name, severity, symptoms,
+  // alert_type, checklist_*}}). Wait until services are loaded so we can
+  // resolve service_name → service_id, then clear the state so a refresh
+  // doesn't re-trigger the prefill.
+  useEffect(() => {
+    const prefill = location.state?.prefill;
+    if (!prefill || services.length === 0) return;
+    const matched = services.find(s => s.name === prefill.service_name);
+    setForm(prev => ({
+      ...prev,
+      ...(matched && { service_id: matched.id }),
+      ...(prefill.severity && { severity: prefill.severity }),
+      ...(prefill.symptoms && { symptoms: prefill.symptoms }),
+      ...(prefill.checklist_data_issue && { checklist_data_issue: true }),
+      ...(prefill.checklist_prompt_change && { checklist_prompt_change: true }),
+      ...(prefill.checklist_model_update && { checklist_model_update: true }),
+      ...(prefill.checklist_infrastructure && { checklist_infrastructure: true }),
+      ...(prefill.checklist_safety_policy && { checklist_safety_policy: true }),
+    }));
+    setShowForm(true);
+    showToast(
+      prefill.alert_type
+        ? `Form pre-filled from ${prefill.alert_type} alert`
+        : 'Form pre-filled from alert',
+      'info',
+    );
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, services, navigate, location.pathname]);
+
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
       await api.post('/incidents', form);
       setShowForm(false);
       setForm({ ...INITIAL_FORM, service_id: services[0]?.id || '' });
+      showToast('Incident reported', 'success');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to report incident');
+      showToast(err.response?.data?.detail || 'Failed to report incident', 'error');
     }
   };
 
@@ -89,7 +126,7 @@ export default function IncidentsPage() {
         {canEdit && (
           <button
             onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-status-failing text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
           >
             <Plus size={14} strokeWidth={1.75} /> Report
           </button>
@@ -124,14 +161,16 @@ export default function IncidentsPage() {
                 <label className={LABEL_CLS}>Symptoms</label>
                 <textarea className={`${INPUT_CLS} h-20 resize-none`} placeholder="Describe the anomalous behaviour..." value={form.symptoms} onChange={(e) => setForm({ ...form, symptoms: e.target.value })} required />
               </div>
-              <div>
-                <label className={LABEL_CLS}>Timeline</label>
-                <input type="datetime-local" className={INPUT_CLS} value={form.timeline} onChange={(e) => setForm({ ...form, timeline: e.target.value })} />
-              </div>
+              <DateTimeField
+                label="When did this occur?"
+                value={form.timeline}
+                onChange={(v) => setForm({ ...form, timeline: v })}
+                placeholder="Select an approximate time"
+              />
             </div>
 
             {/* Right column: checklist */}
-            <div className="bg-surface-elevated p-4 rounded-xl">
+            <div className="bg-surface-elevated p-4 rounded-xl border border-hairline">
               <h4 className="text-[13px] font-semibold text-text tracking-tight mb-1 flex items-center gap-2">
                 <CheckSquare size={12} strokeWidth={1.75} /> Triage checklist
               </h4>
@@ -153,10 +192,10 @@ export default function IncidentsPage() {
           </div>
 
           <div className="flex gap-2 pt-4 border-t border-hairline">
-            <button type="submit" className="px-4 py-1.5 bg-status-failing text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard">
+            <button type="submit" className="px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard">
               Save incident
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard">
+            <button type="button" onClick={() => setShowForm(false)} className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard">
               Cancel
             </button>
           </div>
@@ -203,6 +242,14 @@ export default function IncidentsPage() {
             </Link>
           ))}
         </div>
+      )}
+
+      {toast.visible && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ ...toast, visible: false })}
+        />
       )}
     </div>
   );

@@ -13,6 +13,35 @@ from app.main import app
 from app.models import User, UserRole
 from app.middleware.auth import hash_password, create_access_token
 
+
+@pytest.fixture(autouse=True)
+def _stub_dns_resolution(monkeypatch):
+    """
+    Default DNS stub for tests: resolve everything to a public IP (1.1.1.1).
+    Keeps the SSRF validator happy for generic fixtures that use test
+    URLs like 'staging.example.com' which don't publicly resolve.
+
+    Individual tests that need to exercise SSRF behaviour override this
+    with their own patch/context manager.
+    """
+    import socket
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        # Literal IPs must resolve to themselves so SSRF tests using
+        # http://169.254.169.254 still detect the blocked range.
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, port or 0))]
+        except ValueError:
+            pass
+        # For test hostnames, fake-resolve to a public IP so the validator
+        # allows them. Individual tests that need a private-IP resolution
+        # patch this directly.
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
 # In-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})

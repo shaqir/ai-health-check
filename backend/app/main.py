@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.database import engine, Base, SessionLocal
 from app.services.llm_client import BudgetExceededError
 from app.services.safety import PromptSafetyError
+from app.services.url_validator import UnsafeUrlError, validate_outbound_url
 
 # Import all models so SQLAlchemy knows about them
 from app.models import (  # noqa: F401
@@ -50,6 +51,23 @@ def scheduled_health_check():
 
         for service in active_services:
             start = time.perf_counter()
+            # SSRF guard also on the scheduled path — stale data from before
+            # the validator shipped, or a rebinding DNS record, shouldn't
+            # be able to hit an internal address during the 5-minute tick.
+            try:
+                validate_outbound_url(service.endpoint_url)
+            except UnsafeUrlError as exc:
+                latency_ms = 0.0
+                status_str = "failure"
+                snippet = f"blocked: {exc}"
+                db.add(ConnectionLog(
+                    service_id=service.id,
+                    latency_ms=latency_ms,
+                    status=status_str,
+                    response_snippet=snippet[:200],
+                ))
+                continue
+
             try:
                 with httpx.Client(timeout=10.0, follow_redirects=True) as client:
                     response = client.get(service.endpoint_url)

@@ -18,6 +18,7 @@ from app.middleware.rbac import require_role
 from app.models import AIService, ConnectionLog, Environment, SensitivityLabel, User
 from app.services.llm_client import test_connection as llm_test_connection
 from app.services.sensitivity import enforce_sensitivity
+from app.services.url_validator import UnsafeUrlError, validate_outbound_url
 
 router = APIRouter()
 
@@ -111,11 +112,15 @@ def _parse_sensitivity_label(value: str) -> SensitivityLabel:
 
 
 async def _probe_service_endpoint(endpoint_url: str) -> dict:
-    parsed = urlparse(endpoint_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    # Re-validate at probe time too. Closes the DNS-rebinding window where
+    # an endpoint passed validation at registration but now resolves to a
+    # private IP. Also catches anyone who bypassed the API to edit the DB.
+    try:
+        validate_outbound_url(endpoint_url)
+    except UnsafeUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="endpoint_url must be a valid http or https URL",
+            detail=f"Unsafe endpoint URL: {exc}",
         )
 
     start = time.perf_counter()
@@ -172,13 +177,22 @@ def create_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    endpoint_url = req.endpoint_url.strip()
+    if endpoint_url:
+        try:
+            validate_outbound_url(endpoint_url)
+        except UnsafeUrlError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsafe endpoint URL: {exc}",
+            )
     service = AIService(
         name=req.name,
         owner=req.owner,
         environment=_parse_environment(req.environment),
         model_name=req.model_name,
         sensitivity_label=_parse_sensitivity_label(req.sensitivity_label),
-        endpoint_url=req.endpoint_url.strip(),
+        endpoint_url=endpoint_url,
     )
     db.add(service)
     db.commit()
@@ -221,6 +235,14 @@ def update_service(
             value = _parse_sensitivity_label(value)
         elif key == "endpoint_url" and value is not None:
             value = value.strip()
+            if value:
+                try:
+                    validate_outbound_url(value)
+                except UnsafeUrlError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Unsafe endpoint URL: {exc}",
+                    )
         setattr(service, key, value)
 
     db.commit()

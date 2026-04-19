@@ -4,14 +4,18 @@
 
 | ID | Risk | Likelihood | Impact | Status |
 |----|------|-----------|--------|--------|
-| R1 | PII Leakage | Medium | High | Implemented |
-| R2 | Model Drift | High | High | Implemented |
-| R3 | Hallucination | High | Medium | Implemented |
-| R4 | Evaluation Bias | Medium | Medium | Implemented |
-| R5 | Service Outage | Medium | Medium | Implemented |
-| R6 | Cost Overrun | Medium | High | Implemented |
-| R7 | Brute-Force | Medium | High | Implemented |
-| R8 | Prompt Injection | High | High | Implemented |
+| R1  | PII Leakage | Medium | High | Implemented |
+| R2  | Model Drift | High | High | Implemented |
+| R3  | Hallucination | High | Medium | Implemented |
+| R4  | Evaluation Bias | Medium | Medium | Implemented |
+| R5  | Service Outage | Medium | Medium | Implemented |
+| R6  | Cost Overrun | Medium | High | Implemented |
+| R7  | Brute-Force | Medium | High | Implemented |
+| R8  | Prompt Injection | High | High | Implemented |
+| R9  | Audit Log Tampering | Low | Critical | Implemented |
+| R10 | Confidential Data Leakage via LLM | Medium | Critical | Implemented |
+| R11 | Unapproved LLM Output Treated as Official | Medium | High | Implemented |
+| R12 | Privileged Data Read by Viewer Role | Medium | High | Implemented |
 
 ---
 
@@ -113,3 +117,54 @@ Malicious input manipulates Claude or extracts internal instructions.
 - `scan_output()` detects model refusal patterns in Claude responses
 
 Residual: Regex-based detection cannot catch novel or obfuscated injection techniques.
+
+---
+
+### R9: Audit Log Tampering
+
+An insider or intruder modifies or deletes past audit rows to hide activity.
+
+- Every audit row commits a SHA-256 `content_hash` computed over its content plus the previous row's hash (`middleware/audit.py`) — a modified row breaks the chain and is detectable by replaying it.
+- SQLite `BEFORE UPDATE` and `BEFORE DELETE` triggers on `audit_log` reject mutations from the application path (`main.py:_install_audit_log_triggers`).
+- `GET /compliance/audit-log/verify` (admin-only) walks the chain and reports `{total, valid, broken_at, reason}`. Surfaced in the Governance UI as "Verify integrity."
+- Role-denied attempts on sensitive endpoints are themselves audited (`role_denied` action) so probing is visible to reviewers.
+
+Residual: Production should use Postgres row permissions or a WORM-enforced audit service. The SQLite triggers can be bypassed by a direct DB connection, but the hash chain still detects the resulting tamper on next verify.
+
+---
+
+### R10: Confidential Data Leakage via LLM
+
+A service labelled `confidential` reaches the external LLM without explicit governance sign-off.
+
+- `app/services/sensitivity.py:enforce_sensitivity()` gates every LLM call tied to a service (test-connection, eval run, incident summary).
+- `confidential` services are blocked unless the caller passes `allow_confidential=true` AND holds the admin role. Non-admins are rejected even with the flag.
+- Every attempt (allowed or denied) writes to the audit log (`confidential_llm_override` / `confidential_llm_blocked`).
+- Frontend shows a confirm dialog before admins can override.
+
+Residual: The `public` / `internal` labels do not trigger any additional controls. Misclassification of a confidential service as internal is undetected.
+
+---
+
+### R11: Unapproved LLM Output Treated as Official
+
+LLM-generated content is consumed as authoritative without human review.
+
+- Incident summaries: written to `Incident.summary_draft`. Published as `Incident.summary` only via explicit `POST /incidents/{id}/approve-summary` which records `approved_by`.
+- Maintenance plans: `approved` defaults `False`. Flipped by `POST /maintenance/{id}/approve`.
+- Dashboard insights + compliance AI reports: persisted as unapproved `AILlmDraft` rows by the shared `draft_service`. Separate approve endpoint flips `approved_by_user_id` and writes `llm_draft_approved` to the audit log.
+- Compliance export excludes unapproved incident summaries — drafts never appear in the official record.
+
+Residual: Humans approving without reading the content are still the weak link. Mitigated by presenting the full draft in the UI alongside the Approve button.
+
+---
+
+### R12: Privileged Data Read by Viewer Role
+
+Viewer token can query governance-grade endpoints intended for admins.
+
+- `GET /compliance/audit-log` is `require_role(["admin"])` (as is `/audit-log/verify`, `/users`, `/users/{id}/role`, and the AI compliance report endpoints).
+- `require_role` middleware (`middleware/rbac.py`) writes a `role_denied` row to the audit log for every 403 so probing is traceable.
+- Frontend conditionally omits the audit-log fetch for non-admins to avoid misleading "failed to load" errors.
+
+Residual: Generic list endpoints (e.g. `/services`, `/incidents`) are authenticated but not role-scoped by design — any logged-in user can read operational state. This is consistent with the spec's Viewer = "read-only" role.

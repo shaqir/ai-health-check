@@ -1,0 +1,26 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/seed.py",
+    "*/tests/*",
+    "*/venv/*",
+]
+
+[tool.coverage.report]
+# Conservative floor — lift to 75-80% after the next cleanup pass.
+fail_under = 65
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

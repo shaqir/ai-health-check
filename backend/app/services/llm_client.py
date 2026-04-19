@@ -406,10 +406,33 @@ ROOT CAUSES:
         return {"summary_draft": f"Error generating summary: {str(e)}", "root_causes_draft": ""}
 
 
-async def score_factuality(expected: str, actual: str) -> float:
+def _parse_judge_score(text: str) -> float | None:
+    """
+    Parse an LLM judge's numeric score response.
+
+    Requires the response to be ONLY a number (0-100), optionally with
+    whitespace. Any extra prose — including common refusals like
+    "I cannot rate this" or "I can give you 7 reasons..." — is
+    rejected so we never interpret a refusal as a real score.
+
+    Returns the clamped float score, or None if the judge didn't comply.
+    """
+    if not text:
+        return None
+    m = re.fullmatch(r"\s*(\d{1,3})\.?\d*\s*", text)
+    if not m:
+        return None
+    score = int(m.group(1))
+    # Clamp defensively — Claude might reply with 101 or -5.
+    return float(min(max(score, 0), 100))
+
+
+async def score_factuality(expected: str, actual: str) -> float | None:
     """
     Module 2: Evaluation Scoring
     Asks Claude to rate factual similarity 0-100.
+    Returns None if Claude refused or returned non-numeric content,
+    so callers can distinguish "refused" from "scored 0".
     """
     prompt = f"""You are evaluating AI output quality. Compare the expected output with the actual output and rate their factual similarity on a scale of 0-100.
 
@@ -428,12 +451,10 @@ Respond with ONLY a single integer from 0 to 100. No other text."""
             max_tokens=10,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = response.content[0].text.strip() if response.content else "0"
-        match = re.search(r"\d+", text)
-        score = int(match.group()) if match else 0
-        return min(max(score, 0), 100)
+        text = response.content[0].text.strip() if response.content else ""
+        return _parse_judge_score(text)
     except Exception:
-        return 0.0
+        return None
 
 
 async def generate_dashboard_insight(metrics: dict) -> dict:
@@ -517,11 +538,13 @@ Keep the report under 500 words."""
         return {"report_text": f"Error generating compliance report: {str(e)}"}
 
 
-async def detect_hallucination(prompt: str, response_text: str) -> float:
+async def detect_hallucination(prompt: str, response_text: str) -> float | None:
     """
     Hallucination Detection (inspired by Patronus AI / Braintrust).
     Asks Claude to judge whether the response contains claims not supported by the prompt.
-    Returns a hallucination score from 0 (no hallucination) to 100 (severe hallucination).
+    Returns a hallucination score from 0 (no hallucination) to 100 (severe hallucination),
+    or None if the judge refused — callers must distinguish refusals from scores, because
+    a refusal is not "severe hallucination" (that interpretation inverts the signal).
     """
     judge_prompt = f"""You are a hallucination detector. Given a prompt and a model's response, rate how much the response contains unsupported or fabricated claims.
 
@@ -545,9 +568,7 @@ Respond with ONLY a single integer from 0 to 100. No other text."""
             max_tokens=10,
             messages=[{"role": "user", "content": judge_prompt}],
         )
-        text = response.content[0].text.strip() if response.content else "0"
-        match = re.search(r"\d+", text)
-        score = int(match.group()) if match else 0
-        return min(max(score, 0), 100)
+        text = response.content[0].text.strip() if response.content else ""
+        return _parse_judge_score(text)
     except Exception:
-        return 0.0
+        return None

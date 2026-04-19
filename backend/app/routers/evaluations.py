@@ -216,12 +216,20 @@ async def run_evaluation(
         latency_ms = llm_result.get("latency_ms", 0)
 
         halluc_score = None
+        judge_refused = False
         if tc.category == "factuality":
             score = await score_factuality(tc.expected_output, response_text)
-            factuality_scores.append(score)
+            if score is None:
+                # Judge refused or returned non-numeric — do NOT count as 0,
+                # because that would spuriously trigger drift. Mark the
+                # result as judge_refused and skip it from the aggregate.
+                judge_refused = True
+            else:
+                factuality_scores.append(score)
             # Hallucination detection (inspired by Patronus AI)
             halluc_score = await detect_hallucination(tc.prompt, response_text)
-            hallucination_scores.append(halluc_score)
+            if halluc_score is not None:
+                hallucination_scores.append(halluc_score)
         elif tc.category == "format_json":
             try:
                 json.loads(response_text)
@@ -232,7 +240,15 @@ async def run_evaluation(
         else:
             score = 0.0
 
-        result_status = "error" if response_text.startswith("ERROR:") else "success"
+        if judge_refused:
+            result_status = "judge_refused"
+            display_score = None
+        elif response_text.startswith("ERROR:"):
+            result_status = "error"
+            display_score = score
+        else:
+            result_status = "success"
+            display_score = score
 
         results.append({
             "test_case_id": tc.id,
@@ -240,15 +256,17 @@ async def run_evaluation(
             "prompt": tc.prompt[:100],
             "expected": tc.expected_output[:100],
             "actual": response_text[:200],
-            "score": score,
+            "score": display_score if display_score is not None else 0,
             "hallucination_score": halluc_score,
             "latency_ms": latency_ms,
             "status": result_status,
         })
 
-    # Compute aggregate scores
-    all_scores = [r["score"] for r in results]
-    quality_score = round(sum(all_scores) / len(all_scores), 1) if all_scores else 0
+    # Compute aggregate scores — exclude judge_refused rows so a flaky
+    # judge doesn't spuriously trigger drift. Count of refused is still
+    # visible via result.status per-test.
+    valid_scores = [r["score"] for r in results if r["status"] != "judge_refused"]
+    quality_score = round(sum(valid_scores) / len(valid_scores), 1) if valid_scores else 0
     factuality_score = (
         round(sum(factuality_scores) / len(factuality_scores), 1)
         if factuality_scores else None

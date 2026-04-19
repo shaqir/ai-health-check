@@ -89,7 +89,7 @@ def test_ai_summary_double_approve_rejected(mock_insight, client, db, admin_toke
 
 # ── Compliance AI report ──
 
-@patch("app.routers.compliance.generate_compliance_summary", new_callable=AsyncMock)
+@patch("app.routers.export.generate_compliance_summary", new_callable=AsyncMock)
 def test_ai_report_creates_unapproved_draft(mock_report, client, db, admin_token, admin_user):
     mock_report.return_value = {"report_text": "Compliance looks fine."}
 
@@ -103,7 +103,7 @@ def test_ai_report_creates_unapproved_draft(mock_report, client, db, admin_token
     assert draft.approved_by_user_id is None
 
 
-@patch("app.routers.compliance.generate_compliance_summary", new_callable=AsyncMock)
+@patch("app.routers.export.generate_compliance_summary", new_callable=AsyncMock)
 def test_ai_report_approval_requires_admin(mock_report, client, db, admin_token, maintainer_token):
     mock_report.return_value = {"report_text": "x"}
 
@@ -130,7 +130,7 @@ def test_ai_report_approval_requires_admin(mock_report, client, db, admin_token,
     assert res.status_code == 200
 
 
-@patch("app.routers.compliance.generate_compliance_summary", new_callable=AsyncMock)
+@patch("app.routers.export.generate_compliance_summary", new_callable=AsyncMock)
 def test_recent_ai_reports_filters_by_approval(mock_report, client, db, admin_token):
     mock_report.return_value = {"report_text": "x"}
 

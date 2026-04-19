@@ -29,7 +29,8 @@ from app.models import (  # noqa: F401
 )
 
 # Import routers
-from app.routers import auth, services, incidents, maintenance, evaluations, dashboard, compliance
+from app.routers import auth, services, incidents, maintenance, evaluations, dashboard
+from app.routers import users as compliance_users, audit as compliance_audit, export as compliance_export
 
 settings = get_settings()
 
@@ -158,7 +159,11 @@ app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incident
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
-app.include_router(compliance.router, prefix="/api/v1/compliance", tags=["Compliance"])
+# Compliance surface — split into three routers, all mounted under
+# /api/v1/compliance so the frontend paths are unchanged.
+app.include_router(compliance_users.router, prefix="/api/v1/compliance", tags=["Compliance · Users"])
+app.include_router(compliance_audit.router, prefix="/api/v1/compliance", tags=["Compliance · Audit"])
+app.include_router(compliance_export.router, prefix="/api/v1/compliance", tags=["Compliance · Export"])
 
 
 # ── Global Exception Handlers ──

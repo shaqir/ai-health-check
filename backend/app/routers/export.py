@@ -1,54 +1,28 @@
 """
-Compliance router for Module 4: audit log retrieval, user management, export, and AI reports.
+Compliance export + AI report router (Module 4).
+
+- POST /export           → JSON or PDF with audit + incidents + maintenance
+- POST /ai-report        → draft LLM compliance report (admin)
+- POST /ai-report/{id}/approve → admin approval
+- GET  /ai-report/recent → list drafts
 """
 
 import io
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.audit import log_action, verify_audit_chain
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AILlmDraft, AuditLog, EvalRun, Incident, MaintenancePlan, User, UserRole
+from app.models import AILlmDraft, AuditLog, EvalRun, Incident, MaintenancePlan, User
 from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_compliance_summary
 
 router = APIRouter()
-
-
-# ── Schemas ──
-
-class AuditLogResponse(BaseModel):
-    id: int
-    user_id: int | None
-    user_email: str
-    action: str
-    target_table: str
-    target_id: int | None
-    old_value: str
-    new_value: str
-    timestamp: datetime | None
-
-
-class UserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    username: str
-    email: str
-    role: str
-    is_active: bool
-    created_at: datetime | None = None
-
-
-class UserRoleUpdate(BaseModel):
-    role: str
 
 
 class ExportRequest(BaseModel):
@@ -56,144 +30,6 @@ class ExportRequest(BaseModel):
     from_date: str | None = None
     to_date: str | None = None
 
-
-# ── Audit Log ──
-
-@router.get(
-    "/audit-log",
-    response_model=list[AuditLogResponse],
-    dependencies=[Depends(require_role(["admin"]))],
-)
-def list_audit_logs(
-    from_date: str | None = Query(None),
-    to_date: str | None = Query(None),
-    action: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
-
-    if from_date:
-        try:
-            dt = datetime.fromisoformat(from_date)
-            query = query.filter(AuditLog.timestamp >= dt)
-        except ValueError:
-            pass
-
-    if to_date:
-        try:
-            dt = datetime.fromisoformat(to_date)
-            query = query.filter(AuditLog.timestamp <= dt)
-        except ValueError:
-            pass
-
-    if action:
-        query = query.filter(AuditLog.action == action)
-
-    logs = query.limit(limit).all()
-
-    result = []
-    for log in logs:
-        user = db.query(User).filter(User.id == log.user_id).first() if log.user_id else None
-        result.append(AuditLogResponse(
-            id=log.id,
-            user_id=log.user_id,
-            user_email=user.email if user else "system",
-            action=log.action,
-            target_table=log.target_table,
-            target_id=log.target_id,
-            old_value=log.old_value or "",
-            new_value=log.new_value or "",
-            timestamp=log.timestamp,
-        ))
-
-    return result
-
-
-@router.get(
-    "/audit-log/verify",
-    dependencies=[Depends(require_role(["admin"]))],
-)
-def verify_audit_log(
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    """
-    Walk the audit log hash chain and report integrity.
-    Returns: {total, valid, broken_at, reason}
-    """
-    return verify_audit_chain(db)
-
-
-# ── User Management ──
-
-@router.get(
-    "/users",
-    response_model=list[UserResponse],
-    dependencies=[Depends(require_role(["admin"]))],
-)
-def list_users(
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    users = db.query(User).order_by(User.id.asc()).all()
-    return [
-        UserResponse(
-            id=u.id,
-            username=u.username,
-            email=u.email,
-            role=u.role.value,
-            is_active=u.is_active,
-            created_at=u.created_at,
-        )
-        for u in users
-    ]
-
-
-@router.put(
-    "/users/{user_id}/role",
-    dependencies=[Depends(require_role(["admin"]))],
-)
-def update_user_role(
-    user_id: int,
-    req: UserRoleUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if current_user.id == user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot change your own role",
-        )
-
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    try:
-        new_role = UserRole(req.role)
-    except ValueError:
-        allowed = ", ".join(r.value for r in UserRole)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid role '{req.role}'. Allowed: {allowed}",
-        )
-
-    old_role = user.role.value
-    user.role = new_role
-    db.commit()
-    db.refresh(user)
-
-    log_action(
-        db, current_user.id, "update_user_role", "users",
-        user.id, old_value=old_role, new_value=new_role.value,
-    )
-
-    return {"detail": f"User role updated to {new_role.value}", "user_id": user_id}
-
-
-# ── Export ──
 
 @router.post(
     "/export",
@@ -204,24 +40,24 @@ def export_compliance_data(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # ── Audit log ──
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
-
     if req.from_date:
         try:
-            dt = datetime.fromisoformat(req.from_date)
-            query = query.filter(AuditLog.timestamp >= dt)
+            query = query.filter(
+                AuditLog.timestamp >= datetime.fromisoformat(req.from_date)
+            )
         except ValueError:
             pass
-
     if req.to_date:
         try:
-            dt = datetime.fromisoformat(req.to_date)
-            query = query.filter(AuditLog.timestamp <= dt)
+            query = query.filter(
+                AuditLog.timestamp <= datetime.fromisoformat(req.to_date)
+            )
         except ValueError:
             pass
 
     logs = query.limit(500).all()
-
     records = []
     for log in logs:
         user = db.query(User).filter(User.id == log.user_id).first() if log.user_id else None
@@ -259,7 +95,7 @@ def export_compliance_data(
             "severity": i.severity.value,
             "status": i.status.value,
             "symptoms": (i.symptoms or "")[:500],
-            "summary": i.summary or "",  # "" if unapproved; drafts excluded
+            "summary": i.summary or "",  # drafts excluded
             "root_causes": i.root_causes or "",
             "checklist": {
                 "data_issue": i.checklist_data_issue,
@@ -334,26 +170,28 @@ def export_compliance_data(
             ))
             elements.append(Spacer(1, 0.25 * inch))
 
-            if records:
-                elements.append(Paragraph("Audit Log", styles["Heading2"]))
-                table_data = [["User", "Action", "Target", "Timestamp"]]
-                for r in records[:100]:
-                    table_data.append([
-                        r["user"][:30],
-                        r["action"][:30],
-                        r["target"][:30],
-                        r["timestamp"][:19],
-                    ])
-
-                table = Table(table_data, colWidths=[1.5 * inch, 1.5 * inch, 2 * inch, 1.5 * inch])
-                table.setStyle(TableStyle([
+            def _styled_table(data, col_widths):
+                t = Table(data, colWidths=col_widths)
+                t.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
                 ]))
-                elements.append(table)
+                return t
+
+            if records:
+                elements.append(Paragraph("Audit Log", styles["Heading2"]))
+                audit_table = [["User", "Action", "Target", "Timestamp"]]
+                for r in records[:100]:
+                    audit_table.append([
+                        r["user"][:30], r["action"][:30],
+                        r["target"][:30], r["timestamp"][:19],
+                    ])
+                elements.append(_styled_table(
+                    audit_table, [1.5 * inch, 1.5 * inch, 2 * inch, 1.5 * inch]
+                ))
                 elements.append(Spacer(1, 0.25 * inch))
 
             if incidents_records:
@@ -361,20 +199,12 @@ def export_compliance_data(
                 inc_table = [["ID", "Severity", "Status", "Symptoms (preview)"]]
                 for i in incidents_records[:60]:
                     inc_table.append([
-                        str(i["id"]),
-                        i["severity"],
-                        i["status"],
+                        str(i["id"]), i["severity"], i["status"],
                         (i["symptoms"] or "")[:60],
                     ])
-                t = Table(inc_table, colWidths=[0.5 * inch, 1 * inch, 1 * inch, 4 * inch])
-                t.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
-                ]))
-                elements.append(t)
+                elements.append(_styled_table(
+                    inc_table, [0.5 * inch, 1 * inch, 1 * inch, 4 * inch]
+                ))
                 elements.append(Spacer(1, 0.25 * inch))
 
             if maintenance_records:
@@ -382,25 +212,16 @@ def export_compliance_data(
                 mp_table = [["ID", "Incident", "Risk", "Approved", "Scheduled"]]
                 for p in maintenance_records[:60]:
                     mp_table.append([
-                        str(p["id"]),
-                        str(p["incident_id"]),
-                        p["risk_level"],
+                        str(p["id"]), str(p["incident_id"]), p["risk_level"],
                         "Yes" if p["approved"] else "No",
                         (p["scheduled_date"] or "")[:19],
                     ])
-                t = Table(mp_table, colWidths=[0.5 * inch, 0.7 * inch, 1 * inch, 0.9 * inch, 1.5 * inch])
-                t.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
-                ]))
-                elements.append(t)
+                elements.append(_styled_table(
+                    mp_table, [0.5 * inch, 0.7 * inch, 1 * inch, 0.9 * inch, 1.5 * inch]
+                ))
 
             doc.build(elements)
             buffer.seek(0)
-
             return StreamingResponse(
                 buffer,
                 media_type="application/pdf",
@@ -412,7 +233,6 @@ def export_compliance_data(
                 detail="PDF generation unavailable — reportlab not installed",
             )
 
-    # Default: JSON export
     return JSONResponse(
         content={
             "records": records,
@@ -424,7 +244,7 @@ def export_compliance_data(
     )
 
 
-# ── AI Compliance Report ──
+# ── AI Compliance Report with HITL draft/approve ──
 
 @router.post(
     "/ai-report",
@@ -468,8 +288,6 @@ async def generate_ai_compliance_report(
 
     result = await generate_compliance_summary(audit_data, incidents_data, drift_data)
 
-    # HITL: persist as unapproved draft. Report is not official until
-    # an admin explicitly approves it.
     surface_ref = f"{from_date or 'start'}_to_{to_date or 'now'}"
     draft = create_draft(
         db,

@@ -7,6 +7,7 @@ import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import Modal from '../components/common/Modal';
+import ConfirmModal from '../components/common/ConfirmModal';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
@@ -26,6 +27,9 @@ export default function ServicesPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Confidential Ping confirmation — holds the service the user clicked
+  // on until they either confirm the override or cancel. Null when closed.
+  const [confidentialPingTarget, setConfidentialPingTarget] = useState(null);
 
   const [form, setForm] = useState({
     name: '', owner: '', environment: 'dev',
@@ -73,21 +77,7 @@ export default function ServicesPage() {
     }
   };
 
-  const handleTestConnection = async (id) => {
-    const service = services.find((s) => s.id === id);
-    const isConfidential = service?.sensitivity_label === 'confidential';
-    let qs = '';
-
-    if (isConfidential) {
-      const ok = window.confirm(
-        `"${service.name}" is labelled CONFIDENTIAL.\n\n` +
-        `Running the LLM test-connection will send a prompt to an external model. ` +
-        `Only admins can override. Proceed?`
-      );
-      if (!ok) return;
-      qs = '?mode=llm&allow_confidential=true';
-    }
-
+  const runPing = async (id, qs = '') => {
     setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
     try {
       const res = await api.post(`/services/${id}/test-connection${qs}`);
@@ -96,6 +86,23 @@ export default function ServicesPage() {
       const detail = err.response?.data?.detail || err.message;
       setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
     }
+  };
+
+  const handleTestConnection = (id) => {
+    const service = services.find((s) => s.id === id);
+    if (service?.sensitivity_label === 'confidential') {
+      // Defer to confirm modal; override query-string attached on approve.
+      setConfidentialPingTarget(service);
+      return;
+    }
+    runPing(id);
+  };
+
+  const confirmConfidentialPing = async () => {
+    if (!confidentialPingTarget) return;
+    const id = confidentialPingTarget.id;
+    setConfidentialPingTarget(null);
+    await runPing(id, '?mode=llm&allow_confidential=true');
   };
 
   const filtered = services.filter(s =>
@@ -313,6 +320,22 @@ export default function ServicesPage() {
           This will permanently remove the service and its connection logs. This action cannot be undone.
         </p>
       </Modal>
+
+      {/* Confidential Ping override — admin-only path through the
+          sensitivity gate. Backend rejects without this flag. */}
+      <ConfirmModal
+        isOpen={!!confidentialPingTarget}
+        onClose={() => setConfidentialPingTarget(null)}
+        onConfirm={confirmConfidentialPing}
+        title="Confidential service — override required"
+        variant="warning"
+        confirmLabel="Proceed with override"
+        description={
+          confidentialPingTarget
+            ? `"${confidentialPingTarget.name}" is labelled confidential. Running the LLM test-connection will send a prompt to an external model. Only admins can override, and every override is recorded in the audit log.`
+            : ''
+        }
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
 import Modal from '../components/common/Modal';
+import ConfirmModal from '../components/common/ConfirmModal';
 import Toast from '../components/common/Toast';
 import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
@@ -27,6 +28,9 @@ export default function EvaluationsPage() {
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
 
   const [form, setForm] = useState({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
+  // Eval-run confirmation. Holds the service + cost preview + confidential
+  // flag between the "Run" click and the confirm action. Null when closed.
+  const [runConfirm, setRunConfirm] = useState(null);
 
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
@@ -61,40 +65,44 @@ export default function EvaluationsPage() {
 
   const handleRunEval = async (serviceId) => {
     const service = services.find((s) => s.id === serviceId);
-    const isConfidential = service?.sensitivity_label === 'confidential';
-    let qs = '';
+    if (!service) return;
 
-    if (isConfidential) {
-      const ok = window.confirm(
-        `"${service.name}" is labelled CONFIDENTIAL.\n\n` +
-        `Running evaluations will send prompts to an external LLM. ` +
-        `Only admins can override. Proceed?`
-      );
-      if (!ok) return;
-      qs = '?allow_confidential=true';
+    // Fetch cost preview up-front so the confirm modal can show it. If
+    // this fails we bail before opening the modal.
+    let preview;
+    try {
+      const res = await api.get(`/evaluations/cost-preview/${serviceId}`);
+      preview = res.data;
+    } catch {
+      showToast('Failed to get cost preview', 'error');
+      return;
     }
 
-    try {
-      const preview = await api.get(`/evaluations/cost-preview/${serviceId}`);
-      const p = preview.data;
-      const cents = (p.estimated_cost_usd * 100).toFixed(2);
-      if (!confirm(
-        `Run evaluation?\n\n` +
-        `${p.test_cases} test cases, ${p.api_calls} API calls\n` +
-        `Est. cost: $${p.estimated_cost_usd.toFixed(4)} (~${cents}¢)\n` +
-        `Daily budget: $${p.daily_budget_usd.toFixed(2)}`
-      )) return;
-    } catch { showToast('Failed to get cost preview', 'error'); return; }
+    setRunConfirm({ service, preview });
+  };
 
-    setRunningService(serviceId);
+  const confirmRunEval = async () => {
+    if (!runConfirm) return;
+    const { service, preview } = runConfirm;
+    const isConfidential = service.sensitivity_label === 'confidential';
+    const qs = isConfidential ? '?allow_confidential=true' : '';
+
+    setRunConfirm(null);
+    setRunningService(service.id);
     try {
-      const res = await api.post(`/evaluations/run/${serviceId}${qs}`);
+      const res = await api.post(`/evaluations/run/${service.id}${qs}`);
       const r = res.data;
-      showToast(`Quality: ${r.quality_score}% ${r.drift_flagged ? '— drift detected' : ''}`, r.drift_flagged ? 'error' : 'success');
+      showToast(
+        `Quality: ${r.quality_score}% ${r.drift_flagged ? '— drift detected' : ''}`,
+        r.drift_flagged ? 'error' : 'success',
+      );
       fetchData();
-      setSelectedDriftService(serviceId);
-    } catch (err) { showToast(err.response?.data?.detail || 'Evaluation failed', 'error'); }
-    finally { setRunningService(null); }
+      setSelectedDriftService(service.id);
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Evaluation failed', 'error');
+    } finally {
+      setRunningService(null);
+    }
   };
 
   if (loading) return (
@@ -181,6 +189,56 @@ export default function EvaluationsPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Run-eval confirmation — shows cost preview + confidential warning
+          in a single modal so the user isn't chained through two native
+          prompts. */}
+      <ConfirmModal
+        isOpen={!!runConfirm}
+        onClose={() => setRunConfirm(null)}
+        onConfirm={confirmRunEval}
+        title={
+          runConfirm?.service?.sensitivity_label === 'confidential'
+            ? 'Run evaluation — confidential service override'
+            : 'Run evaluation — cost preview'
+        }
+        variant={runConfirm?.service?.sensitivity_label === 'confidential' ? 'warning' : 'default'}
+        confirmLabel={
+          runConfirm?.service?.sensitivity_label === 'confidential'
+            ? 'Run with override'
+            : 'Run evaluation'
+        }
+        description={
+          runConfirm?.service?.sensitivity_label === 'confidential'
+            ? `"${runConfirm.service.name}" is labelled confidential. The run will send prompts to an external LLM and the override will be recorded in the audit log.`
+            : `Running ${runConfirm?.preview?.test_cases ?? 0} test cases against "${runConfirm?.service?.name ?? ''}".`
+        }
+        details={
+          runConfirm?.preview && (
+            <div className="rounded-lg bg-surface-elevated border border-hairline p-3 text-[12px] space-y-1">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Test cases</span>
+                <span className="font-mono tabular-nums text-text">{runConfirm.preview.test_cases}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">API calls</span>
+                <span className="font-mono tabular-nums text-text">{runConfirm.preview.api_calls}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Estimated cost</span>
+                <span className="font-mono tabular-nums text-text">
+                  ${runConfirm.preview.estimated_cost_usd.toFixed(4)}
+                  <span className="text-text-subtle"> (~{(runConfirm.preview.estimated_cost_usd * 100).toFixed(2)}¢)</span>
+                </span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-hairline mt-1">
+                <span className="text-text-muted">Daily budget</span>
+                <span className="font-mono tabular-nums text-text-subtle">${runConfirm.preview.daily_budget_usd.toFixed(2)}</span>
+              </div>
+            </div>
+          )
+        }
+      />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import api from '../utils/api';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
+import ReviewerNoteModal from '../components/common/ReviewerNoteModal';
 
 const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] rounded-md text-text placeholder-text-subtle transition-standard';
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
@@ -34,6 +35,10 @@ export default function IncidentDetailPage() {
     risk_level: 'medium', rollback_plan: '', validation_steps: '',
     scheduled_date: '', human_approved: false,
   });
+  // Reviewer-note modal state for incident summary approval. Open =
+  // modal visible; busy = API call in flight.
+  const [reviewerNoteOpen, setReviewerNoteOpen] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   const fetchData = async () => {
     setError(null);
@@ -67,23 +72,22 @@ export default function IncidentDetailPage() {
     }
   };
 
-  const handleApproveSummary = async () => {
-    // Force the reviewer to articulate what they read. The backend also
-    // enforces min length — this dialog is UX, not security.
-    const note = window.prompt(
-      'Reviewer note (required, min 20 chars):\n\n' +
-      'Briefly confirm what you verified — e.g. "Read full draft; root causes match symptoms timeline; no hallucinated claims."'
-    );
-    if (note === null) return;
-    if (note.trim().length < 20) {
-      alert('Reviewer note must be at least 20 non-whitespace characters.');
-      return;
-    }
+  // Approval is a two-step flow:
+  //   1. User clicks "Approve" — we open ReviewerNoteModal
+  //   2. User types a note (≥20 non-whitespace chars enforced client-side
+  //      AND server-side) and submits — we POST with the note
+  const handleApproveSummary = () => setReviewerNoteOpen(true);
+
+  const submitReviewerNote = async (note) => {
+    setApproving(true);
     try {
       await api.post(`/incidents/${id}/approve-summary`, { reviewer_note: note });
+      setReviewerNoteOpen(false);
       fetchData();
     } catch (err) {
       alert('Failed to approve summary: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -350,6 +354,16 @@ export default function IncidentDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Mandatory reviewer-note modal for incident summary approval.
+          Backend enforces ≥20 non-whitespace chars; this UI mirrors that
+          contract with a live character count and inline validation. */}
+      <ReviewerNoteModal
+        isOpen={reviewerNoteOpen}
+        onClose={() => (approving ? null : setReviewerNoteOpen(false))}
+        onSubmit={submitReviewerNote}
+        busy={approving}
+      />
     </div>
   );
 }

@@ -12,7 +12,7 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 | M2: Monitoring Dashboard & Evaluation | Sakir | Dashboard metrics, eval harness, drift detection |
 | M3: Incident Triage & Maintenance Planner | Osele | Incident lifecycle, LLM summaries, maintenance planning |
 | M4: Governance, Security & Compliance | Jeewanjot | Audit logging, compliance reports, user management |
-| Cross-cutting | Shared | Safety scanner, budget enforcement, login throttling, LLM call tracing, alert system, design system |
+| Cross-cutting | Shared | Safety scanner, SSRF guard, sensitivity label enforcement, concurrency-safe budget enforcement, tamper-evident audit chain, shared HITL draft service, login throttling, LLM call tracing, alert system, design system |
 
 ---
 
@@ -35,7 +35,9 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 | `backend/app/main.py` | APScheduler setup, `scheduled_health_check()` function |
 | `backend/app/models/__init__.py` | `AIService`, `ConnectionLog`, `Environment`, `SensitivityLabel` models |
 | `backend/app/services/llm_client.py` | `test_connection()` -- used for LLM-mode connection testing |
-| `frontend/src/pages/ServicesPage.jsx` | Service registry UI with CRUD forms and test connection button |
+| `backend/app/services/url_validator.py` | SSRF guard: blocks metadata service, RFC1918, link-local, non-http schemes on endpoint_url |
+| `backend/app/services/sensitivity.py` | `enforce_sensitivity()` blocks LLM calls for confidential services unless admin overrides |
+| `frontend/src/pages/ServicesPage.jsx` | Service registry UI with CRUD forms, test connection button, confidential override confirm dialog |
 
 ### API Endpoints
 
@@ -56,8 +58,9 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 ### Stretch Goals Achieved
 
 - Dual connection testing modes (HTTP probe + LLM health check)
-- Sensitivity label classification on each service
+- Sensitivity label classification on each service **with enforcement** — confidential services require admin override to reach the LLM; every override audited
 - Automatic health check scheduling (configurable interval)
+- SSRF guard — blocks registration/update/probe/scheduled tick from hitting metadata services, private IPs, or non-http schemes
 
 ---
 
@@ -158,7 +161,7 @@ For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD
 - Manages the full incident lifecycle: open, investigate, resolved, closed
 - Captures troubleshooting checklist (data issue, prompt change, model update, infrastructure, safety/policy)
 - Generates LLM-assisted stakeholder updates and root cause analysis via Claude
-- Enforces human-in-the-loop approval: AI drafts go to `summary_draft`, must be explicitly approved before becoming the official `summary`
+- Enforces human-in-the-loop approval: AI drafts go to `summary_draft`, must be explicitly approved before becoming the official `summary`. Approval requires a `reviewer_note` (≥20 non-whitespace chars) so the reviewer cannot silently rubber-stamp a draft. Double-approval returns 409 — attribution is preserved
 - Creates maintenance plans linked to incidents with rollback procedures and admin approval
 
 ### Key Files
@@ -186,13 +189,13 @@ For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD
 
 ### Database Models
 
-- `Incident` -- severity (low/medium/high/critical), status (open/investigating/resolved/closed), symptoms, checklist booleans, summary_draft, summary (approved), root_causes, approved_by
+- `Incident` -- severity (low/medium/high/critical), status (open/investigating/resolved/closed), symptoms, checklist booleans, summary_draft, summary (approved), root_causes, approved_by, approved_at, reviewer_note (mandatory ≥20 chars)
 - `MaintenancePlan` -- linked to incident, risk_level, rollback_plan, validation_steps, scheduled_date, approved flag
 
 ### Stretch Goals Achieved
 
 - Full troubleshooting checklist integrated into LLM prompt for better root cause analysis
-- Human-in-the-loop approval flow (draft -> review -> publish)
+- Human-in-the-loop approval flow (draft -> review -> publish) with mandatory reviewer note and idempotency guard
 - Maintenance plan approval restricted to admin role
 
 ---
@@ -213,8 +216,11 @@ For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD
 
 | File | Purpose |
 |------|---------|
-| `backend/app/routers/compliance.py` | 5 endpoints: audit log queries, user management, export, AI report |
-| `backend/app/middleware/audit.py` | `log_action()` -- automatic mutation logging to AuditLog |
+| `backend/app/routers/users.py` | User list + role update (admin only) — mounted under `/api/v1/compliance` |
+| `backend/app/routers/audit.py` | Audit log queries + hash-chain integrity verify (admin only) |
+| `backend/app/routers/export.py` | JSON/PDF export with audit + incidents + maintenance, AI compliance report (HITL draft/approve) |
+| `backend/app/services/draft_service.py` | Shared HITL abstraction: `create_draft()` / `approve_draft()` |
+| `backend/app/middleware/audit.py` | `log_action()` with SHA-256 hash chain + `verify_audit_chain()`, serialised under `_AUDIT_LOCK` |
 | `backend/app/middleware/rbac.py` | `require_role()` -- role-based access enforcement |
 | `backend/app/middleware/auth.py` | JWT verification, bcrypt hashing, login throttling |
 | `backend/app/services/llm_client.py` | `generate_compliance_summary()` -- AI governance report |
@@ -226,24 +232,32 @@ For drift detection algorithm details, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/compliance/audit-log` | Query audit logs (date range, action filter, limit) |
+| GET | `/api/v1/compliance/audit-log` | Query audit logs (date range strictly validated, action filter, limit) — admin only |
+| GET | `/api/v1/compliance/audit-log/verify` | Walk the hash chain and report integrity — admin only |
 | GET | `/api/v1/compliance/users` | List all users (admin only) |
 | PUT | `/api/v1/compliance/users/{id}/role` | Update user role (admin only, no self-modification) |
-| POST | `/api/v1/compliance/export` | Export compliance data as JSON or PDF |
-| POST | `/api/v1/compliance/ai-report` | Generate AI compliance report (admin only) |
+| POST | `/api/v1/compliance/export` | Export compliance data as JSON or PDF (includes incidents + maintenance; truncation warnings) |
+| POST | `/api/v1/compliance/ai-report` | Generate AI compliance report draft (admin only) |
+| POST | `/api/v1/compliance/ai-report/{id}/approve` | Approve the AI report draft (admin only) |
+| GET | `/api/v1/compliance/ai-report/recent` | List approved / all drafts (admin only) |
 
 ### Database Models
 
-- `AuditLog` -- immutable log: user_id, action, target_table, target_id, old_value, new_value, timestamp
+- `AuditLog` -- append-only tamper-evident log: user_id, action, target_table, target_id, old_value, new_value, timestamp, `content_hash`, `prev_hash`. SQLite BEFORE UPDATE/DELETE triggers reject mutation
+- `AILlmDraft` -- shared HITL envelope for dashboard insights + compliance reports: surface, content, generated_by_user_id, approved_by_user_id, approved_at
 - `User` -- identity with role enum (admin/maintainer/viewer), bcrypt password hash
-- `LoginAttempt` -- email, timestamp, IP address, success boolean
+- `LoginAttempt` -- email, timestamp, IP address, success boolean. Success/failure/lockout also written to AuditLog
 - `Alert` -- governance-relevant alerting: type, severity, message, service_id, acknowledged. Auto-created on drift; managed via dashboard endpoints (see [Module 2](#module-2-monitoring-dashboard--evaluation))
 
 ### Stretch Goals Achieved
 
-- PDF export using ReportLab with styled table output
-- AI-generated compliance reports with executive summary, findings, risk assessment, recommendations
+- PDF export using ReportLab with styled table output AND explicit truncation warnings in red
+- JSON/PDF export includes audit + incidents + maintenance plans (not just audit records)
+- Strict date parsing on all date-filtered endpoints (400 on malformed, 400 on inverted range) — no silent compliance evidence holes
+- AI-generated compliance reports with HITL draft/approve flow
+- Tamper-evident audit chain (SHA-256 hash chain) with integrity verify endpoint
 - Self-modification prevention on role changes
+- Role-denial events (`role_denied`) written to audit log for forensic review
 
 ---
 
@@ -265,16 +279,51 @@ These features span multiple modules and are not owned by a single team member.
 - Output scanning for PII leakage, toxicity, and model refusal patterns
 - Raises `PromptSafetyError` (HTTP 422) when thresholds exceeded
 
-### API Budget Enforcement
+### API Budget Enforcement (concurrency-safe)
 
 | File | Purpose |
 |------|---------|
-| `backend/app/services/llm_client.py` | `_check_budget()` function |
+| `backend/app/services/llm_client.py` | `_check_budget()` + atomic reservation under `_BUDGET_LOCK` |
 
 - Daily cap: $5.00, monthly cap: $25.00 (tracked via `APIUsageLog`)
 - Per-call cost tracking with token usage logging (input + output)
 - Global rate limit: 10 calls/min, per-user: 5 calls/min
 - Raises `BudgetExceededError` (HTTP 402 for budget, HTTP 429 for rate limits)
+- Lock + reservation pattern prevents N concurrent callers from all racing past the limit. Reservation INSERT happens under the lock; actual API call runs outside so slow requests don't block the pool
+
+### Tamper-evident Audit Chain
+
+| File | Purpose |
+|------|---------|
+| `backend/app/middleware/audit.py` | `log_action()` with SHA-256 hash chain, `verify_audit_chain()`, serialised by `_AUDIT_LOCK` |
+| `backend/app/main.py` | Installs SQLite BEFORE UPDATE/DELETE triggers on `audit_log` at startup |
+| `backend/app/routers/audit.py` | Admin-only `/audit-log/verify` endpoint walks the chain |
+
+- Every audit row commits SHA-256 over row content + previous row's hash
+- Any UPDATE or DELETE on a past row breaks the chain — detectable via verify endpoint
+- DB triggers reject app-path mutation as defence in depth
+- `threading.Lock` around read-compute-insert so concurrent writes produce distinct prev_hashes
+
+### SSRF Guard
+
+| File | Purpose |
+|------|---------|
+| `backend/app/services/url_validator.py` | `validate_outbound_url()` |
+
+- Rejects non-http schemes (file://, gopher://, etc.) and hostnames resolving to loopback, RFC1918, link-local (AWS metadata 169.254.169.254), multicast, reserved
+- Called at service register, update, probe, and the scheduled health-check tick
+- Mixed public/private DNS resolution fails the whole URL (defeats DNS rebinding)
+
+### Shared HITL Draft Service
+
+| File | Purpose |
+|------|---------|
+| `backend/app/services/draft_service.py` | `create_draft()` + `approve_draft()` |
+
+- Any LLM output meant for governance-grade consumption routes through this service
+- Persists as unapproved `AILlmDraft` row; separate approve endpoint sets `approved_by_user_id` + `approved_at`
+- Create AND approve are both audited
+- Used by dashboard insights and compliance AI reports; incident summaries use their own columns on the Incident row (same pattern)
 
 ### Login Throttling
 
@@ -341,12 +390,13 @@ This is the exact path through the application that demonstrates all four module
 | 7 | Check drift severity and trend | EvaluationsPage | `GET /api/v1/evaluations/drift-check/{id}` | M2 |
 | 8 | Create incident from drift alert | IncidentsPage | `POST /api/v1/incidents` | M3 |
 | 9 | Generate AI summary for incident | IncidentDetailPage | `POST /api/v1/incidents/{id}/generate-summary` | M3 |
-| 10 | Review and approve the AI draft | IncidentDetailPage | `POST /api/v1/incidents/{id}/approve-summary` | M3 |
+| 10 | Review and approve the AI draft (with reviewer_note) | IncidentDetailPage | `POST /api/v1/incidents/{id}/approve-summary` | M3 |
 | 11 | Create maintenance plan with rollback | IncidentDetailPage | `POST /api/v1/maintenance` | M3 |
 | 12 | Approve the maintenance plan | IncidentDetailPage | `PUT /api/v1/maintenance/{id}/approve` | M3 |
 | 13 | View audit trail of all actions | GovernancePage | `GET /api/v1/compliance/audit-log` | M4 |
-| 14 | Generate AI compliance report | GovernancePage | `POST /api/v1/compliance/ai-report` | M4 |
-| 15 | Export compliance evidence as JSON/PDF | GovernancePage | `POST /api/v1/compliance/export` | M4 |
+| 14 | Verify audit log integrity (hash-chain walk) | GovernancePage | `GET /api/v1/compliance/audit-log/verify` | M4 |
+| 15 | Generate + approve AI compliance report | GovernancePage | `POST /api/v1/compliance/ai-report` → `POST /ai-report/{id}/approve` | M4 |
+| 16 | Export compliance evidence as JSON/PDF | GovernancePage | `POST /api/v1/compliance/export` | M4 |
 
 ### Flow Summary
 

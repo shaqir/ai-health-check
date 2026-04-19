@@ -26,16 +26,17 @@ All data is synthetic. Stored in `eval_test_cases` table (SQLite). Model: `claud
 Scored by `score_factuality()` in `llm_client.py` (prompt template in [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md)).
 
 - Claude rates factual similarity 0-100 (LLM-as-judge pattern)
-- Response parsed via regex (`\d+`), clamped to 0-100
-- On exception, defaults to 0.0
+- Response parsed via `_parse_judge_score()` using `re.fullmatch` — ONLY a bare integer counts. Refusals like "I cannot rate this" or "7 reasons why not" return `None` rather than being misread as a score (see risk R16)
+- `None` results map to `status="judge_refused"` on the `EvalResult` row and are EXCLUDED from the aggregate quality score — a flaky judge cannot spuriously trip drift
+- On exception, defaults to `None`
 
 ### Hallucination Detection
 
 During factuality eval runs, `detect_hallucination()` in `llm_client.py` is called with the original prompt and the model's response (prompt template in [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md)).
 
 - Claude judges whether the response contains unsupported or fabricated claims, scoring 0-100 (0 = no hallucination, 100 = severe hallucination)
-- Response parsed via regex (`\d+`), clamped to 0-100
-- On exception, defaults to 0.0
+- Response parsed via `_parse_judge_score()` — same strict contract as `score_factuality`. `None` on refusal (NOT 100 — that would invert the signal: "judge refused" is not "severe hallucination")
+- Refused responses are excluded from the hallucination aggregate in the eval run
 - Score stored in `EvalRun.hallucination_score` and displayed in the eval runs table
 
 ### Format (JSON)
@@ -70,7 +71,7 @@ Each eval run stores one `EvalResult` row per test case in the `eval_results` ta
 | response_text | Text | Raw LLM response |
 | score | Float | Individual test score (0-100) |
 | latency_ms | Float | LLM call time in milliseconds |
-| status | String | "success" or "error" (error if response starts with "ERROR:") |
+| status | String | "success", "error" (response starts with "ERROR:"), or "judge_refused" (LLM-as-judge returned non-numeric / refused to rate) |
 | created_at | DateTime | Timestamp of result creation |
 
 The drift-check endpoint aggregates historical `EvalResult` scores per test case across runs to compute per-test trends.
@@ -127,7 +128,8 @@ Population variance: `sum((score - mean)^2) / count`, rounded to 2 decimal place
 ## 5. Limitations
 
 - Small dataset (2 test cases per service) -- sufficient for demonstration, not production-grade
-- Factuality scoring uses LLM-as-judge (Claude evaluating its own output), which may have blind spots
+- Factuality scoring uses LLM-as-judge (Claude evaluating its own output), which may have blind spots. Judge refusals are handled gracefully (`judge_refused` status, excluded from aggregate) rather than silently corrupting the score
 - JSON format checks use `json.loads()` only -- no schema or key validation
 - All test cases are English-only
 - Variance and trend require multiple runs to be meaningful (confidence "low" with <3 runs)
+- When confidential services are evaluated, admin must pass `allow_confidential=true` on the eval run request; the override is recorded in the audit log

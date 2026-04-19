@@ -56,7 +56,7 @@ Every time the app talks to the AI model, it goes through this pipeline:
 | Backend | FastAPI, Python 3.11+, SQLAlchemy |
 | Database | SQLite |
 | LLM | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) |
-| Testing | Pytest (45 tests) |
+| Testing | Pytest (123 tests, ~71% coverage) |
 
 ## Quick Start
 
@@ -99,13 +99,15 @@ For a detailed module-by-module breakdown with files, endpoints, and demo flow, 
 ai-health-check/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI app entry point
+│   │   ├── main.py              # FastAPI app entry point + append-only audit-log triggers
 │   │   ├── config.py            # 22 settings via .env
-│   │   ├── models/              # 13 database models
-│   │   ├── routers/             # 7 routers, 47 API endpoints
-│   │   ├── services/            # llm_client.py + safety.py
-│   │   └── middleware/          # auth, rbac, audit
-│   └── tests/                   # 45 tests across 5 files
+│   │   ├── database.py          # SQLAlchemy engine + SQLite FK enforcement
+│   │   ├── models/              # 14 database models (incl. AILlmDraft for HITL)
+│   │   ├── routers/             # 9 routers (auth, services, evaluations, incidents,
+│   │   │                        #             maintenance, dashboard, users, audit, export)
+│   │   ├── services/            # llm_client, safety, url_validator, sensitivity, draft_service
+│   │   └── middleware/          # auth, rbac (audits denials), audit (hash-chain)
+│   └── tests/                   # 123 tests across 13 files
 ├── frontend/src/
 │   ├── pages/                   # 9 pages
 │   ├── components/              # 13 shared + 3 eval components
@@ -115,19 +117,39 @@ ai-health-check/
 
 ## Key Features Beyond Requirements
 
-- Prompt safety scanner with injection detection and PII filtering
-- API budget enforcement with daily/monthly caps and per-call cost tracking
-- Per-user and global rate limiting
-- Advanced drift detection with severity levels, trend analysis, and per-test tracking
+### Safety & guardrails
+- Prompt safety scanner with 15 injection patterns, PII detection, toxicity checks, length limits
+- LLM-as-judge hallucination detection (0-100), strict parser rejects judge refusals (no more "404 Not Found" → 100)
+- Sensitivity labels have teeth: confidential services require admin override + audit trail to reach the LLM
+- SSRF guard on every outbound URL (register, update, probe, scheduled tick) blocks metadata services and private IPs
 - Retry with exponential backoff for transient API failures
+
+### Cost & rate controls
+- API budget enforcement with daily/monthly caps and per-call cost tracking
+- Per-user and global rate limiting with **concurrency-safe reservation** (lock + atomic INSERT — no race bypass)
+- Cost analytics by service
+
+### Human-in-the-loop
+- Incident summaries + maintenance plans require explicit human approval
+- Mandatory `reviewer_note` (≥20 chars) on incident approval — no silent rubber-stamping
+- Dashboard insights + compliance AI reports use shared draft/approve abstraction (`AILlmDraft`)
+- Idempotent approvals (double-approve returns 409, attribution preserved)
+
+### Audit & compliance
+- **Tamper-evident audit log**: SHA-256 hash chain + SQLite append-only triggers + admin-only integrity verify
+- Every RBAC 403 denial is itself audited as `role_denied` for forensic review
+- Login success/failure/lockout mirrored from `login_attempts` to `audit_log`
+- Compliance export includes audit + incidents + maintenance plans (JSON + PDF)
+- Strict date parsing — malformed `from_date` returns 400 instead of silently dropping the filter
+- Truncation warnings surfaced when exports exceed row cap (10,000 per section)
+
+### Monitoring
+- Advanced drift detection with severity levels, trend analysis, per-test tracking
 - Login throttling (lockout after 5 failed attempts)
-- Hallucination detection (LLM-as-judge scoring 0-100)
 - LLM call tracing with prompt/response storage
 - Alert system with acknowledge workflow
-- Toxicity and content policy checks
-- Cost analytics by service
-- Dark/light theme with accessible design tokens (WCAG 2.2 AA)
 - Command palette (Cmd+K) with keyboard navigation
+- Dark/light theme with accessible design tokens (WCAG 2.2 AA)
 
 ## Documentation
 
@@ -136,11 +158,11 @@ ai-health-check/
 | [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
-| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 45 tests: what they cover and how to run them |
-| [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm |
-| [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates and model history |
-| [RISK_REGISTER](docs/RISK_REGISTER.md) | 8 risks with mitigations |
-| [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 9 operational scenarios |
+| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 123 tests across 13 files with coverage floor, what they cover, how to run |
+| [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm, judge-refused handling |
+| [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
+| [RISK_REGISTER](docs/RISK_REGISTER.md) | 17 risks with mitigations and residuals |
+| [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 15 operational scenarios (incl. audit integrity, SSRF, confidential override, judge refusals) |
 | [ROADMAP](docs/ROADMAP.md) | Sprint timeline and module ownership |
 
 ---

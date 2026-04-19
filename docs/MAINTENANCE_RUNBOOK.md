@@ -112,12 +112,86 @@
 
 ---
 
+### S10: Audit Log Integrity Failure
+
+**Trigger:** `GET /compliance/audit-log/verify` returns `{"valid": false, "broken_at": <id>, "reason": ...}`, surfaced in the Governance page's "Audit log integrity" card.
+
+**Check:** Note the `broken_at` id and `reason` (`prev_hash mismatch` = a prior row was modified/deleted; `content_hash mismatch` = this row was edited) | Inspect the row via `SELECT * FROM audit_log WHERE id = <broken_at>` | Check for recent direct DB access (file copies, backups restored) | Review server access logs around the timestamp.
+
+**Fix:** Treat as a P0 security incident | Preserve the DB file immediately | Create incident with severity critical documenting `broken_at` and `reason` | Rotate all admin credentials and API keys | Compare `content_hash` and `prev_hash` columns against backups to identify altered rows | Do NOT modify audit_log further until forensics is complete.
+
+**Prevent:** SQLite BEFORE UPDATE/DELETE triggers block app-path mutation; the hash chain detects direct DB-level tamper. Production deploys should use a WORM-enforced audit store (e.g. Postgres with row-level permissions + append-only policy).
+
+---
+
+### S11: SSRF Attempt Detected
+
+**Trigger:** Service create/update returns 400 with detail `Unsafe endpoint URL: ...` | `scheduled_health_check` logs a `blocked: ...` ConnectionLog entry.
+
+**Check:** Review audit log for the user who attempted the registration | Note the URL pattern (metadata service, loopback, RFC1918) | Check whether the user account shows other suspicious activity.
+
+**Fix (true positive):** Create incident with severity critical; treat as attempted data exfiltration | Disable the user account (set `is_active=false` via `/users/{id}/role` after demoting) | Review all services the user previously registered for hidden endpoints | Rotate any credentials accessible at the targeted internal address. **Fix (false positive):** If a legitimate internal service must be reached, document the exception and use a dedicated proxy with allow-list routing rather than weakening the validator.
+
+**Prevent:** `app/services/url_validator.py` enforces the guard at registration, update, probe, and the scheduled tick. Never weaken the validator; add allow-list hostnames if needed.
+
+---
+
+### S12: Confidential LLM Override Granted
+
+**Trigger:** Audit log shows `confidential_llm_override` action | Frequency of overrides rising above expected baseline.
+
+**Check:** Review the `new_value` field for which admin performed the override and on which service | Confirm the service's sensitivity label is correct (a mislabelled `internal` service should not be `confidential`) | Verify the admin had legitimate need.
+
+**Fix (legitimate):** Document the business justification in the Incident or Maintenance plan that required the override | If overrides are becoming routine, reconsider whether the service should be reclassified. **Fix (suspicious):** Create incident with severity high | Review the prompt content + response via `GET /dashboard/api-calls/{id}` | Escalate to data governance.
+
+**Prevent:** Overrides require admin role AND explicit `allow_confidential=true` flag; the frontend shows a confirm dialog. Consider a four-eyes approval flow if override frequency grows.
+
+---
+
+### S13: Budget Race / Concurrent Bypass Attempt
+
+**Trigger:** Daily or monthly cost spikes unexpectedly despite the rate-limit appearing to hold; `api_usage_log` shows >N calls per user in a single minute where N > `api_max_calls_per_user_per_minute`.
+
+**Check:** Query for recent bursts: `SELECT user_id, COUNT(*) FROM api_usage_log WHERE timestamp > datetime('now','-1 hour') GROUP BY user_id, strftime('%Y-%m-%d %H:%M', timestamp) HAVING COUNT(*) > 5` | Verify `_BUDGET_LOCK` is actually held (single-process deployment) | Inspect the reservation rows (`status='reserved'` that never transitioned to success/error) for signs of the lock mechanism misfiring.
+
+**Fix:** If running multi-worker (Gunicorn with >1 worker, uvicorn with --workers >1), the process-local lock is insufficient — migrate to Redis INCR+TTL or Postgres `SELECT FOR UPDATE`. Document this limitation in your deployment runbook | Temporarily lower `api_max_calls_per_minute` while investigating | If the user is an attacker, rotate their credentials and review their past activity.
+
+**Prevent:** Single-process deployments are safe under the `threading.Lock`. Multi-worker requires a shared lock primitive — flagged in `llm_client.py` comments.
+
+---
+
+### S14: Judge Refusal Spike
+
+**Trigger:** `EvalRun.results` shows a growing proportion of `status="judge_refused"` rows, or drift alerts fire less frequently than expected despite visible quality issues.
+
+**Check:** Review the prompt template for `score_factuality` and `detect_hallucination` in [PROMPT_CHANGE_LOG.md](PROMPT_CHANGE_LOG.md) | Check Anthropic's policy updates (new refusal categories) | Inspect a sample of refused responses via `GET /dashboard/api-calls/{id}` to understand what Claude is refusing.
+
+**Fix:** If the prompts are now mis-categorised by Claude (e.g. a benign test case triggers a safety refusal), rephrase the test case | If the judge prompt itself is being refused (unlikely — it's a rating task), prepend context explaining the evaluation purpose | If Anthropic has changed behaviour broadly, note the date in `PROMPT_CHANGE_LOG.md` and consider using a different model for the judge.
+
+**Prevent:** `_parse_judge_score()` returns `None` on refusal rather than misreading a number out of a refusal text. The eval harness excludes refused results from the aggregate quality score, so drift is not falsely triggered — but repeated refusals mean the quality signal is weaker.
+
+---
+
+### S15: Export Truncation Warning
+
+**Trigger:** Compliance export JSON includes entries in the `warnings` array, or the PDF renders a red "WARNING" paragraph under the header.
+
+**Check:** Read the warning text — it states which section truncated and the total row count in the date range.
+
+**Fix:** Narrow the date range until `audit_total_in_range` / `incidents_total_in_range` / `maintenance_total_in_range` is at or below `row_limit_per_section` (10000) | Export multiple sub-ranges and archive them together | If the compliance engagement genuinely requires all rows in one export, raise `EXPORT_ROW_LIMIT` in `app/routers/export.py` but be aware of memory / PDF render cost.
+
+**Prevent:** Truncation is always loudly surfaced — never silent. The 500-row silent cap that used to hide this is gone.
+
+---
+
 ## Maintenance Schedule
 
 | Frequency | Task |
 |-----------|------|
 | Configurable (default 60 min) | Automated evaluation harness via APScheduler |
-| Recurring via APScheduler | Health check all services |
-| Weekly | Review audit log, api_usage_log costs, and api-safety metrics |
+| Recurring via APScheduler | Health check all services (SSRF guard enforced each tick) |
 | Daily | Check budget utilization vs limits |
-| Monthly | Export compliance evidence |
+| Weekly | Review audit log, api_usage_log costs, api-safety metrics, and `confidential_llm_override` / `role_denied` events |
+| Weekly | Run audit log integrity verify (`/compliance/audit-log/verify`) — expect `valid: true` |
+| Monthly | Export compliance evidence (check for truncation warnings) |
+| Monthly | Review `judge_refused` rate and update judge prompts if Anthropic's refusal behaviour has shifted |

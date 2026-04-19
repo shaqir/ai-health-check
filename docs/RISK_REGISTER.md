@@ -16,6 +16,11 @@
 | R10 | Confidential Data Leakage via LLM | Medium | Critical | Implemented |
 | R11 | Unapproved LLM Output Treated as Official | Medium | High | Implemented |
 | R12 | Privileged Data Read by Viewer Role | Medium | High | Implemented |
+| R13 | SSRF via Service endpoint_url | Medium | Critical | Implemented |
+| R14 | Budget / Rate Limit Bypass via Concurrency | Medium | High | Implemented |
+| R15 | Compliance Evidence Silently Incomplete | Medium | Critical | Implemented |
+| R16 | LLM Judge Refusal Misread as Score | Medium | Medium | Implemented |
+| R17 | Rubber-Stamp Approval of LLM Drafts | Medium | High | Implemented |
 
 ---
 
@@ -168,3 +173,66 @@ Viewer token can query governance-grade endpoints intended for admins.
 - Frontend conditionally omits the audit-log fetch for non-admins to avoid misleading "failed to load" errors.
 
 Residual: Generic list endpoints (e.g. `/services`, `/incidents`) are authenticated but not role-scoped by design — any logged-in user can read operational state. This is consistent with the spec's Viewer = "read-only" role.
+
+---
+
+### R13: SSRF via Service endpoint_url
+
+A user registers a service with an `endpoint_url` pointing at an internal address (AWS metadata service, loopback, RFC1918, link-local) and exfiltrates data via `Ping` or the scheduled health check's `response_snippet`.
+
+- `app/services/url_validator.py::validate_outbound_url()` rejects non-http(s) schemes and any hostname that resolves to a loopback, RFC1918, link-local (169.254.0.0/16 includes AWS/GCP metadata), carrier-grade NAT, multicast, or reserved range — IPv4 and IPv6.
+- Validation runs at service registration (POST /services), on update (PUT /services/{id}), at probe time (POST /services/{id}/test-connection) to close the DNS-rebinding window, and in the APScheduler `scheduled_health_check()` tick.
+- DNS resolution checks ALL returned addresses; any blocked address fails the whole URL — defeats records that mix public and private IPs.
+
+Residual: A public hostname that an attacker controls could still be used to exfiltrate information stored in the tenant's service registry (the endpoint_url itself). Lower severity since registration is admin/maintainer-gated.
+
+---
+
+### R14: Budget / Rate Limit Bypass via Concurrency
+
+Concurrent callers race past `_check_budget()` — all observe the count below the limit simultaneously and all proceed, collectively exceeding daily budget and per-minute rate limits.
+
+- `app/services/llm_client.py::_make_api_call()` holds `_BUDGET_LOCK` around the check AND an atomic reservation INSERT into `api_usage_log` with `status="reserved"` and a worst-case cost estimate. Subsequent callers observe the reservation row and back off.
+- The actual Anthropic API call happens OUTSIDE the lock so slow calls don't block other evaluators.
+- `_finalize_reservation()` updates the reserved row with real tokens/cost/status (success, error_timeout, error_rate_limit, etc.) when the API call returns.
+
+Residual: Single-process lock only — multi-worker deployments would need Redis INCR+TTL or a DB-native advisory lock. Documented inline in `llm_client.py`.
+
+---
+
+### R15: Compliance Evidence Silently Incomplete
+
+Two failure modes could produce audit-ready exports that looked correct but were missing data — a regulator then audits evidence that misrepresents the compliance window:
+
+1. Malformed date on `/compliance/export` was silently swallowed — a typo in `from_date` returned the entire history.
+2. Row cap of 500 per section was invisible — exports from multi-month windows silently dropped older rows.
+
+- `app/routers/export.py::_parse_date_or_400()` raises HTTP 400 on malformed dates; also rejects inverted ranges (`from_date > to_date`). Same guard on `/compliance/audit-log` listing and `/compliance/ai-report`.
+- `EXPORT_ROW_LIMIT` raised to 10000 per section.
+- Every export returns `audit_total_in_range`, `incidents_total_in_range`, `maintenance_total_in_range`, and a `warnings` array whenever truncation occurred. PDF exports render warnings in red under the header.
+
+Residual: 10000-row cap is still finite. Windows spanning years of high-activity production may hit it; warnings make this explicit and recommend narrowing the range.
+
+---
+
+### R16: LLM Judge Refusal Misread as Score
+
+`score_factuality()` and `detect_hallucination()` used `re.search(r"\d+", text)` which matched any digit anywhere in the response. A Claude refusal like "I cannot rate this. 404 Not Found" parsed as 404 → clamped to 100 → "severe hallucination" alert on a refusal. "I can give you 7 reasons why not" parsed as 7 → factuality 7% → false drift.
+
+- `app/services/llm_client.py::_parse_judge_score()` uses `re.fullmatch` — ONLY a bare integer (optionally whitespace or trailing decimals) counts as a score.
+- Both judge functions now return `Optional[float]` — `None` when the judge refuses or returns non-numeric content.
+- The eval harness flags such results as `status="judge_refused"` and EXCLUDES them from the aggregate quality score, so a flaky judge cannot spuriously trip drift on an otherwise-healthy service.
+
+Residual: A consistently refusing judge would produce evals where most rows have no score. The aggregate quality stays stable, but the drift detector has less signal. Operators investigating repeated `judge_refused` should check the prompt or Claude's policy updates.
+
+---
+
+### R17: Rubber-Stamp Approval of LLM Drafts
+
+A maintainer with a malicious agenda writes incident symptoms containing a prompt-injection payload. `generate_summary` produces a plausible-looking draft that contains fabricated claims. Admin skims, clicks Approve, and the fabricated content becomes the official incident record.
+
+- `Incident.reviewer_note` column added. Approve endpoint requires a pydantic-validated note of at least 20 non-whitespace chars. Whitespace-only inputs are rejected at the router layer after `.strip()`.
+- Double-approval returns HTTP 409 so attribution (`approved_by`, `approved_at`) is never silently overwritten by a racing admin.
+- Frontend `IncidentDetailPage.handleApproveSummary` prompts for the note; backend rejects short notes even if the frontend is bypassed.
+
+Residual: A determined admin who writes "looks fine lgtm approved moving on" passes the length check. The note's existence is a deterrent and an audit artifact, not a guarantee of careful review. Four-eyes approval (requires a second admin) would be the next step; tracked as a P2 item.

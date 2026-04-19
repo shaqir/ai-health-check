@@ -44,32 +44,45 @@ FastAPI Backend (7 routers, 47 endpoints)
 | `database.py` | SQLAlchemy engine + session factory targeting `sqlite:///./aiops.db` |
 | `seed.py` | Creates default users (admin, maintainer, viewer) and sample services |
 
-### Routers (7 routers, 47 endpoints)
+### Routers (9 routers, all `/api/v1/*`)
 
-| Router | Prefix | Endpoints | Responsibility |
-|--------|--------|-----------|----------------|
-| `auth.py` | `/api/v1/auth` | 3 | Login, registration, current user info |
-| `services.py` | `/api/v1/services` | 6 | Service registry CRUD, connection testing (HTTP + LLM modes) |
-| `evaluations.py` | `/api/v1/evaluations` | 10 | Test case CRUD, eval run execution, cost preview, drift check, drift trend |
-| `incidents.py` | `/api/v1/incidents` | 4 | Incident CRUD, LLM summary generation, human-in-the-loop approval |
-| `maintenance.py` | `/api/v1/maintenance` | 3 | Maintenance plan CRUD, admin approval |
-| `dashboard.py` | `/api/v1/dashboard` | 16 | Metrics, latency/quality/error trends, drift alerts, AI summary, API usage, performance, safety stats, LLM call traces, cost-by-service, alerts |
-| `compliance.py` | `/api/v1/compliance` | 5 | Audit log queries, user management, JSON/PDF export, AI compliance report |
+Compliance was split into three cohesive files mounted under the same
+`/api/v1/compliance` prefix so frontend paths are unchanged.
+
+| Router | Prefix | Responsibility |
+|--------|--------|----------------|
+| `auth.py` | `/api/v1/auth` | Login (audited to AuditLog), registration, current user info, login throttling + lockout |
+| `services.py` | `/api/v1/services` | Service registry CRUD with SSRF-validated endpoint URLs, HTTP + LLM connection testing, confidential sensitivity override |
+| `evaluations.py` | `/api/v1/evaluations` | Test case CRUD, eval run execution, cost preview, drift check, drift trend; auto-creates Alerts on drift with audit trail |
+| `incidents.py` | `/api/v1/incidents` | Incident CRUD, LLM summary generation, approval with mandatory reviewer_note + idempotency guard |
+| `maintenance.py` | `/api/v1/maintenance` | Maintenance plan CRUD, admin approval |
+| `dashboard.py` | `/api/v1/dashboard` | Metrics, latency/quality/error trends, drift alerts, AI summary (HITL draft/approve), API usage, performance, safety stats, LLM call traces, cost-by-service, alerts |
+| `users.py` | `/api/v1/compliance` | User list + role update (admin only, self-modification blocked) |
+| `audit.py` | `/api/v1/compliance` | Audit log queries with strict date validation + hash-chain integrity verify endpoint (admin only) |
+| `export.py` | `/api/v1/compliance` | JSON/PDF export with audit + incidents + maintenance, AI compliance report HITL draft/approve |
 
 ### Middleware (3 modules)
 
 | Module | Purpose |
 |--------|---------|
 | `auth.py` | JWT verification (HS256), bcrypt password hashing, login throttling |
-| `rbac.py` | Role-based access control via `Depends()`: admin, maintainer, viewer |
-| `audit.py` | Automatic logging of POST/PUT/DELETE to `AuditLog` with user attribution |
+| `rbac.py` | Role-based access control via `Depends()`: admin, maintainer, viewer. 403 denials are themselves written to the audit log as `role_denied` events so probing is traceable |
+| `audit.py` | Tamper-evident append-only audit trail. Every `log_action()` call computes SHA-256 over row content + previous hash (hash chain). Serialised by a process-wide `threading.Lock` so concurrent writes produce distinct prev_hashes. `verify_audit_chain()` walks the chain |
 
-### Services (2 modules)
+### Services (5 modules)
 
 | Module | Purpose |
 |--------|---------|
-| `llm_client.py` | 7 Claude functions routed through `_make_api_call` pipeline |
+| `llm_client.py` | Public Claude functions routed through `_make_api_call`. Atomic budget/rate-limit check + reservation under `_BUDGET_LOCK`; actual API call outside the lock. Judge-score parser (`_parse_judge_score`) uses `re.fullmatch` to reject refusals |
 | `safety.py` | Prompt scanner: 15 injection patterns, PII detection, toxicity checks (violence, bias, illegal content), length limits, risk scoring |
+| `url_validator.py` | SSRF guard: rejects non-http schemes and hostnames that resolve to loopback / RFC1918 / link-local (including AWS metadata 169.254.169.254) / multicast / reserved. Called at service register, update, probe, and scheduled health check |
+| `sensitivity.py` | `enforce_sensitivity()` gates LLM access on services labelled `confidential`. Non-admins blocked; admins require explicit `allow_confidential=true` override. Every attempt (allowed or denied) is audited |
+| `draft_service.py` | Shared HITL abstraction: `create_draft()` persists LLM output as unapproved `AILlmDraft`; `approve_draft()` sets `approved_by_user_id`/`approved_at` and audits. Used by dashboard insight and compliance AI report |
+
+### Database engine (`database.py`)
+
+- SQLite connection event listener installs `PRAGMA foreign_keys=ON` on every connection, so `ForeignKey` declarations actually reject dangling references (SQLite defaults to FK off).
+- `main.py` startup installs SQLite `BEFORE UPDATE` and `BEFORE DELETE` triggers on `audit_log` so the append-only guarantee is enforced at the DB layer in addition to the hash chain.
 
 ## 4. LLM Client Pipeline
 
@@ -78,12 +91,16 @@ All Anthropic API calls are centralized in `llm_client.py`. The 7 public functio
 ### `_make_api_call` Flow (6 stages)
 
 ```
-[1] Input Safety Scan   -> scan_input() from safety.py. Raises PromptSafetyError (422) if risk >= 80.
-[2] Budget Check         -> _check_budget() queries APIUsageLog. Raises BudgetExceededError (402).
-[3] Rate Limit Check     -> Same function. Global 10/min, per-user 5/min. Raises HTTP 429.
-[4] API Call with Retry  -> client.messages.create() with exponential backoff. 2 retries for timeouts/429s/5xx.
-[5] Output Safety Scan   -> scan_output() checks response for PII leakage and refusal patterns.
-[6] Usage Logging        -> Token counts + estimated cost written to APIUsageLog.
+[1] Input Safety Scan        -> scan_input() from safety.py. Raises PromptSafetyError (422) if risk >= 80.
+[2] Atomic check + reserve   -> _check_budget() AND a reservation INSERT into APIUsageLog (status='reserved',
+                                worst-case cost) happen under _BUDGET_LOCK so concurrent callers cannot all
+                                race past the limit. Raises BudgetExceededError (402/429) on over-limit.
+[3] API Call with Retry      -> client.messages.create() with exponential backoff. Lock released before
+                                the call so slow requests don't block other evaluators. 2 retries.
+[4] Output Safety Scan       -> scan_output() checks response for PII leakage and refusal patterns.
+[5] Finalize reservation     -> Update the reserved row with real tokens, cost, latency, status
+                                (success | error_timeout | error_rate_limit | error_server | error_auth |
+                                 error_bad_request | error_unknown).
 ```
 
 ### LLM Function Signatures
@@ -92,33 +109,34 @@ All Anthropic API calls are centralized in `llm_client.py`. The 7 public functio
 |----------|--------------|--------|------------|---------|
 | `test_connection(prompt, model)` | `test_connection` | M1 | 50 | Verify API connectivity and latency |
 | `run_eval_prompt(prompt, system_context)` | `run_eval_prompt` | M2 | 1024 | Execute eval test case, return raw response |
-| `score_factuality(expected, actual)` | `score_factuality` | M2 | 10 | Rate factual similarity 0-100 (LLM-as-judge) |
+| `score_factuality(expected, actual)` | `score_factuality` | M2 | 10 | Rate factual similarity 0-100 (LLM-as-judge). Returns `None` if Claude refuses or returns non-numeric content so callers distinguish "judge refused" from "scored 0" |
 | `generate_summary(service_name, severity, symptoms, checklist)` | `generate_summary` | M3 | 1024 | Draft stakeholder update + root causes |
 | `generate_dashboard_insight(metrics)` | `generate_dashboard_insight` | M2 | 1024 | Summarize platform health + action items |
 | `generate_compliance_summary(audit_data, incidents_data, drift_data)` | `generate_compliance_summary` | M4 | 1024 | Generate governance compliance report |
-| `detect_hallucination(expected, actual)` | `detect_hallucination` | M2 | 10 | LLM-as-judge hallucination score 0-100, runs on factuality eval cases |
+| `detect_hallucination(expected, actual)` | `detect_hallucination` | M2 | 10 | LLM-as-judge hallucination score 0-100, runs on factuality eval cases. Returns `None` on judge refusal — never misread as 100 (severe hallucination) |
 
 Full prompt templates are documented in [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md).
 
-## 5. Database Models (13 models)
+## 5. Database Models (14 models)
 
 This is the canonical model inventory. All models are defined in `backend/app/models/__init__.py`.
 
 | Model | Table | Purpose |
 |-------|-------|---------|
 | `User` | `users` | Identity, RBAC role enum (admin/maintainer/viewer), bcrypt-hashed password |
-| `AIService` | `ai_services` | Service registry: endpoint URLs, owner, model tags, environment, sensitivity label |
+| `AIService` | `ai_services` | Service registry: endpoint URLs (SSRF-validated), owner, model tags, environment, sensitivity label |
 | `ConnectionLog` | `connection_logs` | Health check history per service: latency, status, response snippet |
 | `EvalTestCase` | `eval_test_cases` | Evaluation dataset: input prompts, expected outputs, categories |
 | `EvalRun` | `eval_runs` | Evaluation execution records: aggregate scores, drift status, run type |
 | `EvalResult` | `eval_results` | Per-test-case results: individual scores, variance, latency, drift tracking |
-| `Incident` | `incidents` | Incident records: severity, status, symptoms, checklist, LLM summary draft/approved |
+| `Incident` | `incidents` | Incident records: severity, status, symptoms, checklist, LLM summary draft/approved, `reviewer_note` (required on approve), `approved_at` timestamp |
 | `MaintenancePlan` | `maintenance_plans` | Maintenance actions: rollback plan, validation steps, approval status |
-| `AuditLog` | `audit_logs` | Immutable compliance trail: all POST/PUT/DELETE with user attribution |
+| `AuditLog` | `audit_log` | Append-only tamper-evident compliance trail. Every row carries `content_hash` (SHA-256 over content + `prev_hash`) — any UPDATE/DELETE breaks the chain and is detectable via `/compliance/audit-log/verify`. SQLite triggers reject app-path mutation |
 | `Telemetry` | `telemetry` | Service performance telemetry: metric name, value, timestamp |
-| `APIUsageLog` | `api_usage_logs` | LLM cost tracking: tokens, cost, latency, status, safety flags, risk score. Includes `service_id` (FK to AIService), `prompt_text`, and `response_text` (2000 char max) for call tracing |
-| `LoginAttempt` | `login_attempts` | Failed login tracking: email, timestamp, IP address, used for throttling |
-| `Alert` | `alerts` | Alert system: type, severity, message, service_id (FK to AIService), acknowledged flag. Auto-created on drift detection. Supports acknowledge workflow |
+| `APIUsageLog` | `api_usage_log` | LLM cost tracking: tokens, cost, latency, status (success / reserved / error_timeout / error_rate_limit / error_server / ...), safety flags, risk score. `service_id` FK, `prompt_text`, `response_text` (2000 char max) for call tracing. Used both for billing and for the atomic reservation pattern that prevents budget-race bypass |
+| `LoginAttempt` | `login_attempts` | Failed login tracking: email, timestamp, IP address, used for throttling. Success/failure/lockout also mirrored to `audit_log` |
+| `Alert` | `alerts` | Alert system: type, severity, message, service_id (FK to AIService), acknowledged flag. Auto-created on drift detection with audit trail |
+| `AILlmDraft` | `ai_llm_drafts` | Shared HITL envelope for LLM outputs. Covers `dashboard_insight` and `compliance_report` surfaces (incident summaries use their own columns on the Incident row). Unapproved until `approved_by_user_id` is set |
 
 ## 6. Frontend
 
@@ -191,31 +209,60 @@ All pages implement loading, empty, and error states.
 
 - JWT tokens signed with HS256, expiration configurable via `access_token_expire_minutes` (default: 480)
 - Passwords hashed with bcrypt before storage
+- Every login success, failure, and lockout is recorded in both `login_attempts` (for throttle math) and `audit_log` (for governance review)
 
 ### RBAC
 
 | Role | Access |
 |------|--------|
-| `admin` | Full read-write on all resources, user management |
-| `maintainer` | Read-write on services, incidents, evaluations, maintenance |
-| `viewer` | Read-only |
+| `admin` | Full read-write on all resources, user management, audit log read + integrity verify, AI compliance report, confidential LLM override |
+| `maintainer` | Read-write on services, incidents, evaluations, maintenance; cannot read audit log or user roster |
+| `viewer` | Read-only on operational data; cannot read audit log |
+
+Every 403 denial is itself written to `audit_log` as a `role_denied` event with the target role requirement, so probing attempts surface during compliance review.
+
+### Audit log integrity (tamper-evident)
+
+- SHA-256 hash chain: each row commits to its content + the previous row's hash. `/compliance/audit-log/verify` (admin) walks the chain and returns `{total, valid, broken_at, reason}`.
+- SQLite `BEFORE UPDATE` and `BEFORE DELETE` triggers on `audit_log` reject application-path mutations.
+- A `threading.Lock` in `middleware/audit.py::log_action()` serialises concurrent writes so two callers cannot link to the same `prev_hash`.
+
+### SSRF protection
+
+- `services/url_validator.py` rejects non-http(s) schemes and any hostname that resolves to loopback, RFC1918, link-local (including AWS metadata `169.254.169.254`), multicast, or reserved ranges.
+- Validated at register, update, probe, and scheduled health check — closes DNS-rebinding windows.
+
+### Sensitivity label enforcement
+
+- Services labelled `confidential` cannot reach the LLM unless the caller passes `allow_confidential=true` AND is an admin. Every attempt (allowed override or denied block) is audited.
 
 ### Login Throttling
 
-- Failed logins recorded in `LoginAttempt` with email, timestamp, IP address
-- 5 failed attempts within 15 minutes triggers temporary account lockout
+- Failed logins recorded in `LoginAttempt` with email, timestamp, IP address.
+- 5 failed attempts within 15 minutes triggers temporary account lockout; the lockout event itself is audited.
 
 ### Input Validation
 
-- `max_length` constraints on user-supplied text fields
-- All LLM-bound text passes through the safety scanner
-- Pydantic models enforce type constraints and required fields on all endpoints
+- `max_length` constraints on user-supplied text fields.
+- All LLM-bound text passes through the safety scanner.
+- Pydantic models enforce type constraints and required fields on all endpoints.
+- Compliance export dates are parsed strictly — malformed `from_date` / `to_date` returns HTTP 400 instead of silently dropping the filter.
+
+### Human-in-the-loop on LLM output
+
+- Incident summaries: written to `summary_draft`. Published to `summary` only via explicit approval that requires a mandatory `reviewer_note` (≥20 non-whitespace chars). Double-approval returns 409.
+- Dashboard insights + compliance AI reports: persisted as `AILlmDraft` rows; separate approve endpoint sets `approved_by_user_id`.
+- Compliance export includes only approved summaries — drafts never appear in the official record.
+
+### Budget / rate limit under concurrency
+
+- `_make_api_call()` holds `_BUDGET_LOCK` across the limit check AND a reservation INSERT. Concurrent callers cannot all race past the same pre-reserved count. The actual API call happens outside the lock so slow requests don't block the pool.
 
 ### Retry with Exponential Backoff
 
-- 2 retries for transient Anthropic errors (timeouts, 429, 5xx)
-- Backoff formula: `2^attempt + random(0, 0.5)` seconds
-- Non-retryable errors (AuthenticationError, BadRequestError) fail immediately
+- 2 retries for transient Anthropic errors (timeouts, 429, 5xx).
+- Backoff formula: `2^attempt + random(0, 0.5)` seconds.
+- Non-retryable errors (AuthenticationError, BadRequestError) fail immediately.
 
 ## 8. Configuration Reference (22 settings)
 

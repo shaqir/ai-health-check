@@ -10,6 +10,7 @@
 |------|--------|--------|
 | 2026-03-18 | Initial: `claude-sonnet-4-20250514` (Sonnet 4), `anthropic>=0.39.0` | Project launch |
 | 2026-04-12 | Upgrade: `claude-sonnet-4-6-20250415` (Sonnet 4.6), `anthropic>=0.49.0` | Improved reasoning and instruction following; no prompt changes required |
+| 2026-04-18 | Judge parser strict mode: `score_factuality()` and `detect_hallucination()` now require `re.fullmatch` on a bare integer and return `None` on refusal | Hostile QA found the old `re.search(r"\d+", text)` misread refusals ("I cannot rate this. 404 Not Found" → 404 → clamp 100 → severe hallucination; "I can give you 7 reasons" → factuality 7% → false drift). No prompt text changed; parsing contract changed. |
 
 ---
 
@@ -59,7 +60,7 @@ Actual output:
 Respond with ONLY a single integer from 0 to 100. No other text.
 ```
 
-Output: Parsed via regex (`\d+`), clamped `min(max(score, 0), 100)`. Defaults to 0.0 on exception.
+Output: Parsed via `_parse_judge_score()` using `re.fullmatch` on the whole response — ONLY a bare integer (with optional whitespace / fractional suffix) counts. Any refusal or prose response returns `None`. Callers treat `None` as `judge_refused` and exclude from aggregates so a misbehaving judge doesn't spuriously trip drift.
 
 ---
 
@@ -179,7 +180,7 @@ Score from 0 to 100:
 Respond with ONLY a single integer from 0 to 100. No other text.
 ```
 
-Output: Parsed via regex (`\d+`), clamped `min(max(score, 0), 100)`. Defaults to 0.0 on exception. Score stored in `EvalRun.hallucination_score`.
+Output: Parsed via `_parse_judge_score()` — same strict contract as `score_factuality`. `None` on refusal; callers exclude refused results from the hallucination aggregate. Score stored in `EvalRun.hallucination_score`.
 
 ---
 
@@ -188,8 +189,9 @@ Output: Parsed via regex (`\d+`), clamped `min(max(score, 0), 100)`. Defaults to
 All seven functions route through `_make_api_call()` in `llm_client.py`:
 
 1. **Input safety scan** -- `scan_input()` checks injection patterns, PII, and prompt length; blocks unsafe prompts (HTTP 422)
-2. **Budget check** -- `_check_budget()` verifies daily and monthly limits against `api_usage_log`; raises HTTP 402 if exceeded
-3. **Rate limit check** -- same `_check_budget()` checks global (10/min) and per-user (5/min) limits; raises HTTP 429
-4. **Retry with backoff** -- `2^attempt + random(0, 0.5)` sec, max 2 retries for transient errors; non-retryable errors fail immediately
-5. **API call + output scan** -- `client.messages.create()` then `scan_output()` checks response for PII and refusal patterns
-6. **Usage logging** -- every call recorded in `api_usage_log` with caller, tokens, cost, latency, status, safety_flags, risk_score
+2. **Atomic check + reserve** -- `_check_budget()` and a reservation INSERT happen under `_BUDGET_LOCK` so concurrent callers cannot all race past the limit. Checks daily/monthly budgets, global rate limit, and per-user rate limit. Raises HTTP 402 on budget, HTTP 429 on rate limit
+3. **Retry with backoff** -- `2^attempt + random(0, 0.5)` sec, max 2 retries for transient errors (timeouts, 429, 5xx); non-retryable errors fail immediately. API call runs OUTSIDE the budget lock so slow requests don't block other evaluators
+4. **Output safety scan** -- `scan_output()` checks response for PII and refusal patterns
+5. **Finalize reservation** -- update the reserved row with real tokens, cost, latency, and status (success / error_timeout / error_rate_limit / error_server / error_auth / error_bad_request / error_unknown)
+
+Sensitivity gate: when an LLM call is tied to a specific service (eval run, incident summary, test-connection in LLM mode), `services/sensitivity.py::enforce_sensitivity()` runs BEFORE `_make_api_call`. Confidential services require admin role AND an explicit `allow_confidential=true` override. Every attempt is audited.

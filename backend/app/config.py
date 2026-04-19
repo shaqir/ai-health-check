@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # App
     app_name: str = "AI Health Check"
     debug: bool = True
+    # Echo every SQL statement to the terminal. Kept separate from `debug`
+    # so we can keep FastAPI exception detail without flooding the logs
+    # during a demo. Default off.
+    log_sql: bool = False
+    # Background scheduler (health checks every N minutes). Disable for
+    # demos so metrics stay stable during narration.
+    scheduler_enabled: bool = True
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
     # Evaluation

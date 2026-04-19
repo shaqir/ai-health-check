@@ -136,22 +136,29 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _install_audit_log_triggers()
 
-    # Start background scheduler
-    scheduler.add_job(
-        scheduled_health_check,
-        "interval",
-        minutes=settings.health_check_schedule_minutes,
-        id="health_check",
-    )
-    scheduler.start()
-    print(f"[Startup] {settings.app_name} is running")
-    print(f"[Startup] Background scheduler started")
+    # Start background scheduler — can be disabled for demos via
+    # SCHEDULER_ENABLED=false so metrics stay stable during narration.
+    if settings.scheduler_enabled:
+        scheduler.add_job(
+            scheduled_health_check,
+            "interval",
+            minutes=settings.health_check_schedule_minutes,
+            id="health_check",
+        )
+        scheduler.start()
+        print(f"[Startup] {settings.app_name} is running")
+        print(f"[Startup] Background scheduler started "
+              f"(health check every {settings.health_check_schedule_minutes}m)")
+    else:
+        print(f"[Startup] {settings.app_name} is running")
+        print("[Startup] Background scheduler DISABLED (SCHEDULER_ENABLED=false)")
 
     yield
 
     # Shutdown
-    scheduler.shutdown()
-    print("[Shutdown] Scheduler stopped")
+    if settings.scheduler_enabled:
+        scheduler.shutdown()
+        print("[Shutdown] Scheduler stopped")
 
 
 app = FastAPI(

@@ -1,4 +1,4 @@
-# AIHealthCheck Onboarding Guide
+# AI Health Check Onboarding Guide
 
 New developer setup and platform workflow.
 

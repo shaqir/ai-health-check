@@ -1,4 +1,4 @@
-# AIHealthCheck Testing Strategy
+# AI Health Check Testing Strategy
 
 45 tests across 5 files. Framework: pytest. All tests run offline with no real API keys.
 

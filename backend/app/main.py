@@ -1,5 +1,5 @@
 """
-AIHealthCheck — FastAPI Application Entry Point
+AI Health Check — FastAPI Application Entry Point
 
 Start with: uvicorn app.main:app --reload --port 8000
 API docs:   http://localhost:8000/docs
@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    description="AIHealthCheck — Health checks for your AI fleet. Monitor, evaluate, triage, and govern AI services.",
+    description="AI Health Check — Health checks for your AI fleet. Monitor, evaluate, triage, and govern AI services.",
     version="0.1.0",
     lifespan=lifespan,
 )

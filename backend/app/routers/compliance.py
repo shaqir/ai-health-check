@@ -228,7 +228,7 @@ def export_compliance_data(
             styles = getSampleStyleSheet()
             elements = []
 
-            elements.append(Paragraph("AIHealthCheck Compliance Report", styles["Title"]))
+            elements.append(Paragraph("AI Health Check Compliance Report", styles["Title"]))
             elements.append(Spacer(1, 0.25 * inch))
 
             if req.from_date or req.to_date:

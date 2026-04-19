@@ -1,4 +1,4 @@
-# AIHealthCheck -- Module Guide
+# AI Health Check -- Module Guide
 
 This document breaks down each module: what was built, who owns it, the key files, and how they connect. Use this to prepare for the individual Q&A.
 

@@ -1,4 +1,4 @@
-# AIHealthCheck
+# AI Health Check
 
 A centralized AI operations platform to monitor, evaluate, triage, and govern an organization's AI services.
 
@@ -17,7 +17,7 @@ Companies use AI tools (chatbots, report generators, assistants) but have no sin
 - When something breaks, what happened and who fixed it?
 - Can we prove to auditors that we're managing our AI responsibly?
 
-AIHealthCheck is an **AI Operations Control Room** that answers all four questions in one place.
+AI Health Check is an **AI Operations Control Room** that answers all four questions in one place.
 
 ## How It Works
 

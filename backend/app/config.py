@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 480
 
     # App
-    app_name: str = "AIHealthCheck"
+    app_name: str = "AI Health Check"
     debug: bool = True
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 

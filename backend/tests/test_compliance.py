@@ -111,3 +111,29 @@ def test_viewer_cannot_export(client, db, viewer_token):
         "format": "json",
     }, headers=auth_header(viewer_token))
     assert res.status_code == 403
+
+
+def test_audit_log_denies_viewer(client, db, viewer_token):
+    """Viewer must NOT be able to read the full audit log — sensitive governance data."""
+    res = client.get("/api/v1/compliance/audit-log", headers=auth_header(viewer_token))
+    assert res.status_code == 403
+
+
+def test_audit_log_denies_maintainer(client, db, maintainer_token):
+    """Audit log is admin-only. Maintainer should be rejected even though they can mutate data."""
+    res = client.get("/api/v1/compliance/audit-log", headers=auth_header(maintainer_token))
+    assert res.status_code == 403
+
+
+def test_role_denied_events_audited(client, db, viewer_token, viewer_user):
+    """Every 403 from the RBAC decorator must leave a trail in the audit log."""
+    # Attempt a denied action
+    res = client.get("/api/v1/compliance/users", headers=auth_header(viewer_token))
+    assert res.status_code == 403
+
+    # Confirm the denial was recorded
+    logs = db.query(AuditLog).filter(AuditLog.action == "role_denied").all()
+    assert len(logs) == 1
+    assert logs[0].user_id == viewer_user.id
+    assert logs[0].old_value == "viewer"
+    assert "admin" in logs[0].new_value

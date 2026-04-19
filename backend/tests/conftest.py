@@ -83,6 +83,21 @@ def viewer_user(db) -> User:
 
 
 @pytest.fixture
+def maintainer_user(db) -> User:
+    """Create and return a maintainer user."""
+    user = User(
+        username="testmaintainer",
+        email="maintainer@test.local",
+        password_hash=hash_password("maintain123"),
+        role=UserRole.maintainer,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
 def admin_token(admin_user) -> str:
     """JWT token for admin user."""
     return create_access_token(data={"sub": admin_user.id, "role": "admin"})
@@ -92,6 +107,12 @@ def admin_token(admin_user) -> str:
 def viewer_token(viewer_user) -> str:
     """JWT token for viewer user."""
     return create_access_token(data={"sub": viewer_user.id, "role": "viewer"})
+
+
+@pytest.fixture
+def maintainer_token(maintainer_user) -> str:
+    """JWT token for maintainer user."""
+    return create_access_token(data={"sub": maintainer_user.id, "role": "maintainer"})
 
 
 def auth_header(token: str) -> dict:

@@ -58,7 +58,11 @@ class ExportRequest(BaseModel):
 
 # ── Audit Log ──
 
-@router.get("/audit-log", response_model=list[AuditLogResponse])
+@router.get(
+    "/audit-log",
+    response_model=list[AuditLogResponse],
+    dependencies=[Depends(require_role(["admin"]))],
+)
 def list_audit_logs(
     from_date: str | None = Query(None),
     to_date: str | None = Query(None),

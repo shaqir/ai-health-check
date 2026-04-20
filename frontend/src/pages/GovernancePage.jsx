@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert, Filter } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -10,6 +10,62 @@ import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
 
 const INPUT_CLS = 'w-full px-3 py-1.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text transition-standard focus:border-accent focus:bg-surface';
+
+// DB table names → reviewer-friendly labels. Audit log targets go through
+// this so rows read "Service #4" instead of "ai_services#4".
+const TABLE_LABEL = {
+  ai_services: 'Service',
+  incidents: 'Incident',
+  maintenance_plans: 'Plan',
+  eval_test_cases: 'Test Case',
+  eval_runs: 'Eval Run',
+  eval_results: 'Eval Result',
+  connection_logs: 'Ping',
+  alerts: 'Alert',
+  users: 'User',
+  ai_llm_drafts: 'AI Draft',
+  exports: 'Export',
+  audit_log: 'Audit row',
+  telemetry: 'Telemetry',
+  api_usage_log: 'API Call',
+};
+
+// Action category styling. Reviewers pattern-match by color: creates are
+// accent-blue, deletes red, approvals green, exports purple, failed auth
+// amber. Prevents every row from reading identical in the Action column.
+const ACTION_TONE = {
+  create:    'bg-accent-weak text-accent',
+  update:    'bg-surface-elevated text-text-muted',
+  delete:    'bg-status-failing-muted text-status-failing',
+  approve:   'bg-status-healthy-muted text-status-healthy',
+  export:    'bg-status-paused-muted text-status-paused',
+  auth:      'bg-surface-elevated text-text-subtle',
+  auth_fail: 'bg-status-degraded-muted text-status-degraded',
+  test:      'bg-surface-elevated text-text-subtle',
+  alert:     'bg-status-degraded-muted text-status-degraded',
+  run:       'bg-accent-weak text-accent',
+  other:     'bg-surface-elevated text-text-muted',
+};
+
+function categorize(rawAction) {
+  if (!rawAction) return 'other';
+  if (rawAction.startsWith('create_') || rawAction === 'register') return 'create';
+  if (rawAction.startsWith('delete_')) return 'delete';
+  if (rawAction.startsWith('approve_')) return 'approve';
+  if (rawAction.startsWith('export_') || rawAction.includes('ai_report')) return 'export';
+  if (rawAction.startsWith('login_')) {
+    return (rawAction.includes('fail') || rawAction.includes('lockout')) ? 'auth_fail' : 'auth';
+  }
+  if (rawAction === 'test_connection') return 'test';
+  if (rawAction.includes('alert') || rawAction.includes('override')) return 'alert';
+  if (rawAction.startsWith('update_') || rawAction.startsWith('generate_')) return 'update';
+  if (rawAction.startsWith('run_')) return 'run';
+  return 'other';
+}
+
+function titleCase(raw) {
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default function GovernancePage() {
   const { user, isAdmin } = useAuth();
@@ -23,6 +79,10 @@ export default function GovernancePage() {
   const [nowTick, setNowTick] = useState(Date.now());
   // Guards against double-submit on the role-change select.
   const [changingRoleFor, setChangingRoleFor] = useState(null);
+  // Audit log filters — action type, actor, time window (client-side).
+  const [actionFilter, setActionFilter] = useState('all');
+  const [actorFilter, setActorFilter] = useState('all');
+  const [timeWindow, setTimeWindow] = useState('all'); // '24h' | '7d' | 'all'
 
   const [exportRange, setExportRange] = useState({
     from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -38,18 +98,23 @@ export default function GovernancePage() {
       // Audit log is admin-only (server-side) — skip the fetch for non-admins
       if (isAdmin) {
         const res = await api.get('/compliance/audit-log');
-        setAuditLogs(res.data.map(log => ({
-          id: log.id,
-          // Keep the raw ISO string so the column renderer can do
-          // tz-aware formatting with a hover tooltip (Dashboard pattern).
-          timestamp: log.timestamp || '',
-          user: log.user_email || 'system',
-          // Title-case snake_case action for display; keep the raw value
-          // available in details if an examiner inspects the network tab.
-          action: log.action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-          target: `${log.target_table}#${log.target_id || ''}`,
-          details: log.new_value || log.old_value || '',
-        })));
+        setAuditLogs(res.data.map(log => {
+          const tbl = TABLE_LABEL[log.target_table] || log.target_table;
+          return {
+            id: log.id,
+            // Keep the raw ISO string so the column renderer can do
+            // tz-aware formatting with a hover tooltip (Dashboard pattern).
+            timestamp: log.timestamp || '',
+            user: log.user_email || 'system',
+            // Keep raw for category pill + filter dropdown; keep title-cased
+            // for display in the Action column and stats "Top action".
+            rawAction: log.action,
+            action: titleCase(log.action),
+            // Reviewer-friendly label instead of raw table#id.
+            target: log.target_id ? `${tbl} #${log.target_id}` : tbl,
+            details: log.new_value || log.old_value || '',
+          };
+        }));
 
         const userRes = await api.get('/compliance/users');
         setUsers(userRes.data.map(u => ({
@@ -79,6 +144,58 @@ export default function GovernancePage() {
 
   const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
   const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
+
+  // ── Audit log derived state ──────────────────────────────────────────────
+  // Options are derived from the current fetched rows so the dropdowns only
+  // list actions/actors that actually appear — no dead entries.
+  const actionOptions = useMemo(() => {
+    const set = new Set(auditLogs.map(l => l.rawAction).filter(Boolean));
+    return ['all', ...Array.from(set).sort()];
+  }, [auditLogs]);
+
+  const actorOptions = useMemo(() => {
+    const set = new Set(auditLogs.map(l => l.user).filter(Boolean));
+    return ['all', ...Array.from(set).sort()];
+  }, [auditLogs]);
+
+  const filteredLogs = useMemo(() => {
+    const now = Date.now();
+    const windowMs = timeWindow === '24h' ? 86_400_000 : timeWindow === '7d' ? 604_800_000 : Infinity;
+    return auditLogs.filter(l => {
+      if (actionFilter !== 'all' && l.rawAction !== actionFilter) return false;
+      if (actorFilter !== 'all' && l.user !== actorFilter) return false;
+      if (windowMs !== Infinity && l.timestamp) {
+        const ts = new Date(l.timestamp).getTime();
+        if (Number.isNaN(ts) || (now - ts) > windowMs) return false;
+      }
+      return true;
+    });
+  }, [auditLogs, actionFilter, actorFilter, timeWindow]);
+
+  // Live volume stats derived from the filtered view — updates as the user
+  // narrows the filter, so the tiles reflect what they're actually looking at.
+  const stats = useMemo(() => {
+    const now = Date.now();
+    const dayAgo = now - 86_400_000;
+    let eventsToday = 0;
+    const actorSet = new Set();
+    const actionCount = {};
+    for (const l of filteredLogs) {
+      actorSet.add(l.user);
+      if (l.rawAction) actionCount[l.rawAction] = (actionCount[l.rawAction] || 0) + 1;
+      if (l.timestamp) {
+        const ts = new Date(l.timestamp).getTime();
+        if (!Number.isNaN(ts) && ts > dayAgo) eventsToday += 1;
+      }
+    }
+    const topEntry = Object.entries(actionCount).sort(([, a], [, b]) => b - a)[0];
+    return {
+      total: filteredLogs.length,
+      actors: actorSet.size,
+      eventsToday,
+      topAction: topEntry ? { name: topEntry[0], count: topEntry[1] } : null,
+    };
+  }, [filteredLogs]);
 
   const handleVerifyIntegrity = async () => {
     try {
@@ -156,9 +273,32 @@ export default function GovernancePage() {
       },
     },
     { key: 'user', label: 'Actor', render: (v) => <span className="font-medium text-text">{v}</span> },
-    { key: 'action', label: 'Action', render: (v) => <span className="text-[12px] font-medium text-text">{v}</span> },
-    { key: 'target', label: 'Target', render: (v) => <span className="font-mono text-xs">{v}</span> },
-    { key: 'details', label: 'Changes', render: (v) => <span className="text-xs text-text-subtle font-mono truncate max-w-[200px] block">{v}</span> },
+    {
+      key: 'action',
+      label: 'Action',
+      render: (v, row) => {
+        const cat = categorize(row.rawAction);
+        const cls = ACTION_TONE[cat] || ACTION_TONE.other;
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-pill text-[11px] font-medium ${cls}`}>
+            {v}
+          </span>
+        );
+      },
+    },
+    { key: 'target', label: 'Target', render: (v) => <span className="text-xs text-text">{v}</span> },
+    {
+      key: 'details',
+      label: 'Changes',
+      render: (v) => (
+        <span
+          className="text-xs text-text-subtle font-mono truncate max-w-[260px] block"
+          title={v || ''}
+        >
+          {v || '—'}
+        </span>
+      ),
+    },
   ];
 
   if (loading) {
@@ -211,8 +351,89 @@ export default function GovernancePage() {
               <History size={14} strokeWidth={1.75} className="text-text-subtle" />
               <h3 className="text-[13px] font-semibold text-text tracking-tight">Audit log</h3>
             </div>
+
             {auditLogs.length > 0 ? (
-              <DataTable columns={auditColumns} data={auditLogs} searchPlaceholder="Search audit events..." />
+              <>
+                {/* Volume stats — reacts to filter selections so tiles
+                    reflect what's currently visible in the table below. */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-5 py-4 border-b border-hairline">
+                  <StatTile label="Events" value={stats.total} />
+                  <StatTile label="Actors" value={stats.actors} />
+                  <StatTile label="Last 24h" value={stats.eventsToday} />
+                  <StatTile
+                    label="Top action"
+                    value={stats.topAction ? titleCase(stats.topAction.name) : '—'}
+                    sublabel={stats.topAction ? `${stats.topAction.count}×` : undefined}
+                  />
+                </div>
+
+                {/* Filter toolbar — client-side, narrows the table + stats
+                    without a round-trip. Time window is a pill group; action
+                    + actor are dropdowns derived from the fetched rows. */}
+                <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-hairline bg-surface-elevated/40">
+                  <div className="flex items-center gap-1.5 text-text-subtle" aria-hidden="true">
+                    <Filter size={12} strokeWidth={1.75} />
+                    <span className="text-[10px] uppercase font-semibold tracking-[0.09em]">Filter</span>
+                  </div>
+                  <select
+                    value={actionFilter}
+                    onChange={(e) => setActionFilter(e.target.value)}
+                    aria-label="Filter by action"
+                    className="text-[11px] py-1 px-2.5 rounded-pill bg-[var(--material-thick)] text-text transition-standard"
+                  >
+                    {actionOptions.map(a => (
+                      <option key={a} value={a}>
+                        {a === 'all' ? 'All actions' : titleCase(a)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={actorFilter}
+                    onChange={(e) => setActorFilter(e.target.value)}
+                    aria-label="Filter by actor"
+                    className="text-[11px] py-1 px-2.5 rounded-pill bg-[var(--material-thick)] text-text transition-standard"
+                  >
+                    {actorOptions.map(a => (
+                      <option key={a} value={a}>
+                        {a === 'all' ? 'All actors' : a}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center ml-auto bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Time window">
+                    {[
+                      { id: '24h', label: '24h' },
+                      { id: '7d', label: '7d' },
+                      { id: 'all', label: 'All' },
+                    ].map(w => (
+                      <button
+                        key={w.id}
+                        role="tab"
+                        aria-selected={timeWindow === w.id}
+                        onClick={() => setTimeWindow(w.id)}
+                        className={`px-2.5 py-0.5 text-[11px] font-medium rounded-pill capitalize transition-standard ${
+                          timeWindow === w.id
+                            ? 'bg-surface-elevated text-text shadow-xs'
+                            : 'text-text-muted hover:text-text'
+                        }`}
+                      >
+                        {w.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {filteredLogs.length > 0 ? (
+                  <DataTable columns={auditColumns} data={filteredLogs} searchPlaceholder="Search audit events..." />
+                ) : (
+                  <div className="p-6">
+                    <EmptyState
+                      icon={History}
+                      title="No matches"
+                      description="No events match the current filters. Widen the time window or clear the action/actor filter."
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <div className="p-6">
                 <EmptyState icon={History} title="No audit events" description="Actions will appear here as users interact with the platform." />
@@ -352,6 +573,30 @@ export default function GovernancePage() {
             />
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, sublabel }) {
+  const displayValue = value === null || value === undefined ? '—' : String(value);
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-text-subtle mb-0.5">
+        {label}
+      </p>
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <p
+          className="text-[15px] font-semibold text-text tabular-nums truncate"
+          title={displayValue}
+        >
+          {displayValue}
+        </p>
+        {sublabel && (
+          <span className="text-[10px] text-text-subtle font-mono tabular-nums shrink-0">
+            {sublabel}
+          </span>
+        )}
       </div>
     </div>
   );

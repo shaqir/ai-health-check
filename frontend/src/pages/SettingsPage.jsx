@@ -50,7 +50,26 @@ export default function SettingsPage() {
   }, []);
 
   const callColumns = [
-    { key: 'timestamp', label: 'Time', render: v => <span className="font-mono tabular-nums text-xs">{v}</span> },
+    {
+      key: 'timestamp',
+      label: 'Time',
+      render: v => {
+        if (!v) return <span className="font-mono text-xs text-text-subtle">—</span>;
+        const d = new Date(v);
+        if (Number.isNaN(d.getTime())) return <span className="font-mono tabular-nums text-xs">{v}</span>;
+        const short = d.toLocaleString(undefined, {
+          month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+        return (
+          <span
+            className="font-mono tabular-nums text-xs"
+            title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+          >
+            {short}
+          </span>
+        );
+      },
+    },
     { key: 'caller', label: 'Function', render: v => <span className="font-mono text-xs bg-surface-elevated px-1.5 py-0.5 rounded-xs">{v}</span> },
     { key: 'input_tokens', label: 'In', render: v => <span className="font-mono tabular-nums">{v?.toLocaleString()}</span> },
     { key: 'output_tokens', label: 'Out', render: v => <span className="font-mono tabular-nums">{v?.toLocaleString()}</span> },

@@ -262,10 +262,11 @@ async def run_evaluation(
             "status": result_status,
         })
 
-    # Compute aggregate scores — exclude judge_refused rows so a flaky
-    # judge doesn't spuriously trigger drift. Count of refused is still
-    # visible via result.status per-test.
-    valid_scores = [r["score"] for r in results if r["status"] != "judge_refused"]
+    # Compute aggregate scores — exclude judge_refused AND infra error rows.
+    # An "error" result means the LLM call itself failed (HTTP 404, timeout,
+    # rate limit) — the model never had a chance to answer, so counting it
+    # as 0% quality would conflate infra failures with model drift.
+    valid_scores = [r["score"] for r in results if r["status"] not in ("judge_refused", "error")]
     quality_score = round(sum(valid_scores) / len(valid_scores), 1) if valid_scores else 0
     factuality_score = (
         round(sum(factuality_scores) / len(factuality_scores), 1)
@@ -280,22 +281,27 @@ async def run_evaluation(
         if hallucination_scores else None
     )
 
-    # Enhanced drift detection: threshold + trend analysis
-    drift_flagged = quality_score < settings.drift_threshold
+    # Enhanced drift detection: threshold + trend analysis. Only judge drift
+    # when we actually produced a valid score this run — a run where every
+    # call errored out tells us nothing about model quality.
+    if valid_scores:
+        drift_flagged = quality_score < settings.drift_threshold
 
-    # Also flag if declining trend AND score is within 10% of threshold
-    recent_runs = (
-        db.query(EvalRun)
-        .filter(EvalRun.service_id == service_id)
-        .order_by(EvalRun.run_at.desc())
-        .limit(4)
-        .all()
-    )
-    if len(recent_runs) >= 3:
-        prev_scores = [r.quality_score for r in reversed(recent_runs)]
-        trend = _compute_trend(prev_scores + [quality_score])
-        if trend == "declining" and quality_score < settings.drift_threshold + 10:
-            drift_flagged = True
+        # Also flag if declining trend AND score is within 10% of threshold
+        recent_runs = (
+            db.query(EvalRun)
+            .filter(EvalRun.service_id == service_id)
+            .order_by(EvalRun.run_at.desc())
+            .limit(4)
+            .all()
+        )
+        if len(recent_runs) >= 3:
+            prev_scores = [r.quality_score for r in reversed(recent_runs)]
+            trend = _compute_trend(prev_scores + [quality_score])
+            if trend == "declining" and quality_score < settings.drift_threshold + 10:
+                drift_flagged = True
+    else:
+        drift_flagged = False
 
     # Save evaluation run
     eval_run = EvalRun(

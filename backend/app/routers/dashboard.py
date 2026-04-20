@@ -51,7 +51,20 @@ def _env_filter(query, environment: str | None):
     return query
 
 
-def _compute_trend(current: float, previous: float) -> str:
+def _compute_trend(
+    current: float,
+    previous: float,
+    n_current: int | None = None,
+    n_previous: int | None = None,
+    min_samples: int = 3,
+) -> str:
+    # Fall back to neutral when either side has too few samples. A 2-vs-2
+    # comparison is noisy enough that one outlier flips the verdict, so
+    # we refuse to draw an arrow until each window has at least min_samples.
+    if n_current is not None and n_current < min_samples:
+        return "neutral"
+    if n_previous is not None and n_previous < min_samples:
+        return "neutral"
     if previous == 0:
         return "neutral"
     diff = ((current - previous) / previous) * 100
@@ -74,8 +87,9 @@ def get_metrics(
     day_ago = now - timedelta(hours=24)
     two_days_ago = now - timedelta(hours=48)
     week_ago = now - timedelta(days=7)
+    two_weeks_ago = now - timedelta(days=14)
 
-    # Active services count
+    # Active services count (respects environment filter)
     svc_query = db.query(AIService).filter(AIService.is_active == True)
     if environment and environment not in ("all", ""):
         env_map = {"production": "prod", "staging": "staging", "dev": "dev"}
@@ -86,52 +100,71 @@ def get_metrics(
             pass
     active_services = svc_query.count()
 
-    # Latency stats (last 24h) — average + percentiles
-    latency_logs = (
-        db.query(ConnectionLog.latency_ms)
-        .filter(ConnectionLog.tested_at >= day_ago, ConnectionLog.latency_ms != None)
-        .all()
+    # Latency (last 24h) — pull env-filtered raw samples, compute stats in Python.
+    latencies = sorted(
+        l[0] for l in _env_filter(
+            db.query(ConnectionLog.latency_ms).filter(
+                ConnectionLog.tested_at >= day_ago,
+                ConnectionLog.latency_ms != None,
+            ),
+            environment,
+        ).all() if l[0] is not None
     )
-    latencies = sorted([l[0] for l in latency_logs if l[0] is not None])
     avg_latency = sum(latencies) / len(latencies) if latencies else 0
     p50 = latencies[len(latencies) // 2] if latencies else 0
     p95 = latencies[int(len(latencies) * 0.95)] if latencies else 0
     p99 = latencies[int(len(latencies) * 0.99)] if latencies else 0
 
-    # Previous 24h latency for trend
-    prev_latency_query = db.query(func.avg(ConnectionLog.latency_ms)).filter(
-        ConnectionLog.tested_at >= two_days_ago,
-        ConnectionLog.tested_at < day_ago,
-    )
-    prev_latency_query = _env_filter(prev_latency_query, environment)
-    prev_latency = prev_latency_query.scalar() or 0
+    # Previous 24h latency for trend (env-filtered).
+    prev_latencies = [
+        l[0] for l in _env_filter(
+            db.query(ConnectionLog.latency_ms).filter(
+                ConnectionLog.tested_at >= two_days_ago,
+                ConnectionLog.tested_at < day_ago,
+                ConnectionLog.latency_ms != None,
+            ),
+            environment,
+        ).all() if l[0] is not None
+    ]
+    prev_latency = sum(prev_latencies) / len(prev_latencies) if prev_latencies else 0
 
-    # Error rate (last 7 days)
-    total_connections = db.query(ConnectionLog).filter(
-        ConnectionLog.tested_at >= week_ago
+    # "Error rate" here is the DRIFT RATE — percentage of eval runs in the last
+    # 7 days flagged for drift. This is quality error (bad model output), NOT
+    # infra error (HTTP failures, timeouts). Infra failures live in ConnectionLog.
+    recent_run_total = _env_filter(
+        db.query(EvalRun).filter(EvalRun.run_at >= week_ago),
+        environment,
     ).count()
-    failed_connections = db.query(ConnectionLog).filter(
-        ConnectionLog.tested_at >= week_ago,
-        ConnectionLog.status == "failure",
+    recent_run_flagged = _env_filter(
+        db.query(EvalRun).filter(
+            EvalRun.run_at >= week_ago,
+            EvalRun.drift_flagged == True,
+        ),
+        environment,
     ).count()
-    error_rate = (failed_connections / total_connections * 100) if total_connections > 0 else 0
+    error_rate = (recent_run_flagged / recent_run_total * 100) if recent_run_total > 0 else 0
 
-    # Previous week error rate for trend
-    two_weeks_ago = now - timedelta(days=14)
-    prev_total = db.query(ConnectionLog).filter(
-        ConnectionLog.tested_at >= two_weeks_ago,
-        ConnectionLog.tested_at < week_ago,
+    # Previous week drift rate for trend.
+    prev_run_total = _env_filter(
+        db.query(EvalRun).filter(
+            EvalRun.run_at >= two_weeks_ago,
+            EvalRun.run_at < week_ago,
+        ),
+        environment,
     ).count()
-    prev_failed = db.query(ConnectionLog).filter(
-        ConnectionLog.tested_at >= two_weeks_ago,
-        ConnectionLog.tested_at < week_ago,
-        ConnectionLog.status == "failure",
+    prev_run_flagged = _env_filter(
+        db.query(EvalRun).filter(
+            EvalRun.run_at >= two_weeks_ago,
+            EvalRun.run_at < week_ago,
+            EvalRun.drift_flagged == True,
+        ),
+        environment,
     ).count()
-    prev_error_rate = (prev_failed / prev_total * 100) if prev_total > 0 else 0
+    prev_error_rate = (prev_run_flagged / prev_run_total * 100) if prev_run_total > 0 else 0
 
-    # Average quality score (last 10 runs)
+    # Avg quality score (last 10 env-filtered runs).
     recent_runs = (
-        db.query(EvalRun)
+        _env_filter(db.query(EvalRun), environment)
         .order_by(EvalRun.run_at.desc())
         .limit(10)
         .all()
@@ -141,9 +174,9 @@ def get_metrics(
         if recent_runs else 0
     )
 
-    # Previous 10 runs for quality trend
+    # Previous 10 runs for quality trend.
     older_runs = (
-        db.query(EvalRun)
+        _env_filter(db.query(EvalRun), environment)
         .order_by(EvalRun.run_at.desc())
         .offset(10)
         .limit(10)
@@ -162,9 +195,18 @@ def get_metrics(
         p99_latency_ms=round(p99, 1),
         error_rate_pct=round(error_rate, 1),
         avg_quality_score=round(avg_quality, 1),
-        latency_trend=_compute_trend(avg_latency, prev_latency),
-        error_trend=_compute_trend(error_rate, prev_error_rate),
-        quality_trend=_compute_trend(avg_quality, prev_quality),
+        latency_trend=_compute_trend(
+            avg_latency, prev_latency,
+            n_current=len(latencies), n_previous=len(prev_latencies),
+        ),
+        error_trend=_compute_trend(
+            error_rate, prev_error_rate,
+            n_current=recent_run_total, n_previous=prev_run_total,
+        ),
+        quality_trend=_compute_trend(
+            avg_quality, prev_quality,
+            n_current=len(recent_runs), n_previous=len(older_runs),
+        ),
     )
 
 
@@ -178,8 +220,10 @@ def get_latency_trend(
     day_ago = now - timedelta(hours=24)
 
     logs = (
-        db.query(ConnectionLog)
-        .filter(ConnectionLog.tested_at >= day_ago)
+        _env_filter(
+            db.query(ConnectionLog).filter(ConnectionLog.tested_at >= day_ago),
+            environment,
+        )
         .order_by(ConnectionLog.tested_at.asc())
         .all()
     )
@@ -210,7 +254,7 @@ def get_quality_trend(
     _: User = Depends(get_current_user),
 ):
     runs = (
-        db.query(EvalRun)
+        _env_filter(db.query(EvalRun), environment)
         .order_by(EvalRun.run_at.asc())
         .limit(6)
         .all()
@@ -228,30 +272,31 @@ def get_error_trend(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Drift rate per day of week over the last 7 days — quality error, not
+    # infra. Matches the /metrics "error_rate_pct" semantic.
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
 
-    logs = (
-        db.query(ConnectionLog)
-        .filter(ConnectionLog.tested_at >= week_ago)
-        .all()
-    )
+    runs = _env_filter(
+        db.query(EvalRun).filter(EvalRun.run_at >= week_ago),
+        environment,
+    ).all()
 
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     daily_totals = {}
-    daily_failures = {}
+    daily_flagged = {}
 
-    for log in logs:
-        day_name = day_names[log.tested_at.weekday()]
+    for run in runs:
+        day_name = day_names[run.run_at.weekday()]
         daily_totals[day_name] = daily_totals.get(day_name, 0) + 1
-        if log.status == "failure":
-            daily_failures[day_name] = daily_failures.get(day_name, 0) + 1
+        if run.drift_flagged:
+            daily_flagged[day_name] = daily_flagged.get(day_name, 0) + 1
 
     result = []
     for day in day_names:
         total = daily_totals.get(day, 0)
-        failures = daily_failures.get(day, 0)
-        rate = round((failures / total * 100), 1) if total > 0 else 0
+        flagged = daily_flagged.get(day, 0)
+        rate = round((flagged / total * 100), 1) if total > 0 else 0
         result.append({"time": day, "rate": rate})
 
     return result
@@ -274,7 +319,10 @@ def get_recent_evals(
         service = db.query(AIService).filter(AIService.id == run.service_id).first()
         result.append({
             "id": run.id,
-            "timestamp": run.run_at.strftime("%Y-%m-%d %H:%M") if run.run_at else "",
+            # Emit ISO-8601 with explicit UTC so the client can render in the
+            # viewer's local timezone. SQLite drops tzinfo on write, so we
+            # re-attach UTC here — every write path uses utcnow() by convention.
+            "timestamp": run.run_at.replace(tzinfo=timezone.utc).isoformat() if run.run_at else "",
             "score": run.quality_score,
             "drift": run.drift_flagged,
             "type": run.run_type.capitalize(),
@@ -307,7 +355,7 @@ def get_drift_alerts(
             "score": run.quality_score,
             "threshold": settings.drift_threshold,
             "run_id": run.id,
-            "run_at": run.run_at.strftime("%Y-%m-%d %H:%M") if run.run_at else "",
+            "run_at": run.run_at.replace(tzinfo=timezone.utc).isoformat() if run.run_at else "",
         })
 
     return result
@@ -517,7 +565,7 @@ def get_api_usage(
             "cost_usd": round(r.estimated_cost_usd, 6),
             "latency_ms": r.latency_ms,
             "status": r.status,
-            "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+            "timestamp": r.timestamp.replace(tzinfo=timezone.utc).isoformat() if r.timestamp else "",
         }
         for r in recent
     ]
@@ -694,7 +742,7 @@ def get_api_safety(
             "caller": r.caller,
             "safety_flags": r.safety_flags,
             "risk_score": r.risk_score,
-            "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+            "timestamp": r.timestamp.replace(tzinfo=timezone.utc).isoformat() if r.timestamp else "",
         }
         for r in recent_blocked
     ]
@@ -740,7 +788,7 @@ def get_call_detail(
         "risk_score": call.risk_score,
         "prompt_text": call.prompt_text or "",
         "response_text": call.response_text or "",
-        "timestamp": call.timestamp.strftime("%Y-%m-%d %H:%M:%S") if call.timestamp else "",
+        "timestamp": call.timestamp.replace(tzinfo=timezone.utc).isoformat() if call.timestamp else "",
     }
 
 
@@ -798,7 +846,7 @@ def list_alerts(
             "message": a.message,
             "service_name": service.name if service else None,
             "acknowledged": a.acknowledged,
-            "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else "",
+            "created_at": a.created_at.replace(tzinfo=timezone.utc).isoformat() if a.created_at else "",
         })
     return result
 

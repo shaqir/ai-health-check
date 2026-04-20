@@ -24,7 +24,6 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
   const [loading, setLoading] = useState(false);
 
   const fetchDrift = async (id) => {
-    onSelect(id);
     setLoading(true);
     try {
       const [checkRes, trendRes] = await Promise.all([
@@ -39,9 +38,13 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
     } catch { /* silent */ } finally { setLoading(false); }
   };
 
+  // Re-fetch whenever the parent's selection changes — initial mount (once
+  // services load and parent picks a default), tab clicks (handler just
+  // calls onSelect; this effect does the fetch), and post-eval updates
+  // (confirmRunEval bumps selectedDriftService to the just-evaluated service).
   useEffect(() => {
     if (selectedId) fetchDrift(selectedId);
-  }, []);
+  }, [selectedId]);
 
   const sev = data ? SEV_CONFIG[data.drift_severity] || SEV_CONFIG.none : null;
 
@@ -55,7 +58,7 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
             key={svc.id}
             role="tab"
             aria-selected={selectedId === svc.id}
-            onClick={() => fetchDrift(svc.id)}
+            onClick={() => onSelect(svc.id)}
             className={`px-3 py-1 text-[12px] font-medium rounded-pill transition-standard ${
               selectedId === svc.id ? 'bg-accent-weak text-text shadow-xs' : 'text-text-muted hover:text-text'
             }`}

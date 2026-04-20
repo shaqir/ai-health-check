@@ -158,6 +158,43 @@ def test_drift_check(client, db, admin_token):
     assert "threshold" in data
 
 
+def test_drift_check_with_runs_exercises_per_test_breakdown(client, db, admin_token):
+    """
+    drift-check's per_test_case_breakdown path queries EvalResult. When we
+    dropped EvalResult from the evaluations.py import list during the
+    eval_runner refactor, the endpoint 500'd — but the bare test_drift_check
+    above dodges that path because it has no runs. This test creates runs +
+    results so the full endpoint logic runs, catching a missing-import or
+    broken query regression immediately.
+    """
+    svc = _create_service(db)
+
+    tc1 = EvalTestCase(service_id=svc.id, prompt="q1", expected_output="a1", category="factuality")
+    tc2 = EvalTestCase(service_id=svc.id, prompt="q2", expected_output="a2", category="format_json")
+    db.add_all([tc1, tc2])
+    db.commit()
+    db.refresh(tc1); db.refresh(tc2)
+
+    run = EvalRun(service_id=svc.id, quality_score=60.0, drift_flagged=True, run_type="manual")
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    db.add(EvalResult(eval_run_id=run.id, test_case_id=tc1.id, response_text="r1", score=80.0, latency_ms=100, status="success"))
+    db.add(EvalResult(eval_run_id=run.id, test_case_id=tc2.id, response_text="r2", score=40.0, latency_ms=120, status="success"))
+    db.commit()
+
+    res = client.get(f"/api/v1/evaluations/drift-check/{svc.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200, f"drift-check must not 500 when runs+results exist: {res.text}"
+
+    data = res.json()
+    assert data["current_score"] == 60.0
+    assert data["drift_detected"] is True
+    breakdown = data.get("per_test_case_breakdown")
+    assert breakdown and len(breakdown) == 2, "per_test_case_breakdown must iterate EvalResult rows"
+    assert {b["category"] for b in breakdown} == {"factuality", "format_json"}
+
+
 # ── Drift alert auto-creation ──
 
 @patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=30.0)

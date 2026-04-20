@@ -27,7 +27,23 @@ export default function SettingsPage() {
   const [apiUsage, setApiUsage] = useState(null);
   const [performance, setPerformance] = useState(null);
   const [safety, setSafety] = useState(null);
-  const [active, setActive] = useState('model');
+  // Initialize active section from URL hash so /settings#safety deep-links
+  // straight into the Safety tab. Falls back to 'model' when the hash is
+  // empty or points at an unknown section.
+  const [active, setActive] = useState(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : '';
+    return SECTIONS.some(s => s.id === hash) ? hash : 'model';
+  });
+  // Live refresh indicator — matches Dashboard / Evaluations / Incidents.
+  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(Date.now());
+
+  const handleSectionChange = (id) => {
+    setActive(id);
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', `#${id}`);
+    }
+  };
 
   const fetchAll = async (showLoading = false) => {
     if (showLoading) setError(null);
@@ -39,6 +55,7 @@ export default function SettingsPage() {
         api.get('/dashboard/api-safety'),
       ]);
       setConfig(c.data); setApiUsage(u.data); setPerformance(p.data); setSafety(s.data);
+      setLastFetchAt(Date.now());
     } catch { if (showLoading) setError('Failed to load settings.'); }
     finally { if (showLoading) setLoading(false); }
   };
@@ -50,6 +67,14 @@ export default function SettingsPage() {
     const interval = setInterval(() => fetchAll(false), 60000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
+  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
   const callColumns = [
     {
@@ -91,7 +116,22 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="API & Settings" description="Model configuration, cost monitoring, safety scanner, and performance." />
+      <PageHeader title="API & Settings" description="Model configuration, cost monitoring, safety scanner, and performance.">
+        <div
+          className="flex items-center gap-1.5"
+          aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 60 seconds`}
+          title={`Refreshes every 60 seconds. Last: ${updatedLabel}.`}
+        >
+          <span
+            key={lastFetchAt}
+            className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
+            aria-hidden="true"
+          />
+          <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
+            Updated {updatedLabel}
+          </span>
+        </div>
+      </PageHeader>
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-6">
         {/* Left secondary nav */}
@@ -102,7 +142,7 @@ export default function SettingsPage() {
               return (
                 <button
                   key={id}
-                  onClick={() => setActive(id)}
+                  onClick={() => handleSectionChange(id)}
                   aria-current={isActive ? 'true' : undefined}
                   className={`shrink-0 flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] text-left transition-standard ${
                     isActive
@@ -229,11 +269,12 @@ export default function SettingsPage() {
 
           {active === 'safety' && safety && (
             <Card icon={Shield} title="Prompt safety scanner">
-              <div className="grid grid-cols-4 gap-3 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
                 <Stat label="Scanned" value={safety.total_scanned_today} tooltip="Total prompts checked by the safety scanner today, before reaching the model." />
                 <Stat label="Blocked" value={safety.blocked_today} danger={safety.blocked_today > 0} tooltip="Prompts rejected outright today — prompt-injection, PII, or policy violations." />
                 <Stat label="Flagged" value={safety.flagged_today} warn={safety.flagged_today > 0} tooltip="Prompts that raised a warning but were still allowed through today." />
                 <Stat label="Avg risk" value={safety.avg_risk_score} tooltip="Average risk score (0–100) of inputs scanned today. Higher means more flags per prompt." />
+                <Stat label="Blocked MTD" value={safety.blocked_this_month} danger={safety.blocked_this_month > 0} tooltip="Total prompts blocked month-to-date. Promoted out of the footer line so month-over-month scanner load is scannable at a glance." />
               </div>
               {Object.keys(safety.flag_breakdown).length > 0 && (
                 <div className="mb-3">
@@ -263,7 +304,7 @@ export default function SettingsPage() {
               )}
               <div className="mt-3 flex items-center gap-1.5 text-[12px] text-status-healthy">
                 <ShieldCheck size={12} strokeWidth={1.5} />
-                <span>Scanner active. Blocked this month: <strong className="font-semibold">{safety.blocked_this_month}</strong></span>
+                <span>Scanner active — every prompt is checked before transmission.</span>
               </div>
             </Card>
           )}
@@ -347,6 +388,7 @@ function Row({ label, value, mono, tooltip }) {
 
 function BudgetCard({ label, spent, budget, pct, tooltip }) {
   const barColor = pct > 90 ? 'bg-status-failing' : pct > 70 ? 'bg-status-degraded' : 'bg-accent';
+  const remaining = Math.max(budget - spent, 0);
   return (
     <div className="bg-surface-elevated rounded-lg p-3">
       <div className="flex items-center gap-1.5 mb-2">
@@ -354,13 +396,18 @@ function BudgetCard({ label, spent, budget, pct, tooltip }) {
         <span className="text-[10px] font-medium text-text-subtle tracking-tight">{label}</span>
         {tooltip && <InfoTip content={tooltip} size={10} />}
       </div>
-      <p className="text-xl font-semibold font-mono tabular-nums text-text">${budget.toFixed(2)}</p>
+      {/* Spent is the hero; cap is shown as denominator so users see how
+          much headroom is left without needing to subtract mentally. */}
+      <div className="flex items-baseline gap-1.5">
+        <p className="text-xl font-semibold font-mono tabular-nums text-text">${spent.toFixed(4)}</p>
+        <span className="text-[11px] text-text-subtle font-mono tabular-nums">/ ${budget.toFixed(2)}</span>
+      </div>
       <div className="w-full bg-hairline rounded-pill h-1.5 my-1.5">
         <div className={`h-1.5 rounded-pill transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
       <div className="flex justify-between text-[10px] text-text-subtle font-mono tabular-nums">
-        <span>${spent.toFixed(4)}</span>
-        <span>{pct.toFixed(1)}%</span>
+        <span>{pct.toFixed(1)}% used</span>
+        <span>${remaining.toFixed(2)} left</span>
       </div>
     </div>
   );

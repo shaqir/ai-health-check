@@ -14,7 +14,7 @@ from app.database import get_db
 from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AIService, Alert, EvalTestCase, EvalRun, User
+from app.models import AIService, Alert, EvalTestCase, EvalRun, EvalResult, User
 from app.services.env_filter import apply_env_filter
 from app.services.eval_runner import run_service_evaluation
 from app.services.sensitivity import enforce_sensitivity

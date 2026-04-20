@@ -370,7 +370,7 @@ evaluation harness that detects model-quality regressions.
 |---|---|---|
 | Active Services count | `ai_services` where `is_active = true` | current |
 | Avg Quality | mean `quality_score` across `eval_runs` | most recent 10 runs |
-| Error Rate | `connection_logs` where `status='failure'` / total | last 7 days |
+| Error Rate | `eval_runs` where `drift_flagged = true` / total — QUALITY drift, not infra failures. Server can be 100% up and this can still spike. | last 7 days |
 | Avg Latency | mean `latency_ms` from `connection_logs` | last 24 hours |
 | P50 / P95 / P99 Latency | percentile of `connection_logs.latency_ms` | last 24 hours |
 

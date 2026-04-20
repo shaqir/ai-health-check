@@ -4,7 +4,7 @@
 
 ## 1. System Overview
 
-AI Health Check is a centralized AI operations platform built for the ARTI-409-A course. The frontend is a React 18 SPA (Vite 5 + Tailwind 3.4). The backend is FastAPI with SQLAlchemy ORM over SQLite. All LLM calls use Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) via the `anthropic>=0.49.0` SDK, routed through a single pipeline in `llm_client.py`. Background health checks run via APScheduler (HTTP probe every 5 min).
+AI Health Check is a centralized AI operations platform built for the ARTI-409-A course. The frontend is a React 18 SPA (Vite 5 + Tailwind 3.4). The backend is FastAPI with SQLAlchemy ORM over SQLite. All LLM calls use Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6`) via the `anthropic>=0.49.0` SDK, routed through a single pipeline in `llm_client.py`. Two APScheduler jobs run in the background: an HTTP health-check probe against every service every 5 min, and an automated eval run against every active non-confidential service with test cases every 60 min.
 
 ## 2. Architecture Diagram
 
@@ -273,7 +273,7 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 | Setting | Default | Category |
 |---------|---------|----------|
 | `anthropic_api_key` | (required) | LLM |
-| `llm_model` | `claude-sonnet-4-6-20250415` | LLM |
+| `llm_model` | `claude-sonnet-4-6` | LLM |
 | `llm_max_tokens` | 1024 | LLM |
 | `llm_timeout_seconds` | 30 | LLM |
 | `database_url` | `sqlite:///./aiops.db` | Database |
@@ -288,11 +288,12 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 | `health_check_schedule_minutes` | 5 | Scheduling |
 | `api_daily_budget` | 5.0 | Budget |
 | `api_monthly_budget` | 25.0 | Budget |
-| `api_max_calls_per_minute` | 10 | Rate Limiting |
-| `api_max_calls_per_user_per_minute` | 5 | Rate Limiting |
+| `api_max_calls_per_minute` | 30 | Rate Limiting |
+| `api_max_calls_per_user_per_minute` | 20 | Rate Limiting |
 | `app_name` | `AI Health Check` | Application |
 | `debug` | `true` | Application |
 | `cors_origins` | `http://localhost:5173,http://localhost:3000` | Application |
-| `log_level` | `info` | Application |
+| `log_sql` | `false` | Application |
+| `scheduler_enabled` | `true` | Application |
 
 For testing details, see [TESTING_STRATEGY](TESTING_STRATEGY.md). For drift detection algorithm, see [EVAL_DATASET_CARD](EVAL_DATASET_CARD.md). For prompt templates, see [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md). For onboarding steps, see [ONBOARDING](ONBOARDING.md).

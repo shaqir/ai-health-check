@@ -17,7 +17,7 @@
 | F-03 | Service 3 | factuality | (service-specific factuality prompt) | (expected factual response) |
 | J-03 | Service 3 | format_json | (service-specific JSON prompt) | (expected JSON structure) |
 
-All data is synthetic. Stored in `eval_test_cases` table (SQLite). Model: `claude-sonnet-4-6-20250415`.
+All data is synthetic. Stored in `eval_test_cases` table (SQLite). Model: `claude-sonnet-4-6`.
 
 ---
 

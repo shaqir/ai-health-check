@@ -25,7 +25,7 @@ const CHECKLIST_LABELS = {
 export default function IncidentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { canEdit } = useAuth();
+  const { canEdit, isAdmin } = useAuth();
 
   const [incident, setIncident] = useState(null);
   const [maintenancePlans, setMaintenancePlans] = useState([]);
@@ -120,8 +120,9 @@ export default function IncidentDetailPage() {
       // Keep the modal open so the user can retry without losing context.
       // Inline banner in ReviewerNoteModal + Toast for redundancy.
       const detail = err.response?.data?.detail || err.message;
-      setApproveError(typeof detail === 'string' ? detail : 'Approval failed — please try again.');
-      showToast('Failed to approve summary: ' + detail, 'error');
+      const msg = typeof detail === 'string' ? detail : 'Approval failed — please try again.';
+      setApproveError(msg);
+      showToast('Failed to approve summary: ' + msg, 'error');
     } finally {
       setApproving(false);
     }
@@ -148,7 +149,7 @@ export default function IncidentDetailPage() {
     if (!planToApprove) return;
     setApprovingPlan(true);
     try {
-      await api.post(`/maintenance/${planToApprove.id}/approve`);
+      await api.put(`/maintenance/${planToApprove.id}/approve`);
       setPlanToApprove(null);
       showToast('Maintenance plan approved', 'success');
       fetchData();
@@ -457,7 +458,7 @@ export default function IncidentDetailPage() {
                           <span className={`text-[11px] font-medium ${plan.approved ? 'text-status-healthy' : 'text-text-subtle'}`}>
                             {plan.approved ? 'Approved' : 'Pending approval'}
                           </span>
-                          {canEdit && !plan.approved && (
+                          {isAdmin && !plan.approved && (
                             <button
                               onClick={() => setPlanToApprove(plan)}
                               className="px-2.5 py-1 text-[11px] font-medium bg-accent-weak text-accent rounded-pill hover:bg-accent-muted transition-standard"

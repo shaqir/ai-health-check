@@ -27,7 +27,12 @@ function resolveChip(trend, higherIsBetter) {
   return CHIP.steady;
 }
 
-const TREND_TIP = 'Compared to the previous period. Falls back to Stable when either window has fewer than 3 samples.';
+const TREND_TIP =
+  'Direction vs. the previous comparable window (e.g. this week vs. last week). ' +
+  'Improving = the metric moved in the good direction by more than 5%. ' +
+  'Worsening = it moved in the bad direction by more than 5%. ' +
+  'Stable = change is within ±5%, or either window has fewer than 3 samples ' +
+  '(we refuse to draw an arrow on noise).';
 
 export default function MetricCard({
   title,

@@ -45,7 +45,7 @@ export function Tooltip({ content, children, className = '' }) {
             left: pos.left,
             transform: `translate(-50%, ${pos.below ? '0' : '-100%'})`,
           }}
-          className="fixed z-[200] px-3 py-2 text-[11px] leading-snug text-text max-w-[260px] w-max bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material rounded-md border border-hairline shadow-md pointer-events-none"
+          className="fixed z-[200] px-3 py-2 text-[11px] leading-snug text-text max-w-[320px] w-max bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material rounded-md border border-hairline shadow-md pointer-events-none"
         >
           {content}
         </div>,

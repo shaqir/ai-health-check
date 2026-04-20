@@ -22,6 +22,51 @@ import {
 
 const QUALITY_THRESHOLD = 70;
 
+// Metric-card tooltips — structured (title + body + source) so the panel
+// tiles are self-explanatory without needing to open the Evaluations or
+// Registry pages. Kept short enough to stay readable at 320px max-width.
+function TipContent({ title, body, source }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="font-semibold text-text text-[12px] tracking-tight">{title}</p>
+      <p className="text-text">{body}</p>
+      {source && <p className="text-text-subtle text-[10px] leading-snug">{source}</p>}
+    </div>
+  );
+}
+
+const TIP_ACTIVE_SERVICES = (
+  <TipContent
+    title="Active Services"
+    body="How many AI services are registered and currently enabled for monitoring. Disabled or archived services are excluded."
+    source="Source: Service Registry. Respects the Dev / Staging / Production tab above."
+  />
+);
+
+const TIP_AVG_QUALITY = (
+  <TipContent
+    title="Average Quality Score"
+    body="How well the AI's answers match the expected output, on a 0–100 scale. Higher is better — combines accuracy, relevance, and adherence to prompt instructions."
+    source="Source: last 10 evaluation runs. Trend compares these 10 vs. the previous 10 — a ↓ arrow means answers are getting worse."
+  />
+);
+
+const TIP_ERROR_RATE = (
+  <TipContent
+    title="Quality Error Rate (Drift)"
+    body="Percentage of evaluation runs in the last 7 days flagged for quality drift — the model still answered, but the response diverged from the expected output."
+    source="This is QUALITY error, not infrastructure error. HTTP 500s, timeouts, and rate-limit blocks are tracked separately on the Service Registry page. Trend compares this week to last week."
+  />
+);
+
+const TIP_AVG_LATENCY = (
+  <TipContent
+    title="Average Response Time"
+    body="Mean round-trip time for health-check probes against each active AI service, over the last 24 hours. Lower is faster."
+    source="Source: ping scheduler. For p50 / p95 / p99 tail-latency, see the Performance panel below. Trend compares the last 24h to the 24h before."
+  />
+);
+
 // Shared tooltip for the main charts — pill-shaped with blur material so it
 // reads over dark chart areas without washing out.
 function ChartTooltip({ active, payload, label, unit = '', decimals = 0 }) {
@@ -207,7 +252,7 @@ export default function DashboardPage() {
           value={metrics.active_services}
           icon={Server}
           color="slate"
-          tooltip="Count of AI services registered in the platform that are currently enabled."
+          tooltip={TIP_ACTIVE_SERVICES}
         />
         <MetricCard
           title="Avg Quality"
@@ -218,7 +263,7 @@ export default function DashboardPage() {
           color="green"
           sparklineData={qualityData}
           sparklineKey="score"
-          tooltip="Rolling average of evaluation scores (0–100%) across all recent runs. Higher is better. Measures how well the AI's answers match expected outputs."
+          tooltip={TIP_AVG_QUALITY}
         />
         <MetricCard
           title="Error Rate"
@@ -231,7 +276,7 @@ export default function DashboardPage() {
           sparklineData={errorData}
           sparklineKey="rate"
           caption="Model quality, not server uptime"
-          tooltip="Percentage of evaluation runs in the last 7 days flagged for quality drift (answers diverged from expected outputs). This is QUALITY error — not HTTP failures, not blocked prompts. Infra failures are tracked separately via the Service Registry ping."
+          tooltip={TIP_ERROR_RATE}
         />
         <MetricCard
           title="Avg Latency"
@@ -242,7 +287,7 @@ export default function DashboardPage() {
           color="blue"
           sparklineData={latencyData}
           sparklineKey="ms"
-          tooltip="Mean response time across all LLM calls in the last 24 hours. Lower is better. See the percentile tiles below for tail-latency."
+          tooltip={TIP_AVG_LATENCY}
         />
       </div>
 

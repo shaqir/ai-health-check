@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, AlertCircle } from 'lucide-react';
 import Modal from './Modal';
 
 /**
@@ -25,10 +25,13 @@ export default function ReviewerNoteModal({
   ),
   minLength = 20,
   busy = false,
+  error = null,
 }) {
   const [note, setNote] = useState('');
 
-  // Reset the field every time the modal opens fresh
+  // Reset the field every time the modal opens fresh. If it's already open
+  // when an error arrives, keep the typed text — losing it on a validation
+  // failure is the footgun we're specifically trying to fix.
   useEffect(() => {
     if (isOpen) setNote('');
   }, [isOpen]);
@@ -72,6 +75,16 @@ export default function ReviewerNoteModal({
         </div>
         <p className="flex-1 text-sm text-text-muted leading-relaxed">{description}</p>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 px-3 py-2 mb-3 text-[12px] text-status-failing bg-status-failing-muted border border-status-failing/30 rounded-md"
+        >
+          <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
 
       <label htmlFor="reviewer-note" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
         Reviewer note

@@ -200,6 +200,11 @@ class MaintenancePlan(Base):
     rollback_plan = Column(Text, nullable=False)
     validation_steps = Column(Text, nullable=False)
     approved = Column(Boolean, default=False)
+    # Approver attribution — same shape as Incident.approved_by / _at so the
+    # audit-of-record + the UI both know WHO approved WHEN. Nullable because
+    # rows start unapproved and are filled in on the approve endpoint.
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
     scheduled_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

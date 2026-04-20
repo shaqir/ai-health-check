@@ -41,13 +41,20 @@ export default function IncidentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(INITIAL_FORM);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  const [submitting, setSubmitting] = useState(false);
+  const [activeEnv, setActiveEnv] = useState('all');
+  // Live refresh indicator — honest "Updated Ns ago" + one-shot pulse on
+  // actual refresh, mirroring Dashboard + Evaluations.
+  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(Date.now());
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
     setError(null);
     try {
+      const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
       const [incRes, srvRes] = await Promise.all([
-        api.get('/incidents'),
+        api.get('/incidents', { params: envParam }),
         api.get('/services'),
       ]);
       setIncidents(incRes.data);
@@ -55,6 +62,7 @@ export default function IncidentsPage() {
       if (srvRes.data.length > 0 && !form.service_id) {
         setForm(prev => ({ ...prev, service_id: srvRes.data[0].id }));
       }
+      setLastFetchAt(Date.now());
     } catch (err) {
       setError('Failed to load incidents.');
     } finally {
@@ -62,7 +70,20 @@ export default function IncidentsPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    setLoading(true);
+    fetchData();
+    const interval = setInterval(() => fetchData(), 30000);
+    return () => clearInterval(interval);
+  }, [activeEnv]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
+  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
   // Prefill the form when navigated here from an alert's "Create incident"
   // button (router state carries {prefill: {service_name, severity, symptoms,
@@ -96,6 +117,8 @@ export default function IncidentsPage() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await api.post('/incidents', form);
       setShowForm(false);
@@ -104,6 +127,8 @@ export default function IncidentsPage() {
       fetchData();
     } catch (err) {
       showToast(err.response?.data?.detail || 'Failed to report incident', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -123,14 +148,51 @@ export default function IncidentsPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="Incidents" description="Report, investigate, and draft summaries for AI system incidents.">
-        {canEdit && (
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
+        <div className="flex items-center gap-3">
+          {/* Live refresh indicator */}
+          <div
+            className="flex items-center gap-1.5"
+            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
+            title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
           >
-            <Plus size={14} strokeWidth={1.75} /> Report
-          </button>
-        )}
+            <span
+              key={lastFetchAt}
+              className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
+              aria-hidden="true"
+            />
+            <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
+              Updated {updatedLabel}
+            </span>
+          </div>
+
+          {/* Env tabs */}
+          <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Environment filter">
+            {['all', 'dev', 'staging', 'production'].map((tab) => (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={activeEnv === tab}
+                onClick={() => setActiveEnv(tab)}
+                className={`px-3 py-1 text-[12px] font-medium rounded-pill capitalize transition-standard ${
+                  activeEnv === tab
+                    ? 'bg-surface-elevated text-text shadow-xs'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {canEdit && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
+            >
+              <Plus size={14} strokeWidth={1.75} /> Report
+            </button>
+          )}
+        </div>
       </PageHeader>
 
       {/* Create form */}
@@ -192,10 +254,20 @@ export default function IncidentsPage() {
           </div>
 
           <div className="flex gap-2 pt-4 border-t border-hairline">
-            <button type="submit" className="px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard">
-              Save incident
+            <button
+              type="submit"
+              disabled={submitting}
+              aria-busy={submitting}
+              className="px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? 'Saving…' : 'Save incident'}
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              disabled={submitting}
+              className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
+            >
               Cancel
             </button>
           </div>
@@ -228,10 +300,24 @@ export default function IncidentsPage() {
               <p className="text-sm text-text-muted line-clamp-1">{inc.symptoms}</p>
 
               <div className="flex items-center gap-4 mt-3 text-xs text-text-subtle">
-                <span className="flex items-center gap-1 font-mono tabular-nums">
-                  <Clock size={12} strokeWidth={1.5} />
-                  {new Date(inc.created_at).toLocaleString()}
-                </span>
+                {(() => {
+                  const d = inc.created_at ? new Date(inc.created_at) : null;
+                  if (!d || Number.isNaN(d.getTime())) {
+                    return <span className="flex items-center gap-1 font-mono"><Clock size={12} strokeWidth={1.5} />—</span>;
+                  }
+                  const short = d.toLocaleString(undefined, {
+                    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                  });
+                  return (
+                    <span
+                      className="flex items-center gap-1 font-mono tabular-nums"
+                      title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+                    >
+                      <Clock size={12} strokeWidth={1.5} />
+                      {short}
+                    </span>
+                  );
+                })()}
                 {inc.summary && (
                   <span className="text-status-healthy font-medium">Summary published</span>
                 )}

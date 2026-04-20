@@ -16,6 +16,7 @@ from app.models import (
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.middleware.audit import log_action
+from app.services.env_filter import apply_env_filter
 from app.services.llm_client import generate_summary
 from app.services.sensitivity import enforce_sensitivity
 
@@ -52,7 +53,10 @@ class IncidentResponse(BaseModel):
     summary: str
     summary_draft: str
     root_causes: str
-    timeline: Optional[datetime] = None
+    # Timestamps are strings carrying ISO-8601 with explicit +00:00 so the
+    # frontend can parse via new Date() and render in the viewer's timezone.
+    # SQLite drops tzinfo on write, so we re-attach UTC here.
+    timeline: Optional[str] = None
     checklist_data_issue: bool
     checklist_prompt_change: bool
     checklist_model_update: bool
@@ -61,13 +65,18 @@ class IncidentResponse(BaseModel):
     # HITL attribution — frontend renders "Approved by X at Y" so the
     # reviewer_note enforcement is visibly connected to a human.
     approved_by_email: Optional[str] = None
-    approved_at: Optional[datetime] = None
+    approved_at: Optional[str] = None
     reviewer_note: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: str
+    updated_at: str
 
-    class Config:
-        from_attributes = True
+
+def _iso_utc(value: Optional[datetime]) -> Optional[str]:
+    """Serialize a naive-UTC datetime as ISO-8601 with explicit +00:00 offset.
+    Matches Dashboard/Maintenance convention."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc).isoformat()
 
 
 def _serialize_incident(inc: Incident, db: Session) -> IncidentResponse:
@@ -87,17 +96,17 @@ def _serialize_incident(inc: Incident, db: Session) -> IncidentResponse:
         summary=inc.summary,
         summary_draft=inc.summary_draft,
         root_causes=inc.root_causes,
-        timeline=inc.timeline,
+        timeline=_iso_utc(inc.timeline),
         checklist_data_issue=inc.checklist_data_issue,
         checklist_prompt_change=inc.checklist_prompt_change,
         checklist_model_update=inc.checklist_model_update,
         checklist_infrastructure=inc.checklist_infrastructure,
         checklist_safety_policy=inc.checklist_safety_policy,
         approved_by_email=approver_email,
-        approved_at=inc.approved_at,
+        approved_at=_iso_utc(inc.approved_at),
         reviewer_note=inc.reviewer_note,
-        created_at=inc.created_at,
-        updated_at=inc.updated_at,
+        created_at=_iso_utc(inc.created_at),
+        updated_at=_iso_utc(inc.updated_at),
     )
 
 
@@ -105,11 +114,13 @@ def _serialize_incident(inc: Incident, db: Session) -> IncidentResponse:
 
 @router.get("", response_model=List[IncidentResponse])
 def list_incidents(
+    environment: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """List all incidents globally."""
-    incidents = db.query(Incident).order_by(Incident.created_at.desc()).all()
+    """List incidents, optionally scoped to a service environment."""
+    query = apply_env_filter(db.query(Incident), environment)
+    incidents = query.order_by(Incident.created_at.desc()).all()
     return [_serialize_incident(inc, db) for inc in incidents]
 
 

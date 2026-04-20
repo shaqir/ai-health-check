@@ -33,18 +33,23 @@ export default function IncidentDetailPage() {
   const [error, setError] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [showMaintForm, setShowMaintForm] = useState(false);
+  const [submittingMaint, setSubmittingMaint] = useState(false);
 
   const [maintForm, setMaintForm] = useState({
     risk_level: 'medium', rollback_plan: '', validation_steps: '',
-    scheduled_date: '', human_approved: false,
+    scheduled_date: '',
   });
   // Reviewer-note modal state for incident summary approval. Open =
   // modal visible; busy = API call in flight.
   const [reviewerNoteOpen, setReviewerNoteOpen] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState(null);
   const [planToApprove, setPlanToApprove] = useState(null);
   const [approvingPlan, setApprovingPlan] = useState(false);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  // Live refresh indicator — matches Dashboard/Evaluations/Incidents pattern.
+  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(Date.now());
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
@@ -52,12 +57,13 @@ export default function IncidentDetailPage() {
     try {
       const [incRes, maintRes] = await Promise.all([
         api.get('/incidents'),
-        api.get('/maintenance'),
+        api.get(`/maintenance?incident_id=${id}`),
       ]);
       const found = incRes.data.find(i => i.id === parseInt(id));
       if (!found) { navigate('/incidents'); return; }
       setIncident(found);
-      setMaintenancePlans(maintRes.data.filter(p => p.incident_id === parseInt(id)));
+      setMaintenancePlans(maintRes.data);
+      setLastFetchAt(Date.now());
     } catch (err) {
       setError('Failed to load incident details.');
     } finally {
@@ -65,7 +71,20 @@ export default function IncidentDetailPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [id]);
+  useEffect(() => {
+    setLoading(true);
+    fetchData();
+    const interval = setInterval(() => fetchData(), 30000);
+    return () => clearInterval(interval);
+  }, [id]);
+
+  useEffect(() => {
+    const tid = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(tid);
+  }, []);
+
+  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
+  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
   const handleGenerateSummary = async () => {
     setGenerating(true);
@@ -84,17 +103,25 @@ export default function IncidentDetailPage() {
   //   1. User clicks "Approve" — we open ReviewerNoteModal
   //   2. User types a note (≥20 non-whitespace chars enforced client-side
   //      AND server-side) and submits — we POST with the note
-  const handleApproveSummary = () => setReviewerNoteOpen(true);
+  const handleApproveSummary = () => {
+    setApproveError(null);
+    setReviewerNoteOpen(true);
+  };
 
   const submitReviewerNote = async (note) => {
     setApproving(true);
+    setApproveError(null);
     try {
       await api.post(`/incidents/${id}/approve-summary`, { reviewer_note: note });
       setReviewerNoteOpen(false);
       showToast('Summary approved', 'success');
       fetchData();
     } catch (err) {
-      showToast('Failed to approve summary: ' + (err.response?.data?.detail || err.message), 'error');
+      // Keep the modal open so the user can retry without losing context.
+      // Inline banner in ReviewerNoteModal + Toast for redundancy.
+      const detail = err.response?.data?.detail || err.message;
+      setApproveError(typeof detail === 'string' ? detail : 'Approval failed — please try again.');
+      showToast('Failed to approve summary: ' + detail, 'error');
     } finally {
       setApproving(false);
     }
@@ -102,14 +129,18 @@ export default function IncidentDetailPage() {
 
   const handleCreateMaintenance = async (e) => {
     e.preventDefault();
+    if (submittingMaint) return;
+    setSubmittingMaint(true);
     try {
       await api.post('/maintenance', { ...maintForm, incident_id: parseInt(id) });
       setShowMaintForm(false);
-      setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '', scheduled_date: '', human_approved: false });
+      setMaintForm({ risk_level: 'medium', rollback_plan: '', validation_steps: '', scheduled_date: '' });
       showToast('Maintenance plan created', 'success');
       fetchData();
     } catch (err) {
       showToast('Failed to create maintenance plan: ' + (err.response?.data?.detail || err.message), 'error');
+    } finally {
+      setSubmittingMaint(false);
     }
   };
 
@@ -148,12 +179,28 @@ export default function IncidentDetailPage() {
         title={`Incident INC-${incident.id}`}
         description={`Service: ${incident.service_name}`}
       >
-        <Link
-          to="/incidents"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard"
-        >
-          <ArrowLeft size={12} strokeWidth={1.5} /> Back
-        </Link>
+        <div className="flex items-center gap-3">
+          <div
+            className="flex items-center gap-1.5"
+            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
+            title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
+          >
+            <span
+              key={lastFetchAt}
+              className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
+              aria-hidden="true"
+            />
+            <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
+              Updated {updatedLabel}
+            </span>
+          </div>
+          <Link
+            to="/incidents"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard"
+          >
+            <ArrowLeft size={12} strokeWidth={1.5} /> Back
+          </Link>
+        </div>
       </PageHeader>
 
       {/* Secondary metadata strip — sits below the sticky bar, preserves
@@ -161,10 +208,22 @@ export default function IncidentDetailPage() {
       <div className="flex flex-wrap items-center gap-3 text-[12px] text-text-muted">
         <StatusBadge status={incident.severity} />
         <StatusBadge status={incident.status} />
-        <span className="flex items-center gap-1.5 font-mono tabular-nums text-text-subtle">
-          <Clock size={12} strokeWidth={1.5} />
-          Reported {new Date(incident.created_at).toLocaleString()}
-        </span>
+        {(() => {
+          const d = incident.created_at ? new Date(incident.created_at) : null;
+          if (!d || Number.isNaN(d.getTime())) return null;
+          const short = d.toLocaleString(undefined, {
+            month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+          });
+          return (
+            <span
+              className="flex items-center gap-1.5 font-mono tabular-nums text-text-subtle"
+              title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+            >
+              <Clock size={12} strokeWidth={1.5} />
+              Reported {short}
+            </span>
+          );
+        })()}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -211,6 +270,7 @@ export default function IncidentDetailPage() {
                 <button
                   onClick={handleGenerateSummary}
                   disabled={generating}
+                  aria-busy={generating}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] font-medium bg-accent-weak text-accent rounded-pill hover:bg-accent-muted disabled:opacity-50 transition-standard"
                 >
                   {generating ? (
@@ -241,7 +301,7 @@ export default function IncidentDetailPage() {
                           <button onClick={handleApproveSummary} className="px-3 py-1 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard">
                             Approve &amp; publish
                           </button>
-                          <button onClick={handleGenerateSummary} disabled={generating} className="inline-flex items-center gap-1.5 px-3 py-1 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard disabled:opacity-50">
+                          <button onClick={handleGenerateSummary} disabled={generating} aria-busy={generating} className="inline-flex items-center gap-1.5 px-3 py-1 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard disabled:opacity-50">
                             {generating ? (
                               <>
                                 <Loader2 size={12} strokeWidth={1.75} className="animate-spin" />
@@ -274,21 +334,32 @@ export default function IncidentDetailPage() {
                 {/* HITL attribution — visible proof that the reviewer_note
                     requirement and four-eyes audit trail actually fired. */}
                 {incident.summary && incident.approved_by_email && (
-                  <div className="pt-3 border-t border-hairline flex items-start gap-2 bg-status-healthy-muted rounded-lg p-3">
+                  <div
+                    role="status"
+                    className="pt-3 border-t border-hairline flex items-start gap-2 bg-status-healthy-muted rounded-lg p-3"
+                  >
                     <ShieldCheck size={14} strokeWidth={1.75} className="text-status-healthy shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <p className="text-[12px] text-text">
                         <span className="font-medium">Approved by</span>{' '}
                         <span className="font-mono">{incident.approved_by_email}</span>
-                        {incident.approved_at && (
-                          <>
-                            {' '}
-                            <span className="text-text-muted">at</span>{' '}
-                            <span className="font-mono tabular-nums">
-                              {new Date(incident.approved_at).toLocaleString()}
-                            </span>
-                          </>
-                        )}
+                        {incident.approved_at && (() => {
+                          const d = new Date(incident.approved_at);
+                          if (Number.isNaN(d.getTime())) return null;
+                          const full = d.toLocaleString();
+                          return (
+                            <>
+                              {' '}
+                              <span className="text-text-muted">at</span>{' '}
+                              <span
+                                className="font-mono tabular-nums"
+                                title={`${full} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+                              >
+                                {full}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </p>
                       {incident.reviewer_note && (
                         <p className="text-[12px] text-text-muted mt-1 italic leading-snug">
@@ -342,13 +413,27 @@ export default function IncidentDetailPage() {
                   placeholder="When should this change be applied?"
                   presets={['plus1h', 'tomorrow9am', 'nextWeek']}
                 />
-                <label className="flex items-center gap-2 text-sm text-text cursor-pointer">
-                  <input type="checkbox" className="w-3.5 h-3.5 rounded-xs accent-accent" checked={maintForm.human_approved} onChange={e => setMaintForm({ ...maintForm, human_approved: e.target.checked })} />
-                  I have reviewed and approve this plan
-                </label>
+                <p className="text-[11px] text-text-subtle leading-snug">
+                  Plans start unapproved. Submit creates the proposal — use the
+                  Approve button on the timeline below once reviewed.
+                </p>
                 <div className="flex gap-2 pt-2">
-                  <button type="submit" className="px-3.5 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard">Submit</button>
-                  <button type="button" onClick={() => setShowMaintForm(false)} className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface rounded-pill hover:text-text transition-standard">Cancel</button>
+                  <button
+                    type="submit"
+                    disabled={submittingMaint}
+                    aria-busy={submittingMaint}
+                    className="px-3.5 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover transition-standard disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {submittingMaint ? 'Submitting…' : 'Submit'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowMaintForm(false)}
+                    disabled={submittingMaint}
+                    className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface rounded-pill hover:text-text transition-standard disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
                 </div>
               </form>
             )}
@@ -382,12 +467,22 @@ export default function IncidentDetailPage() {
                           )}
                         </div>
                       </div>
-                      {plan.scheduled_date && (
-                        <p className="text-[12px] text-text-muted font-mono tabular-nums mb-3 flex items-center gap-1.5">
-                          <Clock size={12} strokeWidth={1.5} />
-                          Scheduled: {new Date(plan.scheduled_date).toLocaleString()}
-                        </p>
-                      )}
+                      {plan.scheduled_date && (() => {
+                        const d = new Date(plan.scheduled_date);
+                        if (Number.isNaN(d.getTime())) return null;
+                        const short = d.toLocaleString(undefined, {
+                          month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                        });
+                        return (
+                          <p
+                            className="text-[12px] text-text-muted font-mono tabular-nums mb-3 flex items-center gap-1.5"
+                            title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+                          >
+                            <Clock size={12} strokeWidth={1.5} />
+                            Scheduled: {short}
+                          </p>
+                        );
+                      })()}
                       <div className="space-y-2.5">
                         <div>
                           <h5 className="text-[11px] font-medium text-text-subtle tracking-tight mb-1">Rollback strategy</h5>
@@ -412,9 +507,14 @@ export default function IncidentDetailPage() {
           contract with a live character count and inline validation. */}
       <ReviewerNoteModal
         isOpen={reviewerNoteOpen}
-        onClose={() => (approving ? null : setReviewerNoteOpen(false))}
+        onClose={() => {
+          if (approving) return;
+          setReviewerNoteOpen(false);
+          setApproveError(null);
+        }}
         onSubmit={submitReviewerNote}
         busy={approving}
+        error={approveError}
       />
 
       <ConfirmModal

@@ -3,7 +3,7 @@ User management router (Module 4).
 Admin-only endpoints for listing users and updating their role.
 """
 
-from datetime import datetime
+from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
@@ -26,7 +26,9 @@ class UserResponse(BaseModel):
     email: str
     role: str
     is_active: bool
-    created_at: datetime | None = None
+    # ISO-8601 with explicit +00:00; SQLite drops tzinfo but every write
+    # uses utcnow() so re-attaching UTC is always correct.
+    created_at: str | None = None
 
 
 class UserRoleUpdate(BaseModel):
@@ -50,7 +52,7 @@ def list_users(
             email=u.email,
             role=u.role.value,
             is_active=u.is_active,
-            created_at=u.created_at,
+            created_at=u.created_at.replace(tzinfo=timezone.utc).isoformat() if u.created_at else None,
         )
         for u in users
     ]

@@ -18,6 +18,11 @@ export default function GovernancePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  // Live refresh indicator (matches Dashboard / Evaluations / Incidents).
+  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(Date.now());
+  // Guards against double-submit on the role-change select.
+  const [changingRoleFor, setChangingRoleFor] = useState(null);
 
   const [exportRange, setExportRange] = useState({
     from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -27,38 +32,53 @@ export default function GovernancePage() {
 
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setError(null);
-      try {
-        // Audit log is admin-only (server-side) — skip the fetch for non-admins
-        if (isAdmin) {
-          const res = await api.get('/compliance/audit-log');
-          setAuditLogs(res.data.map(log => ({
-            id: log.id,
-            timestamp: log.timestamp ? new Date(log.timestamp).toLocaleString() : '',
-            user: log.user_email || 'system',
-            // Title-case snake_case action for display; keep the raw value
-            // available in details if an examiner inspects the network tab.
-            action: log.action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-            target: `${log.target_table}#${log.target_id || ''}`,
-            details: log.new_value || log.old_value || '',
-          })));
+  const fetchData = async () => {
+    setError(null);
+    try {
+      // Audit log is admin-only (server-side) — skip the fetch for non-admins
+      if (isAdmin) {
+        const res = await api.get('/compliance/audit-log');
+        setAuditLogs(res.data.map(log => ({
+          id: log.id,
+          // Keep the raw ISO string so the column renderer can do
+          // tz-aware formatting with a hover tooltip (Dashboard pattern).
+          timestamp: log.timestamp || '',
+          user: log.user_email || 'system',
+          // Title-case snake_case action for display; keep the raw value
+          // available in details if an examiner inspects the network tab.
+          action: log.action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          target: `${log.target_table}#${log.target_id || ''}`,
+          details: log.new_value || log.old_value || '',
+        })));
 
-          const userRes = await api.get('/compliance/users');
-          setUsers(userRes.data.map(u => ({
-            id: u.id, email: u.email, role: u.role,
-            lastActive: u.created_at ? new Date(u.created_at).toLocaleDateString() : '',
-          })));
-        }
-      } catch {
-        setError('Failed to load governance data.');
-      } finally {
-        setLoading(false);
+        const userRes = await api.get('/compliance/users');
+        setUsers(userRes.data.map(u => ({
+          id: u.id, email: u.email, role: u.role,
+          createdAt: u.created_at || null,
+        })));
       }
-    };
+      setLastFetchAt(Date.now());
+    } catch {
+      setError('Failed to load governance data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setLoading(true);
     fetchData();
+    const interval = setInterval(() => fetchData(), 30000);
+    return () => clearInterval(interval);
   }, [isAdmin]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
+  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
   const handleVerifyIntegrity = async () => {
     try {
@@ -98,18 +118,43 @@ export default function GovernancePage() {
   };
 
   const handleChangeRole = async (userId, newRole) => {
+    if (changingRoleFor) return; // guard against double-click while a PUT is mid-flight
     if (!confirm(`Change this user's role to ${newRole}?`)) return;
+    setChangingRoleFor(userId);
     try {
       await api.put(`/compliance/users/${userId}/role`, { role: newRole });
       showToast(`Role updated to ${newRole}`, 'success');
       setUsers(users.map(u => u.id === userId ? { ...u, role: newRole } : u));
     } catch (err) {
       showToast(err.response?.data?.detail || 'Failed to update role', 'error');
+    } finally {
+      setChangingRoleFor(null);
     }
   };
 
   const auditColumns = [
-    { key: 'timestamp', label: 'Time', render: (v) => <span className="font-mono tabular-nums text-xs">{v}</span> },
+    {
+      key: 'timestamp',
+      label: 'Time',
+      render: (v) => {
+        if (!v) return <span className="font-mono text-xs text-text-subtle">—</span>;
+        const d = new Date(v);
+        if (Number.isNaN(d.getTime())) {
+          return <span className="font-mono tabular-nums text-xs">{v}</span>;
+        }
+        const short = d.toLocaleString(undefined, {
+          month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+        return (
+          <span
+            className="font-mono tabular-nums text-xs"
+            title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+          >
+            {short}
+          </span>
+        );
+      },
+    },
     { key: 'user', label: 'Actor', render: (v) => <span className="font-medium text-text">{v}</span> },
     { key: 'action', label: 'Action', render: (v) => <span className="text-[12px] font-medium text-text">{v}</span> },
     { key: 'target', label: 'Target', render: (v) => <span className="font-mono text-xs">{v}</span> },
@@ -134,9 +179,27 @@ export default function GovernancePage() {
       {toast.visible && <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, visible: false })} />}
 
       <PageHeader title="Governance" description="Audit logs, role-based access control, and compliance exports.">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-accent-weak rounded-pill">
-          <Shield size={12} strokeWidth={1.75} className="text-accent" />
-          <span className="text-[11px] font-medium text-accent capitalize tracking-tight">{user?.role}</span>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <div
+              className="flex items-center gap-1.5"
+              aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
+              title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
+            >
+              <span
+                key={lastFetchAt}
+                className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
+                aria-hidden="true"
+              />
+              <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
+                Updated {updatedLabel}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-accent-weak rounded-pill">
+            <Shield size={12} strokeWidth={1.75} className="text-accent" />
+            <span className="text-[11px] font-medium text-accent capitalize tracking-tight">{user?.role}</span>
+          </div>
         </div>
       </PageHeader>
 
@@ -180,6 +243,8 @@ export default function GovernancePage() {
                 </button>
                 {integrity && (
                   <div
+                    role="status"
+                    aria-live="polite"
                     className={`flex items-start gap-2 p-2.5 rounded-md text-[11px] ${
                       integrity.valid
                         ? 'bg-status-healthy-muted text-status-healthy'
@@ -245,25 +310,38 @@ export default function GovernancePage() {
                 <h3 className="text-[13px] font-semibold text-text tracking-tight">User roles</h3>
               </div>
               <div>
-                {users.map(u => (
-                  <div key={u.id} className="px-5 py-3 flex items-center justify-between border-b border-hairline last:border-0 hover:bg-accent-weak transition-standard">
-                    <div>
-                      <p className="text-sm font-medium text-text">{u.email}</p>
-                      <p className="text-[10px] text-text-subtle font-mono">Joined {u.lastActive}</p>
+                {users.map(u => {
+                  const joined = u.createdAt ? new Date(u.createdAt) : null;
+                  const joinedShort = joined && !Number.isNaN(joined.getTime())
+                    ? joined.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
+                    : '—';
+                  const joinedTitle = joined && !Number.isNaN(joined.getTime())
+                    ? `${joined.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+                    : undefined;
+                  const busy = changingRoleFor === u.id;
+                  return (
+                    <div key={u.id} className="px-5 py-3 flex items-center justify-between border-b border-hairline last:border-0 hover:bg-accent-weak transition-standard">
+                      <div>
+                        <p className="text-sm font-medium text-text">{u.email}</p>
+                        <p className="text-[10px] text-text-subtle font-mono" title={joinedTitle}>
+                          Joined {joinedShort}
+                        </p>
+                      </div>
+                      <select
+                        className="px-3 py-1 text-[12px] bg-[var(--material-thick)] rounded-pill text-text transition-standard capitalize disabled:opacity-50 disabled:cursor-not-allowed"
+                        value={u.role}
+                        onChange={e => handleChangeRole(u.id, e.target.value)}
+                        disabled={u.email === user?.email || busy || Boolean(changingRoleFor)}
+                        aria-busy={busy}
+                        aria-label={`Role for ${u.email}`}
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="maintainer">Maintainer</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
                     </div>
-                    <select
-                      className="px-3 py-1 text-[12px] bg-[var(--material-thick)] rounded-pill text-text transition-standard capitalize"
-                      value={u.role}
-                      onChange={e => handleChangeRole(u.id, e.target.value)}
-                      disabled={u.email === user?.email}
-                      aria-label={`Role for ${u.email}`}
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="maintainer">Maintainer</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : (

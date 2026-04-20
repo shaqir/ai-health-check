@@ -8,7 +8,7 @@ Compliance export + AI report router (Module 4).
 """
 
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,11 +16,20 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AILlmDraft, AuditLog, EvalRun, Incident, MaintenancePlan, User
 from app.services.draft_service import approve_draft, create_draft
 from app.services.llm_client import generate_compliance_summary
+
+
+def _iso_utc(value: datetime | None) -> str:
+    """Serialize naive-UTC datetime as ISO-8601 with explicit +00:00.
+    Matches Dashboard/Incidents/Maintenance convention."""
+    if value is None:
+        return ""
+    return value.replace(tzinfo=timezone.utc).isoformat()
 
 router = APIRouter()
 
@@ -64,7 +73,7 @@ class ExportRequest(BaseModel):
 def export_compliance_data(
     req: ExportRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     # Strict date parsing — reject malformed dates instead of silently
     # dropping the filter (previous bug: typo in `from_date` returned the
@@ -103,7 +112,7 @@ def export_compliance_data(
             "target": f"{log.target_table}#{log.target_id}",
             "old_value": log.old_value or "",
             "new_value": log.new_value or "",
-            "timestamp": log.timestamp.isoformat() if log.timestamp else "",
+            "timestamp": _iso_utc(log.timestamp),
         })
 
     # ── Incidents (only approved summaries count as official) ──
@@ -136,8 +145,8 @@ def export_compliance_data(
                 "safety_policy": i.checklist_safety_policy,
             },
             "approved_by_user_id": i.approved_by,
-            "timeline": i.timeline.isoformat() if i.timeline else "",
-            "created_at": i.created_at.isoformat() if i.created_at else "",
+            "timeline": _iso_utc(i.timeline),
+            "created_at": _iso_utc(i.created_at),
         }
         for i in incidents
     ]
@@ -163,11 +172,23 @@ def export_compliance_data(
             "rollback_plan": p.rollback_plan,
             "validation_steps": p.validation_steps,
             "approved": p.approved,
-            "scheduled_date": p.scheduled_date.isoformat() if p.scheduled_date else "",
-            "created_at": p.created_at.isoformat() if p.created_at else "",
+            "scheduled_date": _iso_utc(p.scheduled_date),
+            "created_at": _iso_utc(p.created_at),
         }
         for p in plans
     ]
+
+    # Audit the export attempt — once we've successfully fetched the rows
+    # and before we dispatch on format, so both PDF and JSON paths get a
+    # trail. Hostile QA: "who exported the audit log?" — this is the answer.
+    log_action(
+        db, current_user.id, "export_compliance", "exports", None,
+        new_value=(
+            f"format={req.format}|audit={len(records)}|incidents={len(incidents_records)}"
+            f"|maintenance={len(maintenance_records)}"
+            f"|from={req.from_date or ''}|to={req.to_date or ''}"
+        ),
+    )
 
     if req.format == "pdf":
         try:
@@ -333,6 +354,12 @@ async def generate_ai_compliance_report(
         generated_by_user_id=current_user.id,
         surface_ref=surface_ref,
     )
+
+    log_action(
+        db, current_user.id, "generate_ai_report", "ai_llm_drafts", draft.id,
+        new_value=f"surface=compliance_report|range={surface_ref}",
+    )
+
     return {
         "draft_id": draft.id,
         "content": draft.content,
@@ -351,6 +378,12 @@ def approve_ai_report(
     current_user: User = Depends(get_current_user),
 ):
     draft = approve_draft(db, draft_id, current_user.id)
+
+    log_action(
+        db, current_user.id, "approve_ai_report", "ai_llm_drafts", draft.id,
+        new_value=f"surface={draft.surface}",
+    )
+
     return {
         "draft_id": draft.id,
         "approved": True,

@@ -2,7 +2,7 @@
 Audit log router (Module 4). Admin-only.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -26,7 +26,9 @@ class AuditLogResponse(BaseModel):
     target_id: int | None
     old_value: str
     new_value: str
-    timestamp: datetime | None
+    # ISO-8601 with explicit +00:00 — SQLite drops tzinfo on write but every
+    # app write path uses utcnow(), so re-attaching UTC is always correct.
+    timestamp: str | None
 
 
 @router.get(
@@ -81,7 +83,7 @@ def list_audit_logs(
             target_id=log.target_id,
             old_value=log.old_value or "",
             new_value=log.new_value or "",
-            timestamp=log.timestamp,
+            timestamp=log.timestamp.replace(tzinfo=timezone.utc).isoformat() if log.timestamp else None,
         ))
 
     return result

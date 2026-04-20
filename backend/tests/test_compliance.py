@@ -402,3 +402,77 @@ def test_export_pdf_renders_with_sections(client, db, admin_token):
     # Non-trivial byte length means the new sections rendered
     assert len(res.content) > 2000
     assert res.headers["content-type"] == "application/pdf"
+
+
+# ── Priority regression guards (governance parity sweep) ─────────────────────
+
+def test_audit_log_timestamp_has_utc_offset(client, db, admin_token, admin_user):
+    """
+    /compliance/audit-log must return timestamps as ISO-8601 strings with
+    an explicit +00:00 offset. Naive datetime emission (the bug we just
+    fixed) breaks frontend tz rendering.
+    """
+    db.add(AuditLog(
+        user_id=admin_user.id, action="create_service",
+        target_table="ai_services", target_id=1,
+        new_value="timestamp regression guard",
+    ))
+    db.commit()
+
+    res = client.get("/api/v1/compliance/audit-log", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) >= 1
+    for row in data:
+        ts = row["timestamp"]
+        assert isinstance(ts, str), f"timestamp must be a string, got {type(ts).__name__}"
+        assert ts.endswith("+00:00"), (
+            f"audit-log timestamp must carry an explicit UTC offset, got {ts!r}"
+        )
+
+
+def test_users_created_at_has_utc_offset(client, db, admin_token):
+    """
+    /compliance/users must emit created_at as ISO-8601 with +00:00 so the
+    GovernancePage renders correct "Joined" dates in the viewer's timezone.
+    """
+    res = client.get("/api/v1/compliance/users", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    users = res.json()
+    assert len(users) >= 1
+    for u in users:
+        created = u.get("created_at")
+        # created_at may legitimately be null on fixture users, but any non-null
+        # value must be a tz-qualified string.
+        if created is not None:
+            assert isinstance(created, str)
+            assert created.endswith("+00:00"), (
+                f"user.created_at must carry explicit UTC offset, got {created!r}"
+            )
+
+
+def test_export_writes_audit_row(client, db, admin_token, admin_user):
+    """
+    POST /compliance/export must write an audit row attributing the export
+    to the caller. Was silently missing before — hostile QA question "who
+    exported the audit log?" had no answer.
+    """
+    before = db.query(AuditLog).filter(AuditLog.action == "export_compliance").count()
+    res = client.post(
+        "/api/v1/compliance/export",
+        json={"format": "json"},
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    after = db.query(AuditLog).filter(AuditLog.action == "export_compliance").count()
+    assert after == before + 1, "export must write exactly one audit row"
+
+    # Attribution + metadata must be present.
+    latest = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "export_compliance")
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert latest.user_id == admin_user.id
+    assert "format=json" in (latest.new_value or "")

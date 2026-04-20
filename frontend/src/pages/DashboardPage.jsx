@@ -86,7 +86,9 @@ export default function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     fetchDashboard();
-    const interval = setInterval(() => fetchDashboard(), 15000);
+    // 30s matches the ops-dashboard norm. Backend's fastest real update is the
+    // 5-minute health-check scheduler, so polling faster is mostly theatre.
+    const interval = setInterval(() => fetchDashboard(), 30000);
     return () => clearInterval(interval);
   }, [activeEnv]);
 
@@ -164,8 +166,8 @@ export default function DashboardPage() {
               refresh (keyed by lastFetchAt), honest "Ns ago" counter. */}
           <div
             className="flex items-center gap-1.5"
-            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 15 seconds`}
-            title={`Refreshes every 15 seconds. Last: ${updatedLabel}.`}
+            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
+            title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
           >
             <span
               key={lastFetchAt}

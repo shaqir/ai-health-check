@@ -45,7 +45,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchAll(true);
-    const interval = setInterval(() => fetchAll(false), 10000);
+    // 60s — the data on this page (daily spend, token totals, blocked calls)
+    // only changes on LLM-call cadence. 10s was overkill.
+    const interval = setInterval(() => fetchAll(false), 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -147,12 +149,6 @@ export default function SettingsPage() {
                 value={`${config.evaluation.health_check_schedule_minutes} min`}
                 mono
                 tooltip="How often the system pings each service to confirm it's reachable."
-              />
-              <Row
-                label="Eval schedule"
-                value={`${config.evaluation.eval_schedule_minutes} min`}
-                mono
-                tooltip="How often automated evaluations run against each service."
               />
             </Card>
           )}

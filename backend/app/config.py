@@ -36,7 +36,6 @@ class Settings(BaseSettings):
 
     # Evaluation
     drift_threshold: float = 75.0
-    eval_schedule_minutes: int = 60
     health_check_schedule_minutes: int = 5
 
     # API Budget (USD) — set 0 for unlimited

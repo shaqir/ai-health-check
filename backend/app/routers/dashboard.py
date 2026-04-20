@@ -499,7 +499,6 @@ def get_platform_settings(
         },
         "evaluation": {
             "drift_threshold_pct": settings.drift_threshold,
-            "eval_schedule_minutes": settings.eval_schedule_minutes,
             "health_check_schedule_minutes": settings.health_check_schedule_minutes,
         },
         "pricing": {

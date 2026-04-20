@@ -85,11 +85,14 @@ class AIService(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
-    connection_logs = relationship("ConnectionLog", back_populates="service")
-    eval_test_cases = relationship("EvalTestCase", back_populates="service")
-    eval_runs = relationship("EvalRun", back_populates="service")
-    incidents = relationship("Incident", back_populates="service")
-    telemetry = relationship("Telemetry", back_populates="service")
+    # cascade="all, delete-orphan" so deleting a service emits DELETEs for its
+    # children — otherwise SQLAlchemy's default tries to null child FKs, which
+    # fails the NOT NULL constraint on service_id and aborts the delete.
+    connection_logs = relationship("ConnectionLog", back_populates="service", cascade="all, delete-orphan")
+    eval_test_cases = relationship("EvalTestCase", back_populates="service", cascade="all, delete-orphan")
+    eval_runs = relationship("EvalRun", back_populates="service", cascade="all, delete-orphan")
+    incidents = relationship("Incident", back_populates="service", cascade="all, delete-orphan")
+    telemetry = relationship("Telemetry", back_populates="service", cascade="all, delete-orphan")
 
 
 class ConnectionLog(Base):
@@ -133,7 +136,7 @@ class EvalRun(Base):
     created_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="eval_runs")
-    results = relationship("EvalResult", back_populates="eval_run")
+    results = relationship("EvalResult", back_populates="eval_run", cascade="all, delete-orphan")
 
 
 class EvalResult(Base):
@@ -180,7 +183,7 @@ class Incident(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     service = relationship("AIService", back_populates="incidents")
-    maintenance_plans = relationship("MaintenancePlan", back_populates="incident")
+    maintenance_plans = relationship("MaintenancePlan", back_populates="incident", cascade="all, delete-orphan")
 
 
 class MaintenancePlan(Base):

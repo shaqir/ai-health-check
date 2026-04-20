@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Wifi, Trash2, LayoutGrid, List as ListIcon, Loader2, Server, Search } from 'lucide-react';
+import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -12,6 +12,11 @@ import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
 const ENV_OPTIONS = ['dev', 'staging', 'prod'];
+const DEFAULT_FORM = {
+  name: '', owner: '', environment: 'dev',
+  model_name: 'claude-sonnet-4-6-20250415',
+  sensitivity_label: 'internal', endpoint_url: '',
+};
 
 const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
@@ -23,19 +28,19 @@ export default function ServicesPage() {
   const [error, setError] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
   const [search, setSearch] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
+  // formMode: null | 'create' | 'edit'. editingId is set only for 'edit'.
+  const [formMode, setFormMode] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [formError, setFormError] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Confidential Ping confirmation — holds the service the user clicked
   // on until they either confirm the override or cancel. Null when closed.
   const [confidentialPingTarget, setConfidentialPingTarget] = useState(null);
 
-  const [form, setForm] = useState({
-    name: '', owner: '', environment: 'dev',
-    model_name: 'claude-sonnet-4-6-20250415',
-    sensitivity_label: 'internal', endpoint_url: '',
-  });
+  const [form, setForm] = useState(DEFAULT_FORM);
 
   const fetchServices = async () => {
     setError(null);
@@ -51,29 +56,66 @@ export default function ServicesPage() {
 
   useEffect(() => { fetchServices(); }, []);
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
+  const openCreateForm = () => {
+    setForm(DEFAULT_FORM);
+    setFormError(null);
+    setEditingId(null);
+    setFormMode('create');
+  };
+
+  const openEditForm = (service) => {
+    setForm({
+      name: service.name,
+      owner: service.owner,
+      environment: service.environment,
+      model_name: service.model_name,
+      sensitivity_label: service.sensitivity_label,
+      endpoint_url: service.endpoint_url || '',
+    });
+    setFormError(null);
+    setEditingId(service.id);
+    setFormMode('edit');
+  };
+
+  const closeForm = () => {
+    setFormMode(null);
+    setEditingId(null);
+    setFormError(null);
+  };
+
+  const handleSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     setIsSubmitting(true);
+    setFormError(null);
     try {
-      await api.post('/services', form);
-      setShowAddModal(false);
-      setForm({ name: '', owner: '', environment: 'dev', model_name: 'claude-sonnet-4-6-20250415', sensitivity_label: 'internal', endpoint_url: '' });
+      if (formMode === 'edit' && editingId != null) {
+        await api.put(`/services/${editingId}`, form);
+      } else {
+        await api.post('/services', form);
+      }
+      closeForm();
       fetchServices();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to create service');
+      setFormError(err.response?.data?.detail || `Failed to ${formMode === 'edit' ? 'update' : 'create'} service`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const closeDeleteConfirm = () => {
+    setDeleteConfirmId(null);
+    setDeleteError(null);
+  };
+
   const handleDelete = async () => {
     if (!deleteConfirmId) return;
+    setDeleteError(null);
     try {
       await api.delete(`/services/${deleteConfirmId}`);
-      setDeleteConfirmId(null);
+      closeDeleteConfirm();
       fetchServices();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to delete');
+      setDeleteError(err.response?.data?.detail || 'Failed to delete service');
     }
   };
 
@@ -167,7 +209,7 @@ export default function ServicesPage() {
 
           {canEdit && (
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={openCreateForm}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
             >
               <Plus size={14} strokeWidth={1.75} /> Register
@@ -183,7 +225,7 @@ export default function ServicesPage() {
           title="No services found"
           description={search ? 'Try a different search term.' : 'Get started by registering a new AI service.'}
           action={canEdit && !search && (
-            <button onClick={() => setShowAddModal(true)} className="px-3.5 py-1.5 text-[12px] font-medium text-accent bg-accent-weak rounded-pill hover:bg-accent-muted transition-standard">
+            <button onClick={openCreateForm} className="px-3.5 py-1.5 text-[12px] font-medium text-accent bg-accent-weak rounded-pill hover:bg-accent-muted transition-standard">
               Register service
             </button>
           )}
@@ -205,13 +247,22 @@ export default function ServicesPage() {
                       <p className="text-[12px] text-text-muted mt-0.5">{s.owner}</p>
                     </div>
                     {canEdit && (
-                      <button
-                        onClick={() => setDeleteConfirmId(s.id)}
-                        className="p-1.5 text-text-subtle hover:text-status-failing hover:bg-status-failing-muted rounded-pill transition-standard opacity-0 group-hover:opacity-100"
-                        aria-label={`Delete ${s.name}`}
-                      >
-                        <Trash2 size={14} strokeWidth={1.5} />
-                      </button>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-standard">
+                        <button
+                          onClick={() => openEditForm(s)}
+                          className="p-1.5 text-text-subtle hover:text-accent hover:bg-surface-elevated rounded-pill transition-standard"
+                          aria-label={`Edit ${s.name}`}
+                        >
+                          <Pencil size={14} strokeWidth={1.5} />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(s.id)}
+                          className="p-1.5 text-text-subtle hover:text-status-failing hover:bg-status-failing-muted rounded-pill transition-standard"
+                          aria-label={`Delete ${s.name}`}
+                        >
+                          <Trash2 size={14} strokeWidth={1.5} />
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -254,22 +305,33 @@ export default function ServicesPage() {
         </div>
       )}
 
-      {/* Add Service Modal */}
-      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Register AI service" footer={
-        <>
-          <button onClick={() => setShowAddModal(false)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
-            Cancel
-          </button>
-          <button
-            onClick={handleCreate}
-            disabled={isSubmitting || !form.name || !form.owner || !form.model_name}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover disabled:opacity-50 transition-standard"
-          >
-            {isSubmitting ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : 'Register'}
-          </button>
-        </>
-      }>
-        <form className="space-y-3" onSubmit={handleCreate}>
+      {/* Register / Edit Service Modal */}
+      <Modal
+        isOpen={formMode !== null}
+        onClose={closeForm}
+        title={formMode === 'edit' ? 'Edit AI service' : 'Register AI service'}
+        footer={
+          <>
+            <button onClick={closeForm} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={isSubmitting || !form.name || !form.owner || !form.model_name}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover disabled:opacity-50 transition-standard"
+            >
+              {isSubmitting ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : (formMode === 'edit' ? 'Save changes' : 'Register')}
+            </button>
+          </>
+        }
+      >
+        <form className="space-y-3" onSubmit={handleSubmit}>
+          {formError && (
+            <div role="alert" className="flex items-start gap-2 px-3 py-2 text-[12px] text-status-failing bg-status-failing-muted border border-status-failing/30 rounded-md">
+              <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 flex-shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={LABEL_CLS}>Service Name *</label>
@@ -306,9 +368,9 @@ export default function ServicesPage() {
       </Modal>
 
       {/* Delete Confirmation */}
-      <Modal isOpen={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="Delete service" maxWidth="max-w-sm" footer={
+      <Modal isOpen={!!deleteConfirmId} onClose={closeDeleteConfirm} title="Delete service" maxWidth="max-w-sm" footer={
         <>
-          <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
+          <button onClick={closeDeleteConfirm} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
             Cancel
           </button>
           <button onClick={handleDelete} className="px-4 py-1.5 bg-status-failing text-white text-[12px] font-medium rounded-pill hover:opacity-90 transition-standard">
@@ -319,6 +381,12 @@ export default function ServicesPage() {
         <p className="text-sm text-text-muted">
           This will permanently remove the service and its connection logs. This action cannot be undone.
         </p>
+        {deleteError && (
+          <div role="alert" className="mt-3 flex items-start gap-2 px-3 py-2 text-[12px] text-status-failing bg-status-failing-muted border border-status-failing/30 rounded-md">
+            <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 flex-shrink-0" />
+            <span>{deleteError}</span>
+          </div>
+        )}
       </Modal>
 
       {/* Confidential Ping override — admin-only path through the

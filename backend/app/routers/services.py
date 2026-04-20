@@ -274,17 +274,23 @@ def delete_service(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
 
+    # Cache before delete expires the ORM attributes.
+    service_name = service.name
+
+    db.delete(service)
+    db.commit()
+
+    # Log after the commit so a failed delete doesn't leave an orphan audit row
+    # pointing at a service that still exists.
     log_action(
         db,
         current_user.id,
         "delete_service",
         "ai_services",
-        service.id,
-        old_value=service.name,
+        service_id,
+        old_value=service_name,
     )
 
-    db.delete(service)
-    db.commit()
     return {"detail": "Service deleted", "id": service_id}
 
 

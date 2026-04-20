@@ -4,7 +4,12 @@ import { X } from 'lucide-react';
 export default function Modal({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-lg' }) {
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
+  const onCloseRef = useRef(onClose);
   const [entered, setEntered] = useState(false);
+
+  // Held in a ref so the focus/keydown effect below doesn't restart on every parent re-render —
+  // inline `onClose={() => ...}` props otherwise yanked focus back to the close button on each keystroke.
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -21,7 +26,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current?.();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -46,10 +51,12 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    closeRef.current?.focus();
+
+    const firstField = dialogRef.current?.querySelector('input, select, textarea');
+    (firstField ?? closeRef.current)?.focus();
 
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

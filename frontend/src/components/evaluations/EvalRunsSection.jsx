@@ -1,7 +1,40 @@
-import { Activity } from 'lucide-react';
+import { Activity, Clock, User as UserIcon } from 'lucide-react';
 import DataTable from '../common/DataTable';
 import StatusBadge from '../common/StatusBadge';
 import EmptyState from '../common/EmptyState';
+
+function RunTypeBadge({ value }) {
+  const scheduled = value === 'scheduled';
+  const Icon = scheduled ? Clock : UserIcon;
+  const cls = scheduled
+    ? 'bg-accent-weak text-accent'
+    : 'bg-surface-elevated text-text-muted';
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-pill text-[10px] font-medium capitalize ${cls}`}>
+      <Icon size={10} strokeWidth={2} />
+      {value || 'manual'}
+    </span>
+  );
+}
+
+function TimeCell({ value }) {
+  if (!value) return <span className="font-mono text-xs text-text-subtle">—</span>;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    return <span className="font-mono tabular-nums text-xs">{value}</span>;
+  }
+  const short = d.toLocaleString(undefined, {
+    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  return (
+    <span
+      className="font-mono tabular-nums text-xs"
+      title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+    >
+      {short}
+    </span>
+  );
+}
 
 export default function EvalRunsSection({ evalRuns }) {
   const columns = [
@@ -34,7 +67,7 @@ export default function EvalRunsSection({ evalRuns }) {
       key: 'run_type',
       label: 'Type',
       tooltip: 'How this run was triggered — manual (user clicked Run) or scheduled (recurring timer).',
-      render: (v) => <span className="capitalize">{v}</span>,
+      render: (v) => <RunTypeBadge value={v} />,
     },
     {
       key: 'drift_flagged',
@@ -42,7 +75,7 @@ export default function EvalRunsSection({ evalRuns }) {
       tooltip: 'Drift = quality dropped below the configured threshold. Triggers an alert.',
       render: (v) => <StatusBadge status={v ? 'Drift Detected' : 'Healthy'} />,
     },
-    { key: 'run_at', label: 'Time', render: (v) => <span className="font-mono tabular-nums text-xs">{v ? new Date(v).toLocaleString() : ''}</span> },
+    { key: 'run_at', label: 'Time', render: (v) => <TimeCell value={v} /> },
   ];
 
   return (

@@ -15,6 +15,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, AILlmDraft, Alert, APIUsageLog, ConnectionLog, EvalRun, Environment, Telemetry, User
 from app.services.draft_service import approve_draft, create_draft
+from app.services.env_filter import apply_env_filter as _env_filter
 from app.services.llm_client import generate_dashboard_insight
 
 router = APIRouter()
@@ -37,19 +38,6 @@ class DashboardMetrics(BaseModel):
 
 
 # ── Helpers ──
-
-def _env_filter(query, environment: str | None):
-    """Apply environment filter by joining to AIService."""
-    if environment and environment != "all":
-        env_map = {"production": "prod", "staging": "staging", "dev": "dev"}
-        env_val = env_map.get(environment, environment)
-        try:
-            env_enum = Environment(env_val)
-            query = query.join(AIService).filter(AIService.environment == env_enum)
-        except ValueError:
-            pass
-    return query
-
 
 def _compute_trend(
     current: float,

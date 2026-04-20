@@ -119,6 +119,11 @@ class EvalTestCase(Base):
     created_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="eval_test_cases")
+    # cascade="all, delete-orphan" so deleting a test case removes its
+    # EvalResult children. Without this, SQLAlchemy's default tries to null
+    # child.test_case_id (NOT NULL), which fails under FK enforcement and
+    # silently orphans rows when FKs are off.
+    results = relationship("EvalResult", back_populates="test_case", cascade="all, delete-orphan")
 
 
 class EvalRun(Base):
@@ -152,7 +157,7 @@ class EvalResult(Base):
     created_at = Column(DateTime, default=utcnow)
 
     eval_run = relationship("EvalRun", back_populates="results")
-    test_case = relationship("EvalTestCase")
+    test_case = relationship("EvalTestCase", back_populates="results")
 
 
 class Incident(Base):

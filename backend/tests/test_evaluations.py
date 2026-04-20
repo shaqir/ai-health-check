@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 from tests.conftest import auth_header
-from app.models import AIService, Environment, SensitivityLabel, EvalTestCase, EvalRun
+from app.models import AIService, Environment, SensitivityLabel, EvalTestCase, EvalRun, EvalResult
 
 
 def _create_service(db):
@@ -228,3 +228,86 @@ def test_drift_alert_creation_audited(mock_halluc, mock_run, mock_score, client,
     alert_logs = db.query(AuditLog).filter(AuditLog.action == "alert_created").all()
     assert len(alert_logs) == 1
     assert alert_logs[0].target_table == "alerts"
+
+
+# ── Priority regression guards ───────────────────────────────────────────────
+
+def _create_service_in(db, env, name="Svc"):
+    svc = AIService(
+        name=name,
+        owner="Team",
+        environment=env,
+        model_name="claude-sonnet-4-6",
+        sensitivity_label=SensitivityLabel.internal,
+        endpoint_url="https://example.com",
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+    return svc
+
+
+def test_env_filter_scopes_eval_runs(client, db, admin_token):
+    """
+    GET /evaluations/runs?environment=<env> must actually scope results to
+    that env, matching the Dashboard chart-endpoint behavior. Was missing
+    entirely before the Evaluations parity sweep.
+    """
+    prod_svc = _create_service_in(db, Environment.prod, "prod-svc")
+    dev_svc = _create_service_in(db, Environment.dev, "dev-svc")
+    db.add(EvalRun(service_id=prod_svc.id, quality_score=90.0, drift_flagged=False, run_type="manual"))
+    db.add(EvalRun(service_id=dev_svc.id, quality_score=85.0, drift_flagged=False, run_type="manual"))
+    db.commit()
+
+    h = auth_header(admin_token)
+
+    all_runs = client.get("/api/v1/evaluations/runs", headers=h).json()
+    assert {r["service_name"] for r in all_runs} >= {"prod-svc", "dev-svc"}, "baseline: both envs visible without filter"
+
+    dev_runs = client.get("/api/v1/evaluations/runs?environment=dev", headers=h).json()
+    assert {r["service_name"] for r in dev_runs} == {"dev-svc"}, (
+        f"expected only dev-svc when env=dev, got {[r['service_name'] for r in dev_runs]}"
+    )
+
+    prod_runs = client.get("/api/v1/evaluations/runs?environment=prod", headers=h).json()
+    assert {r["service_name"] for r in prod_runs} == {"prod-svc"}
+
+
+def test_test_case_deletion_cascades_to_results(client, db, admin_token):
+    """
+    DELETE /evaluations/test-cases/{id} must clean up its EvalResult rows.
+    Without the cascade, EvalResult.test_case_id (NOT NULL) would either
+    orphan or fail under FK enforcement.
+    """
+    svc = _create_service(db)
+    tc = EvalTestCase(service_id=svc.id, prompt="q", expected_output="a", category="factuality")
+    db.add(tc)
+    db.commit()
+    db.refresh(tc)
+
+    run = EvalRun(service_id=svc.id, quality_score=88.0, drift_flagged=False, run_type="manual")
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    result = EvalResult(
+        eval_run_id=run.id,
+        test_case_id=tc.id,
+        response_text="answer",
+        score=88.0,
+        latency_ms=100,
+        status="success",
+    )
+    db.add(result)
+    db.commit()
+    result_id = result.id
+
+    res = client.delete(f"/api/v1/evaluations/test-cases/{tc.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+
+    db.expire_all()
+    assert db.query(EvalResult).filter(EvalResult.id == result_id).first() is None, (
+        "EvalResult should be cascade-deleted with its parent test case"
+    )
+    # The EvalRun itself must survive — test-case deletion shouldn't wipe run history.
+    assert db.query(EvalRun).filter(EvalRun.id == run.id).first() is not None

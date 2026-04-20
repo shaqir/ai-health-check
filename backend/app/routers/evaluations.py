@@ -15,6 +15,7 @@ from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, Alert, EvalTestCase, EvalRun, User
+from app.services.env_filter import apply_env_filter
 from app.services.eval_runner import run_service_evaluation
 from app.services.sensitivity import enforce_sensitivity
 
@@ -130,12 +131,14 @@ def create_test_case(
 @router.get("/test-cases", response_model=list[EvalTestCaseResponse])
 def list_test_cases(
     service_id: int | None = Query(None),
+    environment: str | None = Query(None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     query = db.query(EvalTestCase)
     if service_id is not None:
         query = query.filter(EvalTestCase.service_id == service_id)
+    query = apply_env_filter(query, environment)
     return query.order_by(EvalTestCase.id.asc()).all()
 
 
@@ -242,12 +245,14 @@ async def run_evaluation(
 @router.get("/runs", response_model=list[EvalRunResponse])
 def list_eval_runs(
     service_id: int | None = Query(None),
+    environment: str | None = Query(None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     query = db.query(EvalRun)
     if service_id is not None:
         query = query.filter(EvalRun.service_id == service_id)
+    query = apply_env_filter(query, environment)
     runs = query.order_by(EvalRun.run_at.desc()).limit(50).all()
 
     result = []

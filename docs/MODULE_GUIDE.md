@@ -118,11 +118,11 @@ For system-wide architecture, database models, and configuration, see [ARCHITECT
 | GET | `/api/v1/dashboard/alerts` | List active alerts (auto-created on drift) |
 | POST | `/api/v1/dashboard/alerts/{id}/acknowledge` | Acknowledge an alert (admin/maintainer) |
 | POST | `/api/v1/evaluations/test-cases` | Create eval test case (admin/maintainer) |
-| GET | `/api/v1/evaluations/test-cases` | List test cases (optional service_id filter) |
+| GET | `/api/v1/evaluations/test-cases` | List test cases (optional `service_id` + `environment` filters) |
 | GET | `/api/v1/evaluations/test-cases/{id}` | Get single test case |
 | DELETE | `/api/v1/evaluations/test-cases/{id}` | Delete test case (admin/maintainer) |
 | POST | `/api/v1/evaluations/run/{service_id}` | Execute evaluation run (admin/maintainer) |
-| GET | `/api/v1/evaluations/runs` | List eval runs (optional service_id filter) |
+| GET | `/api/v1/evaluations/runs` | List eval runs (optional `service_id` + `environment` filters) |
 | GET | `/api/v1/evaluations/runs/{id}` | Get single eval run |
 | GET | `/api/v1/evaluations/cost-preview/{service_id}` | Preview API calls and estimated cost |
 | GET | `/api/v1/evaluations/drift-check/{service_id}` | Enhanced drift check with severity, trend, per-test breakdown |

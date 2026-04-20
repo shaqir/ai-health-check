@@ -1,8 +1,8 @@
 # AI Health Check Testing Strategy
 
-> Last updated: 2026-04-18 · current as of commit `3396e21`
+> Last updated: 2026-04-19 · current as of commit `c990d5a`
 
-123 tests across 13 files. Framework: pytest. All tests run offline with no real API keys.
+128 tests across 13 files. Framework: pytest. All tests run offline with no real API keys.
 Coverage floor: 65% (currently ~71%).
 
 ## Test Infrastructure
@@ -23,8 +23,8 @@ Coverage floor: 65% (currently ~71%).
 | File | Count | Covers |
 |------|-------|--------|
 | `test_services.py` | 21 | Auth login, service CRUD, RBAC enforcement (viewer blocked from POST/PUT/DELETE), input validation, connection log persistence, confidential sensitivity enforcement + admin override, SSRF rejection at registration/update (metadata URL, file://, private IP rebinding) |
-| `test_evaluations.py` | 14 | Test case CRUD, eval run lifecycle, drift severity (none/warning/critical), mocked LLM scoring, budget enforcement (402/429), drift-triggered Alert creation, alert creation audited |
-| `test_dashboard.py` | 9 | Aggregated metrics, P50/P95/P99 percentiles, latency/quality/error trends, drift alerts, empty-state defaults |
+| `test_evaluations.py` | 17 | Test case CRUD, eval run lifecycle, drift severity (none/warning/critical), mocked LLM scoring, budget enforcement (402/429), drift-triggered Alert creation, alert creation audited, **env filter scoping on `/runs`**, **EvalTestCase deletion cascades to EvalResult while preserving parent EvalRun**, **drift-check per-test-case breakdown path exercises EvalResult query (guards the import and query shape)** |
+| `test_dashboard.py` | 11 | Aggregated metrics, P50/P95/P99 percentiles, latency/quality/error trends, drift alerts, empty-state defaults, **env filter scoping on chart endpoints**, **Error Rate semantic is drift-based (not connection failures)** |
 | `test_compliance.py` | 24 | Audit log creation and filtering, user management, role updates, JSON + PDF export with incidents + maintenance, RBAC on audit data, viewer + maintainer denied audit log, role-denied audited, hash-chain integrity verify, tamper detection, append-only triggers, strict date parsing (400 on malformed from_date / to_date / inverted range), truncation warnings |
 | `test_drafts.py` | 8 | HITL draft/approve flow for dashboard insights and compliance AI report (create unapproved, approve flips fields + audits, viewer cannot approve, admin-only for compliance, double-approve 409, recent filtering) |
 | `test_draft_service.py` | 5 | Unit tests for the shared draft service abstraction |
@@ -35,7 +35,7 @@ Coverage floor: 65% (currently ~71%).
 | `test_judge_parser.py` | 13 | LLM judge response parsing — bare numbers accepted, refusal phrasings rejected (including "I can give you 7 reasons" and "I cannot rate this. 404"), over-range clamped, whitespace tolerated |
 | `test_budget_race.py` | 1 | 20 concurrent `_make_api_call` invocations against a rate limit of 5 — asserts at most 5 succeed; the lock + reservation pattern prevents race-condition bypass |
 | `test_integration.py` | 2 | Full service lifecycle (register, read, update, audit, delete), RBAC enforcement across all CRUD operations |
-| **Total** | **123** | |
+| **Total** | **128** | |
 
 ## Running Tests
 
@@ -46,7 +46,7 @@ pytest -v
 pytest --cov=app --cov-report=term-missing
 ```
 
-Expected output: `123 passed` with coverage ≥ 65%.
+Expected output: `128 passed` with coverage ≥ 65%.
 
 ## What's exercised end-to-end
 

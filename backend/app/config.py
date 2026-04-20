@@ -37,12 +37,16 @@ class Settings(BaseSettings):
     # Evaluation
     drift_threshold: float = 75.0
     health_check_schedule_minutes: int = 5
+    # Automated eval runs (APScheduler). Set SCHEDULER_ENABLED=false to opt out.
+    eval_schedule_minutes: int = 60
 
     # API Budget (USD) — set 0 for unlimited
     api_daily_budget: float = 5.0
     api_monthly_budget: float = 25.0
-    api_max_calls_per_minute: int = 10
-    api_max_calls_per_user_per_minute: int = 5
+    # Sized for multi-test-case eval batches (each factuality case fires
+    # 1 model call + 1 judge call + 1 hallucination check = 3 Claude calls).
+    api_max_calls_per_minute: int = 30
+    api_max_calls_per_user_per_minute: int = 20
     max_prompt_length: int = 10000
     max_login_attempts: int = 5
     login_lockout_minutes: int = 15

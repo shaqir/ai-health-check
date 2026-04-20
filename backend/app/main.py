@@ -39,6 +39,51 @@ settings = get_settings()
 scheduler = BackgroundScheduler()
 
 
+def scheduled_eval_run():
+    """Run evaluations against every active, non-confidential service that
+    has at least one test case. Called every EVAL_SCHEDULE_MINUTES by
+    APScheduler. Bridges sync scheduler thread -> async eval runner via
+    asyncio.run() so the Claude client keeps its native async interface.
+    """
+    import asyncio
+    from app.services.eval_runner import run_service_evaluation
+    from app.models import SensitivityLabel
+
+    db = SessionLocal()
+    try:
+        # Active services with test cases. Skip confidential — no admin on
+        # this code path to approve the override, so we don't send their
+        # prompts to an LLM automatically.
+        service_ids = [
+            row[0] for row in (
+                db.query(AIService.id)
+                .join(EvalTestCase, EvalTestCase.service_id == AIService.id)
+                .filter(
+                    AIService.is_active == True,
+                    AIService.sensitivity_label != SensitivityLabel.confidential,
+                )
+                .distinct()
+                .all()
+            )
+        ]
+
+        for sid in service_ids:
+            service = db.query(AIService).filter(AIService.id == sid).first()
+            if not service:
+                continue
+            try:
+                asyncio.run(run_service_evaluation(db, service, run_type="scheduled"))
+                print(f"[EvalScheduler] Ran eval for service {sid} ({service.name})")
+            except Exception as exc:
+                print(f"[EvalScheduler] Failed for service {sid}: {exc}")
+                db.rollback()
+    except Exception as exc:
+        print(f"[EvalScheduler] Error: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def scheduled_health_check():
     """Runs periodic health checks on all active services with an endpoint URL."""
     db = SessionLocal()
@@ -145,10 +190,17 @@ async def lifespan(app: FastAPI):
             minutes=settings.health_check_schedule_minutes,
             id="health_check",
         )
+        scheduler.add_job(
+            scheduled_eval_run,
+            "interval",
+            minutes=settings.eval_schedule_minutes,
+            id="eval_run",
+        )
         scheduler.start()
         print(f"[Startup] {settings.app_name} is running")
         print(f"[Startup] Background scheduler started "
-              f"(health check every {settings.health_check_schedule_minutes}m)")
+              f"(health check every {settings.health_check_schedule_minutes}m, "
+              f"eval every {settings.eval_schedule_minutes}m)")
     else:
         print(f"[Startup] {settings.app_name} is running")
         print("[Startup] Background scheduler DISABLED (SCHEDULER_ENABLED=false)")

@@ -14,8 +14,8 @@ from app.database import get_db
 from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
-from app.models import AIService, Alert, EvalTestCase, EvalRun, EvalResult, Telemetry, User
-from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
+from app.models import AIService, Alert, EvalTestCase, EvalRun, User
+from app.services.eval_runner import run_service_evaluation
 from app.services.sensitivity import enforce_sensitivity
 
 router = APIRouter()
@@ -194,180 +194,34 @@ async def run_evaluation(
     # Gate confidential services — admin-only with explicit override
     enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
 
-    test_cases = (
-        db.query(EvalTestCase)
-        .filter(EvalTestCase.service_id == service_id)
-        .all()
-    )
-    if not test_cases:
+    if not db.query(EvalTestCase).filter(EvalTestCase.service_id == service_id).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No test cases found for this service. Create test cases first.",
         )
 
-    results = []
-    factuality_scores = []
-    format_scores = []
-    hallucination_scores = []
-
-    for tc in test_cases:
-        llm_result = await run_eval_prompt(prompt=tc.prompt)
-        response_text = llm_result.get("response_text", "")
-        latency_ms = llm_result.get("latency_ms", 0)
-
-        halluc_score = None
-        judge_refused = False
-        if tc.category == "factuality":
-            score = await score_factuality(tc.expected_output, response_text)
-            if score is None:
-                # Judge refused or returned non-numeric — do NOT count as 0,
-                # because that would spuriously trigger drift. Mark the
-                # result as judge_refused and skip it from the aggregate.
-                judge_refused = True
-            else:
-                factuality_scores.append(score)
-            # Hallucination detection (inspired by Patronus AI)
-            halluc_score = await detect_hallucination(tc.prompt, response_text)
-            if halluc_score is not None:
-                hallucination_scores.append(halluc_score)
-        elif tc.category == "format_json":
-            try:
-                json.loads(response_text)
-                score = 100.0
-            except (json.JSONDecodeError, TypeError):
-                score = 0.0
-            format_scores.append(score)
-        else:
-            score = 0.0
-
-        if judge_refused:
-            result_status = "judge_refused"
-            display_score = None
-        elif response_text.startswith("ERROR:"):
-            result_status = "error"
-            display_score = score
-        else:
-            result_status = "success"
-            display_score = score
-
-        results.append({
-            "test_case_id": tc.id,
-            "category": tc.category,
-            "prompt": tc.prompt[:100],
-            "expected": tc.expected_output[:100],
-            "actual": response_text[:200],
-            "score": display_score if display_score is not None else 0,
-            "hallucination_score": halluc_score,
-            "latency_ms": latency_ms,
-            "status": result_status,
-        })
-
-    # Compute aggregate scores — exclude judge_refused AND infra error rows.
-    # An "error" result means the LLM call itself failed (HTTP 404, timeout,
-    # rate limit) — the model never had a chance to answer, so counting it
-    # as 0% quality would conflate infra failures with model drift.
-    valid_scores = [r["score"] for r in results if r["status"] not in ("judge_refused", "error")]
-    quality_score = round(sum(valid_scores) / len(valid_scores), 1) if valid_scores else 0
-    factuality_score = (
-        round(sum(factuality_scores) / len(factuality_scores), 1)
-        if factuality_scores else None
-    )
-    format_score = (
-        round(sum(format_scores) / len(format_scores), 1)
-        if format_scores else None
-    )
-    hallucination_score = (
-        round(sum(hallucination_scores) / len(hallucination_scores), 1)
-        if hallucination_scores else None
-    )
-
-    # Enhanced drift detection: threshold + trend analysis. Only judge drift
-    # when we actually produced a valid score this run — a run where every
-    # call errored out tells us nothing about model quality.
-    if valid_scores:
-        drift_flagged = quality_score < settings.drift_threshold
-
-        # Also flag if declining trend AND score is within 10% of threshold
-        recent_runs = (
-            db.query(EvalRun)
-            .filter(EvalRun.service_id == service_id)
-            .order_by(EvalRun.run_at.desc())
-            .limit(4)
-            .all()
-        )
-        if len(recent_runs) >= 3:
-            prev_scores = [r.quality_score for r in reversed(recent_runs)]
-            trend = _compute_trend(prev_scores + [quality_score])
-            if trend == "declining" and quality_score < settings.drift_threshold + 10:
-                drift_flagged = True
-    else:
-        drift_flagged = False
-
-    # Save evaluation run
-    eval_run = EvalRun(
-        service_id=service_id,
-        quality_score=quality_score,
-        factuality_score=factuality_score,
-        hallucination_score=hallucination_score,
-        format_score=format_score,
-        drift_flagged=drift_flagged,
-        run_type="manual",
-    )
-    db.add(eval_run)
-    db.flush()  # get eval_run.id before commit
-
-    # Store per-test-case results
-    for r in results:
-        db.add(EvalResult(
-            eval_run_id=eval_run.id,
-            test_case_id=r["test_case_id"],
-            response_text=r["actual"],
-            score=r["score"],
-            latency_ms=r["latency_ms"],
-            status=r["status"],
-        ))
-
-    # Record telemetry
-    now = datetime.now(timezone.utc)
-    db.add(Telemetry(
-        service_id=service_id, metric_name="quality_score",
-        metric_value=quality_score, recorded_at=now,
-    ))
-    if factuality_score is not None:
-        db.add(Telemetry(
-            service_id=service_id, metric_name="factuality_score",
-            metric_value=factuality_score, recorded_at=now,
-        ))
-    if format_score is not None:
-        db.add(Telemetry(
-            service_id=service_id, metric_name="format_score",
-            metric_value=format_score, recorded_at=now,
-        ))
-
-    db.commit()
-    db.refresh(eval_run)
+    # Delegate to the shared runner — persists EvalRun + EvalResults +
+    # Telemetry + (if drift) Alert in one committed unit.
+    eval_run, results, drift_flagged = await run_service_evaluation(db, service, run_type="manual")
 
     log_action(
         db, current_user.id, "run_evaluation", "eval_runs",
-        eval_run.id, new_value=f"quality={quality_score}, drift={drift_flagged}",
+        eval_run.id, new_value=f"quality={eval_run.quality_score}, drift={drift_flagged}",
     )
 
-    # Auto-create alert on drift (inspired by Datadog/PagerDuty)
+    # If the runner opened a drift alert, attribute it to this user in audit.
     if drift_flagged:
-        severity = "critical" if quality_score < settings.drift_threshold else "warning"
-        alert = Alert(
-            alert_type="drift",
-            severity=severity,
-            message=f"{service.name} quality dropped to {quality_score}% (threshold: {settings.drift_threshold}%)",
-            service_id=service_id,
+        alert = (
+            db.query(Alert)
+            .filter(Alert.service_id == service_id, Alert.alert_type == "drift")
+            .order_by(Alert.id.desc())
+            .first()
         )
-        db.add(alert)
-        db.commit()
-        db.refresh(alert)
-        log_action(
-            db, current_user.id, "alert_created", "alerts",
-            alert.id, new_value=f"drift|{severity}|service={service_id}|score={quality_score}",
-        )
+        if alert:
+            log_action(
+                db, current_user.id, "alert_created", "alerts", alert.id,
+                new_value=f"drift|{alert.severity}|service={service_id}|score={eval_run.quality_score}",
+            )
 
     return EvalRunDetailResponse(
         id=eval_run.id,

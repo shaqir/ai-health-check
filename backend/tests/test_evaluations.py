@@ -100,8 +100,8 @@ def test_viewer_cannot_create_test_case(client, db, viewer_token):
 
 # ── Eval Runs ──
 
-@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock)
+@patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock)
 def test_run_evaluation(mock_score, mock_eval, client, db, admin_token):
     mock_eval.return_value = {"response_text": "Paris is the capital of France.", "latency_ms": 150}
     mock_score.return_value = 90.0
@@ -118,8 +118,8 @@ def test_run_evaluation(mock_score, mock_eval, client, db, admin_token):
     assert len(data["results"]) == 1
 
 
-@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock)
+@patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock)
 def test_run_evaluation_drift_detected(mock_score, mock_eval, client, db, admin_token):
     mock_eval.return_value = {"response_text": "Wrong answer", "latency_ms": 200}
     mock_score.return_value = 40.0
@@ -160,9 +160,9 @@ def test_drift_check(client, db, admin_token):
 
 # ── Drift alert auto-creation ──
 
-@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=30.0)
-@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=50.0)
+@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=30.0)
+@patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=50.0)
 def test_drift_critical_creates_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
     """Quality far below threshold must auto-create a critical Alert row."""
     from app.models import Alert
@@ -185,9 +185,9 @@ def test_drift_critical_creates_alert(mock_halluc, mock_run, mock_score, client,
     assert alerts[0].service_id == svc.id
 
 
-@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=95.0)
-@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=10.0)
+@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=95.0)
+@patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=10.0)
 def test_healthy_score_creates_no_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
     """No drift = no alert."""
     from app.models import Alert
@@ -208,9 +208,9 @@ def test_healthy_score_creates_no_alert(mock_halluc, mock_run, mock_score, clien
     assert len(alerts) == 0
 
 
-@patch("app.routers.evaluations.score_factuality", new_callable=AsyncMock, return_value=20.0)
-@patch("app.routers.evaluations.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.routers.evaluations.detect_hallucination", new_callable=AsyncMock, return_value=60.0)
+@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=20.0)
+@patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
+@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=60.0)
 def test_drift_alert_creation_audited(mock_halluc, mock_run, mock_score, client, db, admin_token):
     """Alert creation must itself leave an audit trail."""
     from app.models import AuditLog

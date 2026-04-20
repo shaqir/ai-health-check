@@ -500,6 +500,7 @@ def get_platform_settings(
         "evaluation": {
             "drift_threshold_pct": settings.drift_threshold,
             "health_check_schedule_minutes": settings.health_check_schedule_minutes,
+            "eval_schedule_minutes": settings.eval_schedule_minutes,
         },
         "pricing": {
             "input_per_million_usd": 3.0,

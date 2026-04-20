@@ -150,6 +150,12 @@ export default function SettingsPage() {
                 mono
                 tooltip="How often the system pings each service to confirm it's reachable."
               />
+              <Row
+                label="Auto eval"
+                value={`${config.evaluation.eval_schedule_minutes} min`}
+                mono
+                tooltip="How often the background scheduler runs evaluations against every active, non-confidential service with test cases. Saved as scheduled runs; drift alerts fire on threshold breach."
+              />
             </Card>
           )}
 

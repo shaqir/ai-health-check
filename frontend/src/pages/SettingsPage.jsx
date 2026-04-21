@@ -112,7 +112,7 @@ export default function SettingsPage() {
     </div>
   );
 
-  if (error) return <ErrorState message={error} onRetry={() => window.location.reload()} />;
+  if (error) return <ErrorState message={error} onRetry={() => { setError(null); fetchAll(true); }} />;
 
   return (
     <div className="space-y-6">

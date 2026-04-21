@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
@@ -35,6 +35,10 @@ export default function ServicesPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [testResults, setTestResults] = useState({});
+  // Ids whose ping is currently in flight. Ref so the guard reads the latest
+  // value synchronously — setState is async and can't block reentry on rapid
+  // clicks, which caused slower responses to overwrite fresher ones.
+  const inFlightPings = useRef(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Confidential Ping confirmation — holds the service the user clicked
   // on until they either confirm the override or cancel. Null when closed.
@@ -120,6 +124,11 @@ export default function ServicesPage() {
   };
 
   const runPing = async (id, qs = '') => {
+    // Guard against rapid re-clicks while a ping is in flight — without this,
+    // a slower response can overwrite a newer, faster one. Ref is synchronous
+    // so the check/insert pair is race-free within this tab.
+    if (inFlightPings.current.has(id)) return;
+    inFlightPings.current.add(id);
     setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
     try {
       const res = await api.post(`/services/${id}/test-connection${qs}`);
@@ -127,6 +136,8 @@ export default function ServicesPage() {
     } catch (err) {
       const detail = err.response?.data?.detail || err.message;
       setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
+    } finally {
+      inFlightPings.current.delete(id);
     }
   };
 

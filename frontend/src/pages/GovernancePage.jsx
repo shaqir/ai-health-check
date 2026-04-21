@@ -8,6 +8,7 @@ import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
+import ConfirmModal from '../components/common/ConfirmModal';
 
 const INPUT_CLS = 'w-full px-3 py-1.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text transition-standard focus:border-accent focus:bg-surface';
 
@@ -79,6 +80,9 @@ export default function GovernancePage() {
   const [nowTick, setNowTick] = useState(Date.now());
   // Guards against double-submit on the role-change select.
   const [changingRoleFor, setChangingRoleFor] = useState(null);
+  // Pending role change awaiting confirmation — replaces window.confirm().
+  // Shape: { userId, newRole } or null when no dialog is open.
+  const [pendingRoleChange, setPendingRoleChange] = useState(null);
   // Audit log filters — action type, actor, time window (client-side).
   const [actionFilter, setActionFilter] = useState('all');
   const [actorFilter, setActorFilter] = useState('all');
@@ -234,9 +238,18 @@ export default function GovernancePage() {
     }
   };
 
-  const handleChangeRole = async (userId, newRole) => {
+  const handleChangeRole = (userId, newRole) => {
     if (changingRoleFor) return; // guard against double-click while a PUT is mid-flight
-    if (!confirm(`Change this user's role to ${newRole}?`)) return;
+    // Defer the actual PUT until the user confirms in the modal. window.confirm()
+    // was inaccessible (keyboard focus, screen readers) and inconsistent with
+    // the rest of the app, which uses ConfirmModal everywhere.
+    setPendingRoleChange({ userId, newRole });
+  };
+
+  const confirmRoleChange = async () => {
+    if (!pendingRoleChange) return;
+    const { userId, newRole } = pendingRoleChange;
+    setPendingRoleChange(null);
     setChangingRoleFor(userId);
     try {
       await api.put(`/compliance/users/${userId}/role`, { role: newRole });
@@ -311,12 +324,28 @@ export default function GovernancePage() {
   }
 
   if (error) {
-    return <ErrorState message={error} onRetry={() => window.location.reload()} />;
+    return <ErrorState message={error} onRetry={() => { setError(null); setLoading(true); fetchData(); }} />;
   }
 
   return (
     <div className="space-y-5">
       {toast.visible && <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, visible: false })} />}
+
+      {/* Role-change confirmation — replaces window.confirm() for a11y +
+          visual consistency with Services/Evaluations confirmation flows. */}
+      <ConfirmModal
+        isOpen={!!pendingRoleChange}
+        onClose={() => setPendingRoleChange(null)}
+        onConfirm={confirmRoleChange}
+        title="Change user role?"
+        description={
+          pendingRoleChange
+            ? `Promote or demote this user to ${pendingRoleChange.newRole}? The change is audit-logged and takes effect immediately.`
+            : ''
+        }
+        confirmLabel={pendingRoleChange ? `Set to ${pendingRoleChange.newRole}` : 'Confirm'}
+        variant="warning"
+      />
 
       <PageHeader title="Governance" description="Audit logs, role-based access control, and compliance exports.">
         <div className="flex items-center gap-3">

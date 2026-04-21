@@ -56,15 +56,14 @@ export default function IncidentDetailPage() {
     setError(null);
     try {
       const [incRes, maintRes] = await Promise.all([
-        api.get('/incidents'),
+        api.get(`/incidents/${id}`),
         api.get(`/maintenance?incident_id=${id}`),
       ]);
-      const found = incRes.data.find(i => i.id === parseInt(id));
-      if (!found) { navigate('/incidents'); return; }
-      setIncident(found);
+      setIncident(incRes.data);
       setMaintenancePlans(maintRes.data);
       setLastFetchAt(Date.now());
     } catch (err) {
+      if (err.response?.status === 404) { navigate('/incidents'); return; }
       setError('Failed to load incident details.');
     } finally {
       setLoading(false);

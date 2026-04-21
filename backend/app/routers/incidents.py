@@ -124,6 +124,20 @@ def list_incidents(
     return [_serialize_incident(inc, db) for inc in incidents]
 
 
+@router.get("/{incident_id}", response_model=IncidentResponse)
+def get_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Fetch a single incident. Cheaper than listing-then-filtering client-side
+    and avoids leaking the whole list on every 30s poll in the detail view."""
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return _serialize_incident(incident, db)
+
+
 @router.post(
     "",
     response_model=IncidentResponse,

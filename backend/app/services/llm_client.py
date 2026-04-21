@@ -250,7 +250,18 @@ def _finalize_reservation(
         row.response_text = response_text[:2000]
         db.commit()
     except Exception:
+        # Don't leave the row stuck at status='reserved' — budget checks would
+        # keep counting its worst-case cost forever. Mark it as an error so
+        # the failure is visible to audit + cost telemetry.
         db.rollback()
+        try:
+            row = db.query(APIUsageLog).filter(APIUsageLog.id == row_id).first()
+            if row and row.status == "reserved":
+                row.status = "error_finalize_failed"
+                row.estimated_cost_usd = 0.0
+                db.commit()
+        except Exception:
+            db.rollback()
     finally:
         db.close()
 

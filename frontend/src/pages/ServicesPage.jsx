@@ -279,24 +279,34 @@ export default function ServicesPage() {
                 </div>
 
                 {/* Footer: status + ping */}
-                <div className="px-5 py-3 border-t border-hairline flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${statusDot}`} aria-hidden="true" />
-                    <span className="text-[12px] font-medium text-text-muted">{statusLabel}</span>
-                    {test && !test.loading && test.latency_ms > 0 && (
-                      <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                <div className="px-5 py-3 border-t border-hairline flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${statusDot}`} aria-hidden="true" />
+                      <span className="text-[12px] font-medium text-text-muted">{statusLabel}</span>
+                      {test && !test.loading && test.latency_ms > 0 && (
+                        <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <button
+                        onClick={() => handleTestConnection(s.id)}
+                        disabled={test?.loading}
+                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-text-muted hover:text-accent bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
+                        aria-label={`Ping ${s.name}`}
+                      >
+                        {test?.loading ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Wifi size={12} strokeWidth={1.5} />}
+                        Ping
+                      </button>
                     )}
                   </div>
-                  {canEdit && (
-                    <button
-                      onClick={() => handleTestConnection(s.id)}
-                      disabled={test?.loading}
-                      className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-text-muted hover:text-accent bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
-                      aria-label={`Ping ${s.name}`}
+                  {test && !test.loading && test.status === 'failed' && test.response_snippet && (
+                    <p
+                      className="text-[11px] font-mono text-status-failing break-words line-clamp-2"
+                      title={test.response_snippet}
                     >
-                      {test?.loading ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Wifi size={12} strokeWidth={1.5} />}
-                      Ping
-                    </button>
+                      {test.response_snippet}
+                    </p>
                   )}
                 </div>
               </div>

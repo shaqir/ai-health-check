@@ -71,7 +71,7 @@ export default function Modal({ isOpen, onClose, title, children, footer, maxWid
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`${maxWidth} w-full rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg transition-spring ${entered ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.96]'}`}
+        className={`${maxWidth} w-full rounded-2xl border border-hairline bg-surface shadow-lg transition-spring ${entered ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.96]'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

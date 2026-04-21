@@ -63,7 +63,7 @@ def seed():
             environment=Environment.prod,
             model_name="claude-sonnet-4-6-20250415",
             sensitivity_label=SensitivityLabel.internal,
-            endpoint_url="https://api.anthropic.com/v1/messages",
+            endpoint_url="https://www.anthropic.com",
         ),
         AIService(
             name="Internal Report Generator",
@@ -71,7 +71,7 @@ def seed():
             environment=Environment.prod,
             model_name="claude-sonnet-4-6-20250415",
             sensitivity_label=SensitivityLabel.confidential,
-            endpoint_url="https://api.anthropic.com/v1/messages",
+            endpoint_url="https://www.anthropic.com",
         ),
         AIService(
             name="Dev Chatbot (Staging)",
@@ -79,7 +79,7 @@ def seed():
             environment=Environment.dev,
             model_name="claude-sonnet-4-6-20250415",
             sensitivity_label=SensitivityLabel.public,
-            endpoint_url="https://api.anthropic.com/v1/messages",
+            endpoint_url="https://www.anthropic.com",
         ),
     ]
     db.add_all(services)

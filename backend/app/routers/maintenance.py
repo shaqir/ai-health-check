@@ -5,7 +5,7 @@ Maintenance Router — Module 3: Maintenance Planning
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 from app.database import get_db

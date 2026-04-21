@@ -1,7 +1,8 @@
 """
-Auth Router — Login and Register endpoints.
-POST /api/v1/auth/login   → Public
+Auth Router — Login, Register, and Recovery endpoints.
+POST /api/v1/auth/login    → Public
 POST /api/v1/auth/register → Admin only
+POST /api/v1/auth/recover  → Public (requires ADMIN_RECOVERY_KEY)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import User, UserRole
+from app.config import get_settings
 from app.middleware.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
 )
@@ -25,6 +27,12 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     role: str = "viewer"  # admin, maintainer, viewer
+
+
+class RecoverRequest(BaseModel):
+    recovery_key: str
+    email: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):
@@ -95,6 +103,58 @@ def register(
         username=user.username,
         role=user.role.value,
     )
+
+
+@router.post("/recover")
+def recover_admin(
+    req: RecoverRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Emergency admin password reset — public endpoint secured by
+    ADMIN_RECOVERY_KEY (set in .env). Does NOT require authentication.
+    """
+    settings = get_settings()
+
+    # Guard: recovery must be enabled
+    if not settings.admin_recovery_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Recovery is not configured on this server.",
+        )
+
+    # Guard: validate the recovery key
+    if req.recovery_key != settings.admin_recovery_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid recovery key.",
+        )
+
+    # Find the user
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found with that email.",
+        )
+
+    # Reset password and re-activate
+    user.password_hash = hash_password(req.new_password)
+    user.is_active = True
+    db.commit()
+
+    # Audit log (user_id=None since this is unauthenticated)
+    log_action(db, None, "admin_recovery_password_reset", "users", user.id,
+               new_value=f"Password reset via recovery key for {user.email}")
+
+    return {"message": f"Password reset successfully for {user.username}."}
+
+
+@router.get("/recovery-status")
+def recovery_status():
+    """Check if admin recovery is enabled (no secrets exposed)."""
+    settings = get_settings()
+    return {"enabled": bool(settings.admin_recovery_key)}
 
 
 @router.get("/me")

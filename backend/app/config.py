@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 480
 
+    # Admin Recovery
+    admin_recovery_key: str = ""  # Set in .env to enable admin password reset failsafe
+
     # App
     app_name: str = "AIHealthCheck"
     debug: bool = True

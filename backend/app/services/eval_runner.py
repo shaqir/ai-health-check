@@ -12,6 +12,7 @@ calling site when there's a user to attribute to.
 """
 
 import json
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,25 @@ from app.models import AIService, Alert, EvalRun, EvalResult, EvalTestCase, Tele
 from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
 
 settings = get_settings()
+
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL | re.IGNORECASE)
+_BRACE_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
+
+
+def _strip_json_fences(text: str) -> str:
+    # Claude often wraps JSON in ```json … ``` fences, sometimes with prose
+    # before/after. Extract the first fenced block; if none, fall back to the
+    # first {...} or [...] span so json.loads sees the payload, not markdown.
+    if not text:
+        return text
+    m = _FENCE_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _BRACE_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
 
 
 def _compute_trend(scores: list[float]) -> str:
@@ -82,7 +102,7 @@ async def run_service_evaluation(
                 hallucination_scores.append(halluc_score)
         elif tc.category == "format_json":
             try:
-                json.loads(response_text)
+                json.loads(_strip_json_fences(response_text))
                 score = 100.0
             except (json.JSONDecodeError, TypeError):
                 score = 0.0

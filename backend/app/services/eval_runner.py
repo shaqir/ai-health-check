@@ -156,7 +156,9 @@ async def run_service_evaluation(
             .limit(4)
             .all()
         )
-        if len(recent) >= 3:
+        # Enable trend-based drift from the 3rd run (2 prior + current).
+        # Raised from >=3 so the first few runs aren't silently ungated.
+        if len(recent) >= 2:
             prev_scores = [r.quality_score for r in reversed(recent)]
             trend = _compute_trend(prev_scores + [quality_score])
             if trend == "declining" and quality_score < settings.drift_threshold + 10:

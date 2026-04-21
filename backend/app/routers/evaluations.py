@@ -291,6 +291,7 @@ def get_eval_run(
         service_name=service.name if service else "",
         quality_score=run.quality_score,
         factuality_score=run.factuality_score,
+        hallucination_score=run.hallucination_score,
         format_score=run.format_score,
         drift_flagged=run.drift_flagged,
         run_type=run.run_type,

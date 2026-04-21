@@ -1,81 +1,80 @@
-# AIHealthCheck
+# AI Health Check
 
-> ARTI-409-A | AI Systems & Governance | Group Project
-> Team: Jack, Sakir, Osele, Jeewanjot
+A centralized AI operations platform to monitor, evaluate, triage, and govern an organization's AI services.
 
-Health checks for your AI fleet — a centralized platform to monitor, evaluate, triage, and govern your organization's AI services.
+ARTI-409-A | AI Systems & Governance | Group Project
+
+"We built a simplified but complete version of what companies like Arize AI, LangSmith, and Datadog LLM Monitoring
+ do separately. In production, organizations typically need 3-4 different tools stitched together to monitor AI
+ health, detect drift, manage incidents, and prove compliance. Our app does all four in one place, with
+ human-in-the-loop governance built in from the start."
+
+## The Problem
+
+Companies use AI tools (chatbots, report generators, assistants) but have no single place to answer:
+- Is the AI working correctly right now?
+- Has its quality gotten worse over time?
+- When something breaks, what happened and who fixed it?
+- Can we prove to auditors that we're managing our AI responsibly?
+
+AI Health Check is an **AI Operations Control Room** that answers all four questions in one place.
+
+## How It Works
+
+**1. Register your AI services** -- Tell the system about each AI tool: name, owner, environment (dev/staging/prod), model, and data sensitivity level. A phone book for your AI fleet.
+
+**2. Test connections** -- Click "Ping" on any service. The system sends a test message, measures latency, and logs the result for uptime tracking.
+
+**3. Run evaluations** -- Create test cases with known answers. The system sends them to the AI, scores the responses for factuality (did it get facts right?) and format (valid JSON?), and stores each score with a timestamp.
+
+**4. Detect drift** -- If quality drops below 75%, the system flags it. It also watches trends: slowly declining scores trigger a warning before things go critical.
+
+**5. Create an incident** -- When something breaks, log it with symptoms, severity, and a troubleshooting checklist (data issue? prompt change? infrastructure problem?).
+
+**6. Get AI help (with human approval)** -- Click "Generate Summary" and the AI drafts a stakeholder update with likely root causes. But it's just a draft -- a human must review and click "Approve" before anything is saved. The AI assists, it never decides.
+
+**7. Plan maintenance** -- Create a plan with risk level, rollback strategy, validation steps, schedule, and a human approval checkbox.
+
+**8. Prove compliance** -- Export a PDF or JSON report with evaluations, incidents, maintenance actions, and the full audit log for any time period.
+
+## The Safety Net
+
+Every time the app talks to the AI model, it goes through this pipeline:
+
+1. **Scan the input** -- Check for prompt injection attempts, personal information (emails, phone numbers, SSNs), toxicity (violence, bias, illegal content), and length limits
+2. **Check the budget** -- Block the call if daily ($5) or monthly ($25) spend limits are reached
+3. **Check rate limits** -- Throttle if the user exceeds 5 calls/minute or the system exceeds 10/minute
+4. **Call the model** -- If all checks pass, send the request. If it fails, retry up to 2 times with backoff
+5. **Scan the output** -- Check the AI's response for personal information before showing it to the user
+6. **Log everything** -- Record tokens, cost, latency, and any safety flags
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 + Vite + Tailwind CSS |
-| Backend | FastAPI (Python 3.11+) |
-| Database | SQLite via SQLAlchemy |
-| LLM | Anthropic Claude API (via REST wrapper) |
-| Scheduler | APScheduler |
-| Testing | Pytest + React Testing Library |
+|-------|------------|
+| Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts |
+| Backend | FastAPI, Python 3.11+, SQLAlchemy |
+| Database | SQLite |
+| LLM | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) |
+| Testing | Pytest (123 tests, ~71% coverage) |
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- Git
-
-### 1. Clone the repository
-
 ```bash
-git clone https://github.com/YOUR_TEAM/ai-health-check.git
-cd ai-health-check
-```
-
-### 2. Backend setup
-
-```bash
+# Backend
 cd backend
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate        # macOS/Linux
-# venv\Scripts\activate         # Windows
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Copy environment variables
-cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
-
-# Run database migrations
-alembic upgrade head
-
-# Seed initial data (admin user + sample services)
+cp .env.example .env          # add your ANTHROPIC_API_KEY
 python -m app.seed
-
-# Start the backend server
 uvicorn app.main:app --reload --port 8000
+
+# Frontend (new terminal)
+cd frontend && npm install && npm run dev
 ```
 
-Backend runs at: http://localhost:8000
-API docs at: http://localhost:8000/docs
+Open http://localhost:5173 in your browser.
 
-### 3. Frontend setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start the dev server
-npm run dev
-```
-
-Frontend runs at: http://localhost:5173
-
-### 4. Default login credentials
+## Default Credentials
 
 | Role | Email | Password |
 |------|-------|----------|
@@ -83,91 +82,99 @@ Frontend runs at: http://localhost:5173
 | Maintainer | maintainer@aiops.local | maintain123 |
 | Viewer | viewer@aiops.local | viewer123 |
 
+## Team & Modules
+
+| Member | Module | What they own |
+|--------|--------|--------------|
+| Jack | M1: Service Registry | Registering and testing AI services, connection logging |
+| Sakir | M2: Monitoring & Eval | Dashboard metrics, evaluation harness, drift detection |
+| Osele | M3: Incident Triage | Incident lifecycle, AI summaries, maintenance planning |
+| Jeewanjot | M4: Governance | Roles, audit log, compliance export, data policy |
+
+For a detailed module-by-module breakdown with files, endpoints, and demo flow, see [MODULE_GUIDE](docs/MODULE_GUIDE.md).
+
 ## Project Structure
 
 ```
 ai-health-check/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI app + CORS + startup
-│   │   ├── config.py            # Settings from .env
-│   │   ├── database.py          # SQLAlchemy engine + session
-│   │   ├── seed.py              # Seed data script
-│   │   ├── models/              # SQLAlchemy ORM models
-│   │   │   ├── user.py
-│   │   │   ├── service.py
-│   │   │   ├── evaluation.py
-│   │   │   ├── incident.py
-│   │   │   ├── maintenance.py
-│   │   │   ├── audit.py
-│   │   │   └── telemetry.py
-│   │   ├── schemas/             # Pydantic request/response schemas
-│   │   ├── routers/             # API route handlers
-│   │   │   ├── auth.py          # Login, register
-│   │   │   ├── services.py      # Service registry CRUD
-│   │   │   ├── evaluations.py   # Eval harness + drift
-│   │   │   ├── incidents.py     # Incident triage
-│   │   │   ├── maintenance.py   # Maintenance planner
-│   │   │   ├── dashboard.py     # Metrics + telemetry
-│   │   │   └── compliance.py    # Audit log + export
-│   │   ├── services/            # Business logic layer
-│   │   │   └── llm_client.py    # *** LLM REST wrapper ***
-│   │   └── middleware/
-│   │       ├── auth.py          # JWT verification
-│   │       ├── rbac.py          # Role-based access control
-│   │       └── audit.py         # Auto audit logging
-│   ├── tests/
-│   │   ├── test_services.py
-│   │   ├── test_evaluations.py
-│   │   ├── test_auth.py
-│   │   └── test_integration.py
-│   ├── alembic/                 # DB migrations
-│   ├── alembic.ini
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   ├── utils/
-│   │   └── context/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
-├── docs/
-│   ├── PROMPT_CHANGE_LOG.md
-│   ├── RISK_REGISTER.md
-│   ├── EVAL_DATASET_CARD.md
-│   └── MAINTENANCE_RUNBOOK.md
-├── .gitignore
-└── README.md
+│   │   ├── main.py              # FastAPI app entry point + append-only audit-log triggers
+│   │   ├── config.py            # 22 settings via .env
+│   │   ├── database.py          # SQLAlchemy engine + SQLite FK enforcement
+│   │   ├── models/              # 14 database models (incl. AILlmDraft for HITL)
+│   │   ├── routers/             # 9 routers (auth, services, evaluations, incidents,
+│   │   │                        #             maintenance, dashboard, users, audit, export)
+│   │   ├── services/            # llm_client, safety, url_validator, sensitivity, draft_service
+│   │   └── middleware/          # auth, rbac (audits denials), audit (hash-chain)
+│   └── tests/                   # 123 tests across 13 files
+├── frontend/src/
+│   ├── pages/                   # 9 pages
+│   ├── components/              # 13 shared + 3 eval components
+│   └── styles/                  # CSS variable design tokens
+└── docs/                        # 9 documentation files
 ```
 
-## Running Tests
+## Key Features Beyond Requirements
 
-```bash
-# Backend tests
-cd backend
-pytest -v
+### Safety & guardrails
+- Prompt safety scanner with 15 injection patterns, PII detection, toxicity checks, length limits
+- LLM-as-judge hallucination detection (0-100), strict parser rejects judge refusals (no more "404 Not Found" → 100)
+- Sensitivity labels have teeth: confidential services require admin override + audit trail to reach the LLM
+- SSRF guard on every outbound URL (register, update, probe, scheduled tick) blocks metadata services and private IPs
+- Retry with exponential backoff for transient API failures
 
-# Frontend tests
-cd frontend
-npm test
-```
+### Cost & rate controls
+- API budget enforcement with daily/monthly caps and per-call cost tracking
+- Per-user and global rate limiting with **concurrency-safe reservation** (lock + atomic INSERT — no race bypass)
+- Cost analytics by service
 
-## Team
+### Human-in-the-loop
+- Incident summaries + maintenance plans require explicit human approval
+- Mandatory `reviewer_note` (≥20 chars) on incident approval — no silent rubber-stamping
+- Dashboard insights + compliance AI reports use shared draft/approve abstraction (`AILlmDraft`)
+- Idempotent approvals (double-approve returns 409, attribution preserved)
 
-| Member | Primary Module |
-|--------|---------------|
-| Jack | Module 1: Service Registry + Backend Core |
-| Sakir | Module 2: Monitoring Dashboard + Eval Harness |
-| Osele | Module 3: Incident Triage + LLM Integration |
-| Jeewanjot | Module 4: Governance + Documentation |
+### Audit & compliance
+- **Tamper-evident audit log**: SHA-256 hash chain + SQLite append-only triggers + admin-only integrity verify
+- Every RBAC 403 denial is itself audited as `role_denied` for forensic review
+- Login success/failure/lockout mirrored from `login_attempts` to `audit_log`
+- Compliance export includes audit + incidents + maintenance plans (JSON + PDF)
+- Strict date parsing — malformed `from_date` returns 400 instead of silently dropping the filter
+- Truncation warnings surfaced when exports exceed row cap (10,000 per section)
 
-## License
+### Monitoring
+- Advanced drift detection with severity levels, trend analysis, per-test tracking
+- Login throttling (lockout after 5 failed attempts)
+- LLM call tracing with prompt/response storage
+- Alert system with acknowledge workflow
+- Command palette (Cmd+K) with keyboard navigation
+- Dark/light theme with accessible design tokens (WCAG 2.2 AA)
 
-Academic project — ARTI-409-A, March 2026
+## Documentation
+
+**New here? Start with [docs/README.md](docs/README.md)** — the reading guide
+that routes you through the docs based on whether you're grading, setting up,
+reviewing compliance, or rehearsing a demo.
+
+| Document | What's in it |
+|----------|-------------|
+| [docs/README](docs/README.md) | Reading guide by audience (grader / developer / compliance / viva) |
+| [TECHNICAL_REFERENCE](docs/TECHNICAL_REFERENCE.md) | Consolidated reference manual — 14 sections + 20-min presentation defence guide with per-speaker scripts |
+| [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
+| [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
+| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 123 tests across 13 files with coverage floor, what they cover, how to run |
+| [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm, judge-refused handling |
+| [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
+| [RISK_REGISTER](docs/RISK_REGISTER.md) | 17 risks with mitigations and residuals |
+| [MAINTENANCE_RUNBOOK](docs/MAINTENANCE_RUNBOOK.md) | 15 operational scenarios (incl. audit integrity, SSRF, confidential override, judge refusals) |
+| [LIVE_DEMO_WALKTHROUGH](docs/LIVE_DEMO_WALKTHROUGH.md) | Consolidated demo guide: night-before / morning-of / T-15 pre-flight, 9-step script with failure modes & killshots, recovery, one-page checklist |
+| [SELF_CRITIQUE](docs/SELF_CRITIQUE.md) | Top 5 methodological weaknesses a rigorous examiner will probe, with honest-answer phrasing for the viva |
+| [GOVERNANCE_AUDIT](docs/GOVERNANCE_AUDIT.md) | Enterprise governance audit: 7 risk categories + HIPAA / SOX / EU AI Act verdict + 12-week remediation roadmap |
+| [DOVER_MAPPING](docs/DOVER_MAPPING.md) | Implementation mapping against the DOVER framework (Data / Oversight / Validation / Ethics / Risk) |
+| [VIVA_QA_PREP](docs/VIVA_QA_PREP.md) | 10 hardest questions a strict examiner will ask in a 2-minute Q&A, with ideal-answer phrasing and weak-answer traps |
+
+---
+
+Academic project -- ARTI-409-A, AI Systems & Governance, 2026

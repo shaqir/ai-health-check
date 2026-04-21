@@ -1,139 +1,225 @@
-import { Shield, Database, Cpu, Globe, ArrowRight, Lock, Server } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Shield, Database, Globe, Lock, ArrowRight, Server, ArrowUpRight } from 'lucide-react';
+import api from '../utils/api';
+import PageHeader from '../components/common/PageHeader';
+import StatusBadge from '../components/common/StatusBadge';
+
+const SENSITIVITY_COPY = {
+  public:       'Non-sensitive. Full LLM features enabled.',
+  internal:     'Business data. LLM features enabled with caution.',
+  confidential: 'Highly sensitive. LLM requires explicit approval.',
+};
 
 export default function DataPolicyPage() {
+  // Everything here is server-sourced so the page reflects the running system
+  // instead of hard-coded claims. Failures fall back to null, which the
+  // renderers detect and show a neutral label for.
+  const [model, setModel] = useState(null);
+  const [sensitivityCounts, setSensitivityCounts] = useState(null);
+  const [blockedToday, setBlockedToday] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [settingsRes, servicesRes, safetyRes] = await Promise.allSettled([
+          api.get('/dashboard/settings'),
+          api.get('/services'),
+          api.get('/dashboard/api-safety'),
+        ]);
+
+        if (cancelled) return;
+
+        if (settingsRes.status === 'fulfilled') {
+          setModel(settingsRes.value.data?.ai_model?.model ?? null);
+        }
+
+        if (servicesRes.status === 'fulfilled') {
+          const counts = { public: 0, internal: 0, confidential: 0 };
+          for (const s of servicesRes.value.data || []) {
+            if (counts[s.sensitivity_label] !== undefined) counts[s.sensitivity_label] += 1;
+          }
+          setSensitivityCounts(counts);
+        }
+
+        if (safetyRes.status === 'fulfilled') {
+          setBlockedToday(safetyRes.value.data?.blocked_today ?? 0);
+        }
+      } catch {
+        // swallow — every panel has a neutral fallback
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 pb-12 max-w-4xl mx-auto">
-      
-      {/* Banner */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
-        <div className="p-2 bg-blue-100 rounded-lg shrink-0">
-          <Shield size={20} className="text-blue-600" />
+    <div className="space-y-5 max-w-4xl">
+      <PageHeader title="Data Policy" description="How AI Health Check handles data and interacts with external LLM providers." />
+
+      {/* Architecture diagram */}
+      <div className="bg-surface rounded-xl border border-hairline p-6 shadow-xs">
+        <div className="flex items-baseline justify-between mb-4">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight">Data flow</h3>
+          {model && (
+            <span className="text-[11px] text-text-subtle">
+              Live model:&nbsp;
+              <span className="font-mono bg-surface-elevated px-1.5 py-0.5 rounded-xs text-text">
+                {model}
+              </span>
+            </span>
+          )}
         </div>
-        <div>
-          <h3 className="text-sm font-semibold text-blue-900">Privacy & Data Handling</h3>
-          <p className="text-sm text-blue-800 mt-0.5">This page explains how AIHealthCheck handles your data and interacts with external LLM providers.</p>
-        </div>
-      </div>
-
-      <h1 className="text-2xl font-bold text-slate-900 tracking-tight mt-8 mb-6">Data Architecture & Policy</h1>
-
-      {/* Architecture Diagram */}
-      <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm">
-        <h3 className="text-base font-semibold text-slate-800 mb-6 flex items-center gap-2">
-          <Cpu size={18} className="text-slate-400" />
-          High-Level Data Flow Architecture
-        </h3>
-        
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4 p-6 bg-slate-50/50 border border-slate-100 rounded-xl">
-          
-          <div className="flex flex-col items-center gap-2 w-full md:w-32">
-            <div className="w-16 h-16 bg-white border-2 border-slate-200 rounded-full flex items-center justify-center shadow-sm">
-              <Globe size={24} className="text-slate-600" />
-            </div>
-            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">User / Browser</span>
+        <div className="flex flex-col md:flex-row items-center justify-between gap-3 p-5 bg-surface-elevated rounded-xl border border-hairline">
+          <FlowNode icon={Globe} label="User" sublabel="Browser" />
+          <ArrowRight size={16} strokeWidth={1.5} className="text-text-subtle hidden md:block" />
+          <div className="flex flex-col gap-2 w-full md:w-40">
+            <FlowBox label="React Frontend" sublabel="Dashboards" />
+            <FlowBox label="FastAPI Backend" sublabel="llm_client.py" />
           </div>
-
-          <ArrowRight size={24} className="text-slate-300 hidden md:block" />
-
-          <div className="flex flex-col gap-2 w-full md:w-48">
-            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl shadow-sm text-center">
-              <h4 className="text-sm font-bold text-blue-800">React Frontend</h4>
-              <p className="text-xs text-blue-600 mt-1">Dashboards & Metrics</p>
-            </div>
-            <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-sm text-center">
-              <h4 className="text-sm font-bold text-indigo-800">FastAPI Backend</h4>
-              <p className="text-xs text-indigo-600 mt-1">llm/client.py Wrapper</p>
-            </div>
+          <ArrowRight size={16} strokeWidth={1.5} className="text-text-subtle hidden md:block" />
+          <div className="flex flex-col gap-2 w-full md:w-36">
+            <FlowNode icon={Database} label="SQLite" sublabel="Local storage" />
+            <FlowNode
+              icon={Server}
+              label="Claude API"
+              sublabel={model ? `Anthropic · ${model.split('-').slice(0, 3).join('-')}` : 'Cloud inference'}
+            />
           </div>
-
-          <div className="flex flex-row md:flex-col gap-4">
-            <ArrowRight size={24} className="text-slate-300 rotate-90 md:rotate-0" />
-            <ArrowRight size={24} className="text-slate-300 rotate-90 md:rotate-0" />
-          </div>
-
-          <div className="flex flex-col gap-4 w-full md:w-40">
-            <div className="bg-slate-100 border border-slate-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
-              <Database size={20} className="text-slate-500" />
-              <div>
-                <h4 className="text-xs font-bold text-slate-700">Local SQLite</h4>
-                <p className="text-[10px] text-slate-500">Metadata & Logs</p>
-              </div>
-            </div>
-            <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
-              <Server size={20} className="text-emerald-600" />
-              <div>
-                <h4 className="text-xs font-bold text-emerald-800">Claude API</h4>
-                <p className="text-[10px] text-emerald-600">Cloud Inferencing</p>
-              </div>
-            </div>
-          </div>
-
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Local Storage */}
-        <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-            <Database size={16} className="text-blue-500" /> What data is stored locally?
-          </h3>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            All application data is stored in a local SQLite database file (aiops.db) on the server.
-            This includes: registered AI service metadata, evaluation results, incident records, the full audit log,
-            and telemetry metrics. Passwords are stored as bcrypt hashes — never in plain text.
-          </p>
-        </section>
+      {/* Policy sections */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <PolicySection icon={Database} title="What is stored locally?">
+          All application data is stored in a local SQLite database (aiops.db). This includes: service metadata,
+          evaluation results, incident records, audit log, telemetry, and API usage logs. Passwords are stored
+          as bcrypt hashes. Prompt safety scan results and risk scores are logged per API call.
+        </PolicySection>
 
-        {/* Cloud API */}
-        <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-            <Globe size={16} className="text-emerald-500" /> What is sent to Anthropic's API?
-          </h3>
-          <p className="text-sm text-slate-600 leading-relaxed mb-3">
-            This application uses Anthropic's Claude API. The following data is dispatched to the cloud:
-          </p>
-          <ul className="text-sm text-slate-600 space-y-2 ml-1">
-            <li className="flex gap-2 items-start"><span className="text-emerald-500 mt-0.5">•</span> Test connection prompts (a short "hello" prompt)</li>
-            <li className="flex gap-2 items-start"><span className="text-emerald-500 mt-0.5">•</span> Evaluation test case prompts (synthetic data only)</li>
-            <li className="flex gap-2 items-start"><span className="text-emerald-500 mt-0.5">•</span> Incident details when generating LLM summaries</li>
+        <PolicySection icon={Globe} title="What is sent to Anthropic?">
+          <p className="mb-2">Data dispatched to Claude API:</p>
+          <ul className="space-y-1.5">
+            <li className="flex items-start gap-2"><Dot /> Test connection prompts (short "hello" prompt)</li>
+            <li className="flex items-start gap-2"><Dot /> Evaluation test case prompts (synthetic data)</li>
+            <li className="flex items-start gap-2"><Dot /> Incident details for LLM summary generation</li>
+            <li className="flex items-start gap-2"><Dot /> Dashboard and compliance report generation requests</li>
           </ul>
-        </section>
+          <p className="mt-2 text-text-subtle">All inputs are scanned by the safety scanner before transmission.</p>
+        </PolicySection>
 
-        {/* Logging */}
-        <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-            <Lock size={16} className="text-slate-500" /> Are prompts logged?
-          </h3>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            Prompts sent to the LLM are <strong>not stored</strong> in our database by default. Only the
-            result metadata (latency, status, quality score) is recorded. The response snippets from
-            test connections are stored for debugging purposes only. Per Anthropic's data retention
-            policy, API inputs and outputs are not used for model training.
-          </p>
-        </section>
+        <PolicySection icon={Lock} title="Are prompts logged?">
+          Prompts sent to the LLM are not stored in the database by default. Only metadata is recorded:
+          latency, token counts, cost estimate, safety flags, and risk score. Response snippets from test
+          connections are stored for debugging. Per Anthropic's policy, API inputs/outputs are not used
+          for model training.
+        </PolicySection>
 
-        {/* Routing */}
-        <section className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3">How do sensitivity labels affect routing?</h3>
-          <p className="text-sm text-slate-600 leading-relaxed mb-4">
-            Every registered AI service is tagged with one of three sensitivity labels:
+        <PolicySection icon={Shield} title="Sensitivity label routing">
+          <p className="mb-3">
+            Every registered service is tagged with a sensitivity label that governs LLM feature access.
+            {sensitivityCounts && (
+              <>
+                {' '}Current fleet:&nbsp;
+                <span className="font-mono text-text">
+                  {sensitivityCounts.public + sensitivityCounts.internal + sensitivityCounts.confidential}
+                </span>
+                {' '}services.
+              </>
+            )}
           </p>
-          <div className="space-y-3">
-            <div className="flex items-start gap-3">
-              <span className="px-2 py-0.5 border border-emerald-200 rounded text-[10px] uppercase font-bold bg-emerald-50 text-emerald-700 w-24 text-center shrink-0">Public</span>
-              <span className="text-xs text-slate-600 leading-tight">Non-sensitive data. Full LLM features enabled.</span>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="px-2 py-0.5 border border-amber-200 rounded text-[10px] uppercase font-bold bg-amber-50 text-amber-700 w-24 text-center shrink-0">Internal</span>
-              <span className="text-xs text-slate-600 leading-tight">Internal business data. LLM features enabled with caution.</span>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="px-2 py-0.5 border border-rose-200 rounded text-[10px] uppercase font-bold bg-rose-50 text-rose-700 w-24 text-center shrink-0">Confidential</span>
-              <span className="text-xs text-slate-600 leading-tight">Highly sensitive. LLM features require explicit approval; consider local model.</span>
-            </div>
+          <div className="space-y-2">
+            {['public', 'internal', 'confidential'].map(tier => (
+              <SensitivityRow
+                key={tier}
+                status={tier}
+                desc={SENSITIVITY_COPY[tier]}
+                count={sensitivityCounts?.[tier]}
+              />
+            ))}
           </div>
-        </section>
+        </PolicySection>
+      </div>
+
+      {/* Safety note — pulls live blocked count so the "scanner active"
+          claim is backed by today's data, not just a static label. */}
+      <div className="flex items-start gap-3 px-4 py-3.5 bg-status-healthy-muted rounded-xl">
+        <Shield size={14} strokeWidth={1.75} className="text-status-healthy shrink-0 mt-0.5" />
+        <div className="text-[12px] text-text-muted flex-1">
+          <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mb-1">
+            <span className="font-medium text-text">Prompt safety scanner active.</span>
+            {blockedToday !== null && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono tabular-nums text-status-healthy">
+                <span className="w-1 h-1 rounded-full bg-status-healthy" />
+                {blockedToday} blocked today
+              </span>
+            )}
+          </div>
+          All inputs are checked for injection patterns, PII, and length limits before reaching Claude. Blocked
+          calls are logged with safety flags and risk scores. Budget enforcement prevents cost overruns.{' '}
+          <Link
+            to="/settings"
+            className="inline-flex items-center gap-0.5 text-accent hover:underline"
+          >
+            See live scanner stats
+            <ArrowUpRight size={11} strokeWidth={2} />
+          </Link>
+        </div>
       </div>
     </div>
   );
+}
+
+/* ── Local sub-components ── */
+
+function PolicySection({ icon: Icon, title, children }) {
+  return (
+    <section className="bg-surface rounded-xl border border-hairline p-5 shadow-xs">
+      <h3 className="text-[13px] font-semibold text-text tracking-tight mb-2 flex items-center gap-2">
+        <Icon size={12} strokeWidth={1.5} /> {title}
+      </h3>
+      <div className="text-sm text-text-muted leading-relaxed">{children}</div>
+    </section>
+  );
+}
+
+function FlowNode({ icon: Icon, label, sublabel }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="w-11 h-11 rounded-xl bg-surface shadow-xs flex items-center justify-center">
+        <Icon size={16} strokeWidth={1.75} className="text-text-subtle" />
+      </div>
+      <span className="text-[11px] font-medium text-text tracking-tight">{label}</span>
+      {sublabel && <span className="text-[10px] text-text-subtle text-center">{sublabel}</span>}
+    </div>
+  );
+}
+
+function FlowBox({ label, sublabel }) {
+  return (
+    <div className="px-3 py-2 bg-surface rounded-lg border border-hairline shadow-xs text-center">
+      <p className="text-[12px] font-medium text-text">{label}</p>
+      {sublabel && <p className="text-[10px] text-text-subtle">{sublabel}</p>}
+    </div>
+  );
+}
+
+function SensitivityRow({ status, desc, count }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="w-24 shrink-0"><StatusBadge status={status} /></div>
+      <span className="text-xs text-text-muted flex-1">{desc}</span>
+      {count !== undefined && (
+        <span className="text-[11px] font-mono tabular-nums text-text-subtle shrink-0">
+          {count} {count === 1 ? 'service' : 'services'}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Dot() {
+  return <span className="w-1 h-1 rounded-full bg-text-subtle shrink-0 mt-2" aria-hidden="true" />;
 }

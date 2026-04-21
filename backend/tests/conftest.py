@@ -13,6 +13,35 @@ from app.main import app
 from app.models import User, UserRole
 from app.middleware.auth import hash_password, create_access_token
 
+
+@pytest.fixture(autouse=True)
+def _stub_dns_resolution(monkeypatch):
+    """
+    Default DNS stub for tests: resolve everything to a public IP (1.1.1.1).
+    Keeps the SSRF validator happy for generic fixtures that use test
+    URLs like 'staging.example.com' which don't publicly resolve.
+
+    Individual tests that need to exercise SSRF behaviour override this
+    with their own patch/context manager.
+    """
+    import socket
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        # Literal IPs must resolve to themselves so SSRF tests using
+        # http://169.254.169.254 still detect the blocked range.
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, port or 0))]
+        except ValueError:
+            pass
+        # For test hostnames, fake-resolve to a public IP so the validator
+        # allows them. Individual tests that need a private-IP resolution
+        # patch this directly.
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
 # In-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -23,7 +52,24 @@ TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def setup_db():
     """Create all tables before each test, drop after."""
     Base.metadata.create_all(bind=engine)
+    # Install the append-only triggers on the test engine too.
+    from app.main import _install_audit_log_triggers
+    from app.database import engine as app_engine
+    # Temporarily swap the engine used by the installer so triggers land
+    # on the test DB, then restore.
+    import app.main as main_module
+    orig_engine = main_module.engine
+    main_module.engine = engine
+    try:
+        _install_audit_log_triggers()
+    finally:
+        main_module.engine = orig_engine
     yield
+    # Drop triggers so next test's create_all doesn't conflict
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_log_no_update"))
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_log_no_delete"))
     Base.metadata.drop_all(bind=engine)
 
 
@@ -83,6 +129,21 @@ def viewer_user(db) -> User:
 
 
 @pytest.fixture
+def maintainer_user(db) -> User:
+    """Create and return a maintainer user."""
+    user = User(
+        username="testmaintainer",
+        email="maintainer@test.local",
+        password_hash=hash_password("maintain123"),
+        role=UserRole.maintainer,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
 def admin_token(admin_user) -> str:
     """JWT token for admin user."""
     return create_access_token(data={"sub": admin_user.id, "role": "admin"})
@@ -92,6 +153,12 @@ def admin_token(admin_user) -> str:
 def viewer_token(viewer_user) -> str:
     """JWT token for viewer user."""
     return create_access_token(data={"sub": viewer_user.id, "role": "viewer"})
+
+
+@pytest.fixture
+def maintainer_token(maintainer_user) -> str:
+    """JWT token for maintainer user."""
+    return create_access_token(data={"sub": maintainer_user.id, "role": "maintainer"})
 
 
 def auth_header(token: str) -> dict:

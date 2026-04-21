@@ -23,6 +23,7 @@ class UserRole(str, enum.Enum):
 
 class Environment(str, enum.Enum):
     dev = "dev"
+    staging = "staging"
     prod = "prod"
 
 
@@ -84,10 +85,14 @@ class AIService(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relationships
-    connection_logs = relationship("ConnectionLog", back_populates="service")
-    eval_runs = relationship("EvalRun", back_populates="service")
-    incidents = relationship("Incident", back_populates="service")
-    telemetry = relationship("Telemetry", back_populates="service")
+    # cascade="all, delete-orphan" so deleting a service emits DELETEs for its
+    # children — otherwise SQLAlchemy's default tries to null child FKs, which
+    # fails the NOT NULL constraint on service_id and aborts the delete.
+    connection_logs = relationship("ConnectionLog", back_populates="service", cascade="all, delete-orphan")
+    eval_test_cases = relationship("EvalTestCase", back_populates="service", cascade="all, delete-orphan")
+    eval_runs = relationship("EvalRun", back_populates="service", cascade="all, delete-orphan")
+    incidents = relationship("Incident", back_populates="service", cascade="all, delete-orphan")
+    telemetry = relationship("Telemetry", back_populates="service", cascade="all, delete-orphan")
 
 
 class ConnectionLog(Base):
@@ -113,6 +118,13 @@ class EvalTestCase(Base):
     category = Column(String(50), nullable=False)  # "factuality" or "format_json"
     created_at = Column(DateTime, default=utcnow)
 
+    service = relationship("AIService", back_populates="eval_test_cases")
+    # cascade="all, delete-orphan" so deleting a test case removes its
+    # EvalResult children. Without this, SQLAlchemy's default tries to null
+    # child.test_case_id (NOT NULL), which fails under FK enforcement and
+    # silently orphans rows when FKs are off.
+    results = relationship("EvalResult", back_populates="test_case", cascade="all, delete-orphan")
+
 
 class EvalRun(Base):
     __tablename__ = "eval_runs"
@@ -122,12 +134,30 @@ class EvalRun(Base):
     quality_score = Column(Float, nullable=False)
     factuality_score = Column(Float, nullable=True)
     format_score = Column(Float, nullable=True)
+    hallucination_score = Column(Float, nullable=True)
     drift_flagged = Column(Boolean, default=False)
     run_type = Column(String(20), default="manual")  # "manual" or "scheduled"
     run_at = Column(DateTime, default=utcnow)
     created_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="eval_runs")
+    results = relationship("EvalResult", back_populates="eval_run", cascade="all, delete-orphan")
+
+
+class EvalResult(Base):
+    __tablename__ = "eval_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    eval_run_id = Column(Integer, ForeignKey("eval_runs.id"), nullable=False)
+    test_case_id = Column(Integer, ForeignKey("eval_test_cases.id"), nullable=False)
+    response_text = Column(Text, default="")
+    score = Column(Float, nullable=False)
+    latency_ms = Column(Float, default=0.0)
+    status = Column(String(20), default="success")  # "success" or "error"
+    created_at = Column(DateTime, default=utcnow)
+
+    eval_run = relationship("EvalRun", back_populates="results")
+    test_case = relationship("EvalTestCase", back_populates="results")
 
 
 class Incident(Base):
@@ -144,6 +174,10 @@ class Incident(Base):
     root_causes = Column(Text, default="")
     summary_draft = Column(Text, default="")  # Pending approval
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    # Mandatory reviewer note on approval — makes the human in the loop
+    # articulate what they read instead of rubber-stamping the LLM's output.
+    reviewer_note = Column(Text, default="")
     # Troubleshooting checklist
     checklist_data_issue = Column(Boolean, default=False)
     checklist_prompt_change = Column(Boolean, default=False)
@@ -154,7 +188,7 @@ class Incident(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     service = relationship("AIService", back_populates="incidents")
-    maintenance_plans = relationship("MaintenancePlan", back_populates="incident")
+    maintenance_plans = relationship("MaintenancePlan", back_populates="incident", cascade="all, delete-orphan")
 
 
 class MaintenancePlan(Base):
@@ -166,6 +200,11 @@ class MaintenancePlan(Base):
     rollback_plan = Column(Text, nullable=False)
     validation_steps = Column(Text, nullable=False)
     approved = Column(Boolean, default=False)
+    # Approver attribution — same shape as Incident.approved_by / _at so the
+    # audit-of-record + the UI both know WHO approved WHEN. Nullable because
+    # rows start unapproved and are filled in on the approve endpoint.
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
     scheduled_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
@@ -184,6 +223,11 @@ class AuditLog(Base):
     old_value = Column(Text, default="")
     new_value = Column(Text, default="")
     timestamp = Column(DateTime, default=utcnow)
+    # Tamper-evidence hash chain. Each row commits to its content + the
+    # previous row's hash, so any UPDATE/DELETE is detectable by replaying
+    # the chain. DB triggers also block direct mutation (see main.py).
+    content_hash = Column(String(64), default="")
+    prev_hash = Column(String(64), default="")
 
 
 class Telemetry(Base):
@@ -196,3 +240,68 @@ class Telemetry(Base):
     recorded_at = Column(DateTime, default=utcnow)
 
     service = relationship("AIService", back_populates="telemetry")
+
+
+class APIUsageLog(Base):
+    __tablename__ = "api_usage_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    caller = Column(String(100), nullable=False)        # function name (e.g. "generate_summary")
+    model = Column(String(100), nullable=False)          # model used
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)      # estimated cost in USD
+    latency_ms = Column(Float, default=0.0)
+    service_id = Column(Integer, ForeignKey("ai_services.id"), nullable=True)
+    status = Column(String(30), default="success")       # "success", "error_timeout", "error_rate_limit", etc.
+    safety_flags = Column(Text, default="")              # comma-separated safety flags
+    risk_score = Column(Integer, default=0)               # 0-100 input risk score
+    prompt_text = Column(Text, default="")               # actual prompt sent (truncated to 2000 chars)
+    response_text = Column(Text, default="")             # actual response received (truncated to 2000 chars)
+    timestamp = Column(DateTime, default=utcnow)
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(100), nullable=False)
+    success = Column(Boolean, default=False)
+    ip_address = Column(String(45), default="")          # supports IPv6
+    timestamp = Column(DateTime, default=utcnow)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_type = Column(String(50), nullable=False)      # "drift", "budget", "safety", "outage"
+    severity = Column(String(20), nullable=False)         # "critical", "warning", "info"
+    message = Column(Text, nullable=False)
+    service_id = Column(Integer, ForeignKey("ai_services.id"), nullable=True)
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AILlmDraft(Base):
+    """
+    Human-in-the-loop envelope for LLM-generated content that needs human
+    approval before it counts as official. Backs dashboard AI summaries and
+    compliance AI reports. Incident summaries use a separate field pattern
+    on the Incident model (kept as-is to avoid breaking its UI).
+    """
+    __tablename__ = "ai_llm_drafts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Which surface generated this draft — keeps a single table for many uses.
+    surface = Column(String(50), nullable=False)  # "dashboard_insight" | "compliance_report"
+    surface_ref = Column(String(100), default="")  # optional external reference (date range, etc.)
+    content = Column(Text, nullable=False)
+    generated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)

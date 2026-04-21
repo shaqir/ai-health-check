@@ -1,0 +1,208 @@
+/*
+ * AI Health Check Design Tokens — Apple-inspired
+ *
+ * All colors, radii, shadows, and motion defined as CSS custom properties.
+ * Tailwind consumes these via tailwind.config.js.
+ * Dark mode is the default; light mode applied via [data-theme="light"].
+ * Toggle persisted by ThemeProvider.jsx.
+ */
+
+/* ── Dark theme (default) ── */
+:root {
+  /* Surfaces — pure near-black baseline */
+  --color-bg: #000000;
+  --color-surface: #0a0a0c;
+  --color-surface-elevated: #141417;
+  --color-surface-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Hairline strokes */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+  --color-border: var(--hairline);
+  --color-border-strong: var(--hairline-strong);
+
+  /* Text — higher contrast for readable labels */
+  --color-text: #ffffff;
+  --color-text-muted: #d2d2d7;
+  --color-text-subtle: #8e8e93;
+
+  /* Status — semantic only */
+  --status-healthy: #30d158;
+  --status-healthy-muted: rgba(48, 209, 88, 0.15);
+  --status-degraded: #ff9f0a;
+  --status-degraded-muted: rgba(255, 159, 10, 0.15);
+  --status-failing: #ff453a;
+  --status-failing-muted: rgba(255, 69, 58, 0.15);
+  --status-unknown: #6e6e73;
+  --status-unknown-muted: rgba(110, 110, 115, 0.15);
+  --status-paused: #bf5af2;
+  --status-paused-muted: rgba(191, 90, 242, 0.15);
+
+  /* Severity */
+  --severity-critical: #ff453a;
+  --severity-critical-muted: rgba(255, 69, 58, 0.15);
+  --severity-high: #ff9f0a;
+  --severity-high-muted: rgba(255, 159, 10, 0.15);
+  --severity-medium: #ffd60a;
+  --severity-medium-muted: rgba(255, 214, 10, 0.15);
+  --severity-low: #0a84ff;
+  --severity-low-muted: rgba(10, 132, 255, 0.15);
+
+  /* Accent — Apple system blue */
+  --accent: #0a84ff;
+  --accent-hover: #409cff;
+  --accent-weak: color-mix(in oklab, var(--accent) 12%, transparent);
+  --accent-muted: var(--accent-weak);
+
+  /* Focus ring — soft glow */
+  --focus-ring: color-mix(in oklab, var(--accent) 70%, transparent);
+  --focus-ring-glow: 0 0 0 3px var(--focus-ring), 0 0 0 5px color-mix(in oklab, var(--accent) 20%, transparent);
+
+  /* Chart palette — Apple system colors */
+  --chart-1: #0a84ff;
+  --chart-2: #30d158;
+  --chart-3: #ff9f0a;
+  --chart-4: #ff453a;
+  --chart-5: #bf5af2;
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+  --radius-pill: 999px;
+
+  /* Shadows — layered, soft */
+  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.5), 0 8px 16px rgba(0, 0, 0, 0.3);
+
+  /* Materials — translucent surfaces */
+  --material-thin: color-mix(in oklab, var(--color-surface) 60%, transparent);
+  --material-regular: color-mix(in oklab, var(--color-surface) 72%, transparent);
+  --material-thick: color-mix(in oklab, var(--color-surface) 85%, transparent);
+  --material-opaque: color-mix(in oklab, var(--color-surface) 96%, transparent);
+  --material-blur: saturate(180%) blur(20px);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* Fonts — SF Pro system stack */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --color-bg: #ffffff;
+  --color-surface: #fbfbfd;
+  --color-surface-elevated: #f2f2f4;
+  --color-surface-overlay: rgba(0, 0, 0, 0.3);
+
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
+  --color-border: var(--hairline);
+  --color-border-strong: var(--hairline-strong);
+
+  --color-text: #000000;
+  --color-text-muted: #1d1d1f;
+  --color-text-subtle: #6e6e73;
+
+  /* Status — adjusted for light bg */
+  --status-healthy: #1f8b3c;
+  --status-healthy-muted: rgba(31, 139, 60, 0.1);
+  --status-degraded: #c77800;
+  --status-degraded-muted: rgba(199, 120, 0, 0.1);
+  --status-failing: #d70015;
+  --status-failing-muted: rgba(215, 0, 21, 0.1);
+  --status-unknown: #86868b;
+  --status-unknown-muted: rgba(134, 134, 139, 0.08);
+  --status-paused: #8944ab;
+  --status-paused-muted: rgba(137, 68, 171, 0.1);
+
+  /* Severity */
+  --severity-critical: #d70015;
+  --severity-critical-muted: rgba(215, 0, 21, 0.1);
+  --severity-high: #c77800;
+  --severity-high-muted: rgba(199, 120, 0, 0.1);
+  --severity-medium: #b25000;
+  --severity-medium-muted: rgba(178, 80, 0, 0.1);
+  --severity-low: #0071e3;
+  --severity-low-muted: rgba(0, 113, 227, 0.1);
+
+  /* Accent */
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --accent-weak: color-mix(in oklab, var(--accent) 10%, transparent);
+  --accent-muted: var(--accent-weak);
+
+  --focus-ring: color-mix(in oklab, var(--accent) 60%, transparent);
+  --focus-ring-glow: 0 0 0 3px var(--focus-ring), 0 0 0 5px color-mix(in oklab, var(--accent) 16%, transparent);
+
+  /* Chart */
+  --chart-1: #0071e3;
+  --chart-2: #1f8b3c;
+  --chart-3: #c77800;
+  --chart-4: #d70015;
+  --chart-5: #8944ab;
+
+  /* Shadows — light */
+  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 24px 48px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Typography baseline ── */
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+/* Tabular numerals for metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Motion utilities ── */
+.transition-standard {
+  transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-standard);
+}
+
+.transition-spring {
+  transition-property: transform, opacity;
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-spring);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Focus-visible ring ── */
+*:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-glow);
+  border-radius: inherit;
+}

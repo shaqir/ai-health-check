@@ -1,40 +1,54 @@
 import { useState, useEffect } from 'react';
-import { Plus, Wifi, Trash2, LayoutGrid, List as ListIcon, Loader2, Server, Search, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
+import EmptyState from '../components/common/EmptyState';
+import ErrorState from '../components/common/ErrorState';
 import Modal from '../components/common/Modal';
+import ConfirmModal from '../components/common/ConfirmModal';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
 const ENV_OPTIONS = ['dev', 'staging', 'prod'];
+const DEFAULT_FORM = {
+  name: '', owner: '', environment: 'dev',
+  model_name: 'claude-sonnet-4-6-20250415',
+  sensitivity_label: 'internal', endpoint_url: '',
+};
+
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
+const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function ServicesPage() {
   const { canEdit } = useAuth();
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
   const [search, setSearch] = useState('');
-  
-  // Modals state
-  const [showAddModal, setShowAddModal] = useState(false);
+  // formMode: null | 'create' | 'edit'. editingId is set only for 'edit'.
+  const [formMode, setFormMode] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [formError, setFormError] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-  
+  const [deleteError, setDeleteError] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const [form, setForm] = useState({
-    name: '', owner: '', environment: 'dev',
-    model_name: 'claude-sonnet-4-20250514',
-    sensitivity_label: 'internal', endpoint_url: '',
-  });
+  // Confidential Ping confirmation — holds the service the user clicked
+  // on until they either confirm the override or cancel. Null when closed.
+  const [confidentialPingTarget, setConfidentialPingTarget] = useState(null);
+
+  const [form, setForm] = useState(DEFAULT_FORM);
 
   const fetchServices = async () => {
+    setError(null);
     try {
       const res = await api.get('/services');
       setServices(res.data);
     } catch (err) {
-      console.error('Failed to load services:', err);
+      setError('Failed to load services.');
     } finally {
       setLoading(false);
     }
@@ -42,263 +56,354 @@ export default function ServicesPage() {
 
   useEffect(() => { fetchServices(); }, []);
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
+  const openCreateForm = () => {
+    setForm(DEFAULT_FORM);
+    setFormError(null);
+    setEditingId(null);
+    setFormMode('create');
+  };
+
+  const openEditForm = (service) => {
+    setForm({
+      name: service.name,
+      owner: service.owner,
+      environment: service.environment,
+      model_name: service.model_name,
+      sensitivity_label: service.sensitivity_label,
+      endpoint_url: service.endpoint_url || '',
+    });
+    setFormError(null);
+    setEditingId(service.id);
+    setFormMode('edit');
+  };
+
+  const closeForm = () => {
+    setFormMode(null);
+    setEditingId(null);
+    setFormError(null);
+  };
+
+  const handleSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     setIsSubmitting(true);
+    setFormError(null);
     try {
-      await api.post('/services', form);
-      setShowAddModal(false);
-      setForm({ name: '', owner: '', environment: 'dev', model_name: 'claude-sonnet-4-20250514', sensitivity_label: 'internal', endpoint_url: '' });
+      if (formMode === 'edit' && editingId != null) {
+        await api.put(`/services/${editingId}`, form);
+      } else {
+        await api.post('/services', form);
+      }
+      closeForm();
       fetchServices();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to create service');
+      setFormError(err.response?.data?.detail || `Failed to ${formMode === 'edit' ? 'update' : 'create'} service`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const closeDeleteConfirm = () => {
+    setDeleteConfirmId(null);
+    setDeleteError(null);
+  };
+
   const handleDelete = async () => {
     if (!deleteConfirmId) return;
+    setDeleteError(null);
     try {
       await api.delete(`/services/${deleteConfirmId}`);
-      setDeleteConfirmId(null);
+      closeDeleteConfirm();
       fetchServices();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to delete');
+      setDeleteError(err.response?.data?.detail || 'Failed to delete service');
     }
   };
 
-  const handleTestConnection = async (id) => {
+  const runPing = async (id, qs = '') => {
     setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
     try {
-      const res = await api.post(`/services/${id}/test-connection`);
+      const res = await api.post(`/services/${id}/test-connection${qs}`);
       setTestResults((prev) => ({ ...prev, [id]: { ...res.data, status: res.data.status === 'success' ? 'healthy' : 'failed' } }));
     } catch (err) {
-      setTestResults((prev) => ({
-        ...prev,
-        [id]: { status: 'failed', latency_ms: 0, response_snippet: err.message },
-      }));
+      const detail = err.response?.data?.detail || err.message;
+      setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
     }
   };
 
-  const filteredServices = services.filter(s => 
-    s.name.toLowerCase().includes(search.toLowerCase()) || 
+  const handleTestConnection = (id) => {
+    const service = services.find((s) => s.id === id);
+    if (service?.sensitivity_label === 'confidential') {
+      // Defer to confirm modal; override query-string attached on approve.
+      setConfidentialPingTarget(service);
+      return;
+    }
+    runPing(id);
+  };
+
+  const confirmConfidentialPing = async () => {
+    if (!confidentialPingTarget) return;
+    const id = confidentialPingTarget.id;
+    setConfidentialPingTarget(null);
+    await runPing(id, '?mode=llm&allow_confidential=true');
+  };
+
+  const filtered = services.filter(s =>
+    s.name.toLowerCase().includes(search.toLowerCase()) ||
     s.owner.toLowerCase().includes(search.toLowerCase())
   );
 
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500 pb-12">
-      
-      {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Service Registry</h1>
-          <p className="text-sm text-slate-500 mt-1">Manage and monitor connected AI models and endpoints.</p>
+  if (loading) {
+    return (
+      <div className="space-y-5" aria-busy="true">
+        <div className="h-5 w-36 bg-surface-elevated rounded-md animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <LoadingSkeleton type="card" />
+          <LoadingSkeleton type="card" />
+          <LoadingSkeleton type="card" />
         </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <ErrorState message={error} onRetry={() => { setLoading(true); fetchServices(); }} />;
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <PageHeader title="Service Registry" description="Manage and monitor connected AI models and endpoints.">
+        <div className="flex items-center gap-2">
+          {/* Search */}
+          <div className="relative w-52">
+            <Search size={14} strokeWidth={1.5} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-subtle" />
             <input
               type="text"
               placeholder="Search services..."
-              className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm"
+              aria-label="Search services"
+              className="w-full pl-9 pr-3 py-1.5 text-sm bg-[var(--material-thick)] rounded-pill text-text placeholder-text-subtle transition-standard"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
-          <div className="flex bg-white rounded-lg border border-slate-200 p-1 shadow-sm">
-            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded transition-colors ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}>
-              <LayoutGrid size={16} />
+          {/* View toggle */}
+          <div className="flex bg-[var(--material-thick)] rounded-pill p-0.5" role="group" aria-label="View mode">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-pill transition-standard ${viewMode === 'grid' ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-subtle hover:text-text'}`}
+              aria-label="Grid view"
+              aria-pressed={viewMode === 'grid'}
+            >
+              <LayoutGrid size={14} strokeWidth={1.5} />
             </button>
-            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded transition-colors ${viewMode === 'list' ? 'bg-slate-100 text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}>
-              <ListIcon size={16} />
+            <button
+              onClick={() => setViewMode('list')}
+              className={`p-1.5 rounded-pill transition-standard ${viewMode === 'list' ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-subtle hover:text-text'}`}
+              aria-label="List view"
+              aria-pressed={viewMode === 'list'}
+            >
+              <ListIcon size={14} strokeWidth={1.5} />
             </button>
           </div>
 
           {canEdit && (
             <button
-              onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm shadow-blue-600/20"
+              onClick={openCreateForm}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
             >
-              <Plus size={16} /> Register Service
+              <Plus size={14} strokeWidth={1.75} /> Register
             </button>
           )}
         </div>
-      </div>
+      </PageHeader>
 
-      {loading ? (
-        <div className={`grid gap-4 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
-          <LoadingSkeleton type="card" />
-          <LoadingSkeleton type="card" />
-          <LoadingSkeleton type="card" />
-        </div>
-      ) : filteredServices.length === 0 ? (
-        <div className="text-center py-20 bg-white border border-slate-200 rounded-xl shadow-sm">
-          <Server className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-          <h3 className="text-lg font-medium text-slate-900">No services found</h3>
-          <p className="text-sm text-slate-500 mt-1">Get started by registering a new AI service.</p>
-          {canEdit && (
-            <button onClick={() => setShowAddModal(true)} className="mt-4 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
-              Register Service
+      {/* Service cards */}
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title="No services found"
+          description={search ? 'Try a different search term.' : 'Get started by registering a new AI service.'}
+          action={canEdit && !search && (
+            <button onClick={openCreateForm} className="px-3.5 py-1.5 text-[12px] font-medium text-accent bg-accent-weak rounded-pill hover:bg-accent-muted transition-standard">
+              Register service
             </button>
           )}
-        </div>
+        />
       ) : (
-        <div className={`grid gap-4 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1'}`}>
-          {filteredServices.map((s) => (
-            <div key={s.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow group flex flex-col">
-              <div className="p-5 flex-1">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0">
-                      <Server size={20} className="text-blue-500" />
+        <div className={`grid gap-3 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1'}`}>
+          {filtered.map((s) => {
+            const test = testResults[s.id];
+            const statusLabel = !test ? 'Untested' : test.loading ? 'Testing...' : test.status === 'healthy' ? 'Connected' : 'Failed';
+            const statusDot = !test ? 'bg-status-unknown' : test.loading ? 'bg-status-degraded' : test.status === 'healthy' ? 'bg-status-healthy' : 'bg-status-failing';
+
+            return (
+              <div key={s.id} className="bg-surface rounded-xl border border-hairline shadow-xs hover:shadow-sm transition-standard flex flex-col group">
+                <div className="p-5 flex-1">
+                  {/* Top row: name + delete */}
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="min-w-0">
+                      <h3 className="text-[15px] font-semibold text-text tracking-tight truncate" title={s.name}>{s.name}</h3>
+                      <p className="text-[12px] text-text-muted mt-0.5">{s.owner}</p>
                     </div>
-                    <div>
-                      <h3 className="text-base font-semibold text-slate-900 truncate pr-2" title={s.name}>{s.name}</h3>
-                      <p className="text-xs text-slate-500">Owned by {s.owner}</p>
-                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-standard">
+                        <button
+                          onClick={() => openEditForm(s)}
+                          className="p-1.5 text-text-subtle hover:text-accent hover:bg-surface-elevated rounded-pill transition-standard"
+                          aria-label={`Edit ${s.name}`}
+                        >
+                          <Pencil size={14} strokeWidth={1.5} />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(s.id)}
+                          className="p-1.5 text-text-subtle hover:text-status-failing hover:bg-status-failing-muted rounded-pill transition-standard"
+                          aria-label={`Delete ${s.name}`}
+                        >
+                          <Trash2 size={14} strokeWidth={1.5} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Badges */}
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    <StatusBadge status={s.environment} />
+                    <StatusBadge status={s.sensitivity_label} />
+                  </div>
+
+                  {/* Model */}
+                  <p className="text-[11px] font-mono text-text-muted bg-surface-elevated px-2 py-1 rounded-md truncate" title={s.model_name}>
+                    {s.model_name}
+                  </p>
+                </div>
+
+                {/* Footer: status + ping */}
+                <div className="px-5 py-3 border-t border-hairline flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${statusDot}`} aria-hidden="true" />
+                    <span className="text-[12px] font-medium text-text-muted">{statusLabel}</span>
+                    {test && !test.loading && test.latency_ms > 0 && (
+                      <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                    )}
                   </div>
                   {canEdit && (
                     <button
-                      onClick={() => setDeleteConfirmId(s.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete service"
+                      onClick={() => handleTestConnection(s.id)}
+                      disabled={test?.loading}
+                      className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-text-muted hover:text-accent bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
+                      aria-label={`Ping ${s.name}`}
                     >
-                      <Trash2 size={16} />
+                      {test?.loading ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Wifi size={12} strokeWidth={1.5} />}
+                      Ping
                     </button>
                   )}
                 </div>
-                
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <StatusBadge status={s.environment} type="environment" />
-                  <StatusBadge status={s.sensitivity_label} type="sensitivity" />
-                </div>
-                
-                <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 font-mono border border-slate-100 truncate" title={s.model_name}>
-                  {s.model_name}
-                </div>
               </div>
-
-              <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2.5 w-2.5">
-                    {testResults[s.id]?.status === 'healthy' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>}
-                    <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${!testResults[s.id] ? 'bg-slate-300' : testResults[s.id]?.status === 'healthy' ? 'bg-emerald-500' : testResults[s.id]?.status === 'failed' ? 'bg-rose-500' : 'bg-slate-300'}`}></span>
-                  </span>
-                  <span className="text-xs font-medium text-slate-600">
-                    {!testResults[s.id] ? 'Untested' : testResults[s.id].loading ? 'Testing...' : testResults[s.id].status === 'healthy' ? 'Connected' : 'Failed'}
-                  </span>
-                </div>
-                
-                {canEdit && (
-                  <button
-                    onClick={() => handleTestConnection(s.id)}
-                    disabled={testResults[s.id]?.loading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition-colors disabled:opacity-50"
-                  >
-                    {testResults[s.id]?.loading ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />}
-                    <span className={viewMode === 'grid' ? "hidden sm:inline" : ""}>
-                       Ping
-                    </span>
-                    {testResults[s.id] && !testResults[s.id].loading && (
-                       <span className={`ml-1 px-1.5 py-0.5 rounded ${testResults[s.id].status === 'healthy' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                         {testResults[s.id].latency_ms ? `${testResults[s.id].latency_ms}ms` : 'Error'}
-                       </span>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Add Service Modal */}
+      {/* Register / Edit Service Modal */}
       <Modal
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        title="Register AI Service"
+        isOpen={formMode !== null}
+        onClose={closeForm}
+        title={formMode === 'edit' ? 'Edit AI service' : 'Register AI service'}
         footer={
           <>
-            <button onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+            <button onClick={closeForm} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
               Cancel
             </button>
-            <button 
-              onClick={handleCreate} 
+            <button
+              onClick={handleSubmit}
               disabled={isSubmitting || !form.name || !form.owner || !form.model_name}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-accent text-white text-[12px] font-medium rounded-pill hover:bg-accent-hover disabled:opacity-50 transition-standard"
             >
-              {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : 'Register Service'}
+              {isSubmitting ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : (formMode === 'edit' ? 'Save changes' : 'Register')}
             </button>
           </>
         }
       >
-        <form className="space-y-4" onSubmit={handleCreate}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <form className="space-y-3" onSubmit={handleSubmit}>
+          {formError && (
+            <div role="alert" className="flex items-start gap-2 px-3 py-2 text-[12px] text-status-failing bg-status-failing-muted border border-status-failing/30 rounded-md">
+              <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 flex-shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Service Name *</label>
-              <input className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" placeholder="e.g. Content Generator" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              <label className={LABEL_CLS}>Service Name *</label>
+              <input className={INPUT_CLS} placeholder="Content Generator" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Owner Team *</label>
-              <input className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" placeholder="e.g. Marketing" value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} required />
+              <label className={LABEL_CLS}>Owner Team *</label>
+              <input className={INPUT_CLS} placeholder="Marketing" value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} required />
             </div>
           </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Environment</label>
-              <select className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
-                {ENV_OPTIONS.map((o) => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+              <label className={LABEL_CLS}>Environment</label>
+              <select className={INPUT_CLS} value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
+                {ENV_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Data Sensitivity</label>
-              <select className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" value={form.sensitivity_label} onChange={(e) => setForm({ ...form, sensitivity_label: e.target.value })}>
-                {SENSITIVITY_OPTIONS.map((o) => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+              <label className={LABEL_CLS}>Sensitivity</label>
+              <select className={INPUT_CLS} value={form.sensitivity_label} onChange={(e) => setForm({ ...form, sensitivity_label: e.target.value })}>
+                {SENSITIVITY_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
               </select>
             </div>
           </div>
-          
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model Identifier *</label>
-            <input className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono" placeholder="e.g. claude-3-opus-20240229" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} required />
+            <label className={LABEL_CLS}>Model Identifier *</label>
+            <input className={`${INPUT_CLS} font-mono`} placeholder="claude-sonnet-4-6-20250415" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} required />
           </div>
-          
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Endpoint URL (Optional)</label>
-            <input className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" placeholder="https://api.example.com/v1/..." value={form.endpoint_url} onChange={(e) => setForm({ ...form, endpoint_url: e.target.value })} />
+            <label className={LABEL_CLS}>Endpoint URL</label>
+            <input className={INPUT_CLS} placeholder="https://api.example.com/v1/..." value={form.endpoint_url} onChange={(e) => setForm({ ...form, endpoint_url: e.target.value })} />
           </div>
         </form>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
-      <Modal
-        isOpen={!!deleteConfirmId}
-        onClose={() => setDeleteConfirmId(null)}
-        title="Confirm Deletion"
-        maxWidth="max-w-sm"
-        footer={
-          <>
-            <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
-              Cancel
-            </button>
-            <button 
-              onClick={handleDelete}
-              className="px-4 py-2 bg-rose-600 text-white text-sm font-medium rounded-lg hover:bg-rose-700 transition-colors shadow-sm"
-            >
-              Delete Service
-            </button>
-          </>
-        }
-      >
-        <div className="text-sm text-slate-600">
-          Are you sure you want to permanently delete this AI service from the registry? This action cannot be undone.
-        </div>
+      {/* Delete Confirmation */}
+      <Modal isOpen={!!deleteConfirmId} onClose={closeDeleteConfirm} title="Delete service" maxWidth="max-w-sm" footer={
+        <>
+          <button onClick={closeDeleteConfirm} className="px-4 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard">
+            Cancel
+          </button>
+          <button onClick={handleDelete} className="px-4 py-1.5 bg-status-failing text-white text-[12px] font-medium rounded-pill hover:opacity-90 transition-standard">
+            Delete
+          </button>
+        </>
+      }>
+        <p className="text-sm text-text-muted">
+          This will permanently remove the service and its connection logs. This action cannot be undone.
+        </p>
+        {deleteError && (
+          <div role="alert" className="mt-3 flex items-start gap-2 px-3 py-2 text-[12px] text-status-failing bg-status-failing-muted border border-status-failing/30 rounded-md">
+            <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 flex-shrink-0" />
+            <span>{deleteError}</span>
+          </div>
+        )}
       </Modal>
 
+      {/* Confidential Ping override — admin-only path through the
+          sensitivity gate. Backend rejects without this flag. */}
+      <ConfirmModal
+        isOpen={!!confidentialPingTarget}
+        onClose={() => setConfidentialPingTarget(null)}
+        onConfirm={confirmConfidentialPing}
+        title="Confidential service — override required"
+        variant="warning"
+        confirmLabel="Proceed with override"
+        description={
+          confidentialPingTarget
+            ? `"${confidentialPingTarget.name}" is labelled confidential. Running the LLM test-connection will send a prompt to an external model. Only admins can override, and every override is recorded in the audit log.`
+            : ''
+        }
+      />
     </div>
   );
 }

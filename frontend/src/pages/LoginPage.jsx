@@ -4,6 +4,14 @@ import { useAuth } from '../context/AuthContext';
 import { Server, ChevronDown, ChevronUp, Loader2, ShieldAlert, ArrowLeft, KeyRound, CheckCircle2 } from 'lucide-react';
 import api from '../utils/api';
 
+const DEMO_CREDS = [
+  { role: 'Admin', email: 'admin@aiops.local', pwd: 'admin123', desc: 'Full access' },
+  { role: 'Maintainer', email: 'maintainer@aiops.local', pwd: 'maintain123', desc: 'Services + incidents' },
+  { role: 'Viewer', email: 'viewer@aiops.local', pwd: 'viewer123', desc: 'Read-only' },
+];
+
+const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -72,7 +80,6 @@ export default function LoginPage() {
         new_password: newPassword,
       });
       setRecoverySuccess(res.data.message);
-      // Clear fields
       setRecoveryKey('');
       setNewPassword('');
       setConfirmPassword('');
@@ -93,148 +100,165 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0B1120] relative max-w-[100vw] overflow-hidden">
-      {/* Subtle Background Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] bg-blue-600/10 blur-[100px] rounded-full"></div>
-        <div className="absolute top-1/4 left-1/4 w-[400px] h-[400px] bg-indigo-600/10 blur-[100px] rounded-full"></div>
-      </div>
-      
-      <div className="w-full max-w-md px-6 relative z-10">
-        <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl p-8 sm:p-10">
-          
-          {/* ─── Header ─── */}
-          <div className="flex flex-col items-center mb-8">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg mb-4 transition-all duration-300 ${
-              showRecovery 
-                ? 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20' 
-                : 'bg-gradient-to-br from-blue-500 to-indigo-600 shadow-blue-500/20'
-            }`}>
-              {showRecovery ? <KeyRound size={24} className="text-white" /> : <Server size={24} className="text-white" />}
-            </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
-              {showRecovery ? 'Account Recovery' : 'AIHealthCheck'}
-            </h1>
-            <p className="text-sm text-slate-400 mt-2 text-center">
-              {showRecovery ? 'Reset your password using the recovery key' : 'Sign in to control room'}
-            </p>
+    <div className="min-h-screen flex items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-[380px]">
+        {/* Wordmark */}
+        <div className="flex items-center justify-center gap-2.5 mb-10">
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+            showRecovery ? 'bg-amber-500' : 'bg-accent'
+          }`}>
+            {showRecovery
+              ? <KeyRound size={14} strokeWidth={2} className="text-white" />
+              : <Server size={14} strokeWidth={2} className="text-white" />
+            }
           </div>
+          <h1 className="text-[15px] font-semibold text-text tracking-tight">
+            {showRecovery ? 'Account Recovery' : 'AI Health Check'}
+          </h1>
+        </div>
 
-          {/* ─── Recovery Form ─── */}
-          {showRecovery ? (
-            <>
-              <form onSubmit={handleRecovery} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Recovery Key</label>
-                  <input
-                    type="password"
-                    value={recoveryKey}
-                    onChange={(e) => setRecoveryKey(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all"
-                    placeholder="Enter server recovery key"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Account Email</label>
-                  <input
-                    type="email"
-                    value={recoveryEmail}
-                    onChange={(e) => setRecoveryEmail(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all"
-                    placeholder="admin@aiops.local"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">New Password</label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Confirm Password</label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
+        {showRecovery ? (
+          /* ─── Recovery Form ─── */
+          <div className="rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg p-8">
+            <h2 className="text-display-sm font-semibold text-text mb-1.5">Reset password</h2>
+            <p className="text-[13px] text-text-muted mb-6">Enter the server recovery key and your new password.</p>
 
-                {recoveryError && (
-                  <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/20 px-4 py-3 rounded-lg flex items-center gap-2">
-                    <span className="block w-1.5 h-1.5 rounded-full bg-rose-500 flex-shrink-0"></span>
-                    {recoveryError}
-                  </div>
-                )}
-
-                {recoverySuccess && (
-                  <div className="text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 rounded-lg flex items-center gap-2">
-                    <CheckCircle2 size={16} className="text-emerald-500 flex-shrink-0" />
-                    {recoverySuccess}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={recoveryLoading}
-                  className="w-full py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {recoveryLoading && <Loader2 size={16} className="animate-spin" />}
-                  {recoveryLoading ? 'Resetting...' : 'Reset Password'}
-                </button>
-              </form>
-
-              <div className="mt-6 pt-5 border-t border-slate-800/80">
-                <button
-                  onClick={exitRecovery}
-                  className="w-full flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors py-2"
-                >
-                  <ArrowLeft size={14} />
-                  Back to Sign In
-                </button>
+            <form onSubmit={handleRecovery} className="space-y-3.5">
+              <div>
+                <label htmlFor="recovery-key" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                  Recovery Key
+                </label>
+                <input
+                  id="recovery-key"
+                  type="password"
+                  value={recoveryKey}
+                  onChange={(e) => setRecoveryKey(e.target.value)}
+                  className={INPUT_CLS}
+                  placeholder="Enter server recovery key"
+                  required
+                />
               </div>
-            </>
-          ) : (
-            /* ─── Login Form ─── */
-            <>
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label htmlFor="recovery-email" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                  Account Email
+                </label>
+                <input
+                  id="recovery-email"
+                  type="email"
+                  value={recoveryEmail}
+                  onChange={(e) => setRecoveryEmail(e.target.value)}
+                  className={INPUT_CLS}
+                  placeholder="admin@aiops.local"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="new-password" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                  New Password
+                </label>
+                <input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className={INPUT_CLS}
+                  placeholder="Enter new password"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="confirm-password" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                  Confirm Password
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className={INPUT_CLS}
+                  placeholder="Confirm new password"
+                  required
+                />
+              </div>
+
+              {recoveryError && (
+                <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12px] font-medium bg-status-failing-muted text-status-failing rounded-md" role="alert">
+                  <span className="w-1 h-1 rounded-full bg-status-failing shrink-0" aria-hidden="true" />
+                  {recoveryError}
+                </div>
+              )}
+
+              {recoverySuccess && (
+                <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12px] font-medium bg-emerald-50 text-emerald-700 rounded-md" role="alert">
+                  <CheckCircle2 size={14} className="shrink-0" />
+                  {recoverySuccess}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={recoveryLoading}
+                aria-busy={recoveryLoading}
+                className="w-full py-2.5 mt-2 bg-amber-500 hover:bg-amber-600 text-white rounded-pill text-sm font-medium transition-standard flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {recoveryLoading && <Loader2 size={14} strokeWidth={1.75} className="animate-spin" />}
+                {recoveryLoading ? 'Resetting...' : 'Reset password'}
+              </button>
+            </form>
+
+            <div className="mt-5 pt-4 border-t border-hairline">
+              <button
+                onClick={exitRecovery}
+                className="w-full flex items-center justify-center gap-2 text-[12px] font-medium text-text-muted hover:text-text transition-standard py-1"
+              >
+                <ArrowLeft size={14} strokeWidth={1.5} />
+                Back to sign in
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ─── Login Form ─── */
+          <>
+            <div className="rounded-2xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg p-8">
+              <h2 className="text-display-sm font-semibold text-text mb-1.5">Sign in</h2>
+              <p className="text-[13px] text-text-muted mb-6">Enter your credentials to access the dashboard.</p>
+
+              <form onSubmit={handleSubmit} className="space-y-3.5">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Email Address</label>
+                  <label htmlFor="email" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                    Email
+                  </label>
                   <input
+                    id="email"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all"
+                    className={INPUT_CLS}
                     placeholder="admin@aiops.local"
                     required
+                    autoComplete="email"
                   />
                 </div>
+
                 <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Password</label>
-                  </div>
+                  <label htmlFor="password" className="block text-[11px] font-medium text-text-muted tracking-tight mb-1.5">
+                    Password
+                  </label>
                   <input
+                    id="password"
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 outline-none transition-all"
-                    placeholder="••••••••"
+                    className={INPUT_CLS}
+                    placeholder="Enter password"
                     required
+                    autoComplete="current-password"
                   />
                 </div>
 
                 {error && (
-                  <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/20 px-4 py-3 rounded-lg flex items-center gap-2">
-                    <span className="block w-1.5 h-1.5 rounded-full bg-rose-500 flex-shrink-0"></span>
+                  <div className="flex items-center gap-2 px-3.5 py-2.5 text-[12px] font-medium bg-status-failing-muted text-status-failing rounded-md" role="alert">
+                    <span className="w-1 h-1 rounded-full bg-status-failing shrink-0" aria-hidden="true" />
                     {error}
                   </div>
                 )}
@@ -242,63 +266,63 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                  aria-busy={loading}
+                  className="w-full py-2.5 mt-2 bg-accent hover:bg-accent-hover text-white rounded-pill text-sm font-medium transition-standard flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {loading && <Loader2 size={16} className="animate-spin" />}
-                  {loading ? 'Signing in...' : 'Sign In'}
+                  {loading && <Loader2 size={14} strokeWidth={1.75} className="animate-spin" />}
+                  {loading ? 'Signing in...' : 'Sign in'}
                 </button>
               </form>
 
-              {/* Recovery + Demo section */}
-              <div className="mt-8 pt-6 border-t border-slate-800/80 space-y-4">
-                {/* Forgot password / recovery link */}
-                {recoveryEnabled && (
+              {/* Recovery link */}
+              {recoveryEnabled && (
+                <div className="mt-4 pt-3 border-t border-hairline">
                   <button
                     onClick={() => setShowRecovery(true)}
-                    className="w-full flex items-center justify-center gap-2 text-xs font-medium text-amber-400/80 hover:text-amber-300 transition-colors py-1"
+                    className="w-full flex items-center justify-center gap-2 text-[11px] font-medium text-amber-600 hover:text-amber-700 transition-standard py-1"
                   >
-                    <ShieldAlert size={14} />
+                    <ShieldAlert size={12} strokeWidth={1.75} />
                     Forgot password? Use Recovery Key
                   </button>
-                )}
+                </div>
+              )}
+            </div>
 
-                {/* Demo credentials toggle */}
-                <button 
-                  onClick={() => setShowDemo(!showDemo)}
-                  className="w-full flex items-center justify-between text-xs font-medium text-slate-400 hover:text-slate-300 transition-colors"
-                >
-                  <span>Need demo credentials?</span>
-                  {showDemo ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-                
-                {showDemo && (
-                  <div className="mt-4 space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    {[
-                      { role: 'Admin', email: 'admin@aiops.local', pwd: 'admin123' },
-                      { role: 'Maintainer', email: 'maintainer@aiops.local', pwd: 'maintain123' },
-                      { role: 'Viewer', email: 'viewer@aiops.local', pwd: 'viewer123' }
-                    ].map((cred, idx) => (
-                      <div 
-                        key={idx} 
-                        onClick={() => handleDemoClick(cred.email, cred.pwd)}
-                        className="flex justify-between items-center p-3 rounded-lg bg-slate-800/30 border border-slate-700/50 hover:bg-slate-800/60 cursor-pointer transition-colors group"
-                      >
-                        <div>
-                          <p className="text-xs font-semibold text-slate-300">{cred.role}</p>
-                          <p className="text-xs text-slate-500">{cred.email}</p>
-                        </div>
-                        <span className="text-[10px] uppercase font-bold text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                          Use
-                        </span>
+            {/* Demo credentials */}
+            <div className="mt-4 rounded-2xl bg-surface border border-hairline shadow-xs overflow-hidden">
+              <button
+                onClick={() => setShowDemo(!showDemo)}
+                className="w-full flex items-center justify-between px-5 py-3 text-[12px] font-medium text-text-muted hover:text-text transition-standard"
+                aria-expanded={showDemo}
+              >
+                <span>Demo credentials</span>
+                {showDemo
+                  ? <ChevronUp size={14} strokeWidth={1.5} />
+                  : <ChevronDown size={14} strokeWidth={1.5} />
+                }
+              </button>
+
+              {showDemo && (
+                <div className="border-t border-hairline">
+                  {DEMO_CREDS.map((cred, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handleDemoClick(cred.email, cred.pwd)}
+                      className="w-full flex items-center justify-between px-5 py-2.5 text-left hover:bg-accent-weak transition-standard border-b border-hairline last:border-b-0"
+                    >
+                      <div>
+                        <p className="text-[12px] font-medium text-text">{cred.role}</p>
+                        <p className="text-[10px] text-text-subtle font-mono">{cred.email}</p>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
-        </div>
+                      <span className="text-[10px] font-medium text-accent">{cred.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

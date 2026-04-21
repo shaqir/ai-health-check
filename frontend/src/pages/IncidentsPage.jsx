@@ -1,177 +1,248 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Plus, AlertTriangle, AlertCircle, Bot, CheckSquare, Clock, Sparkles, RefreshCcw, Loader2, X, Check } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Plus, AlertTriangle, CheckSquare, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import PageHeader from '../components/common/PageHeader';
+import StatusBadge from '../components/common/StatusBadge';
+import EmptyState from '../components/common/EmptyState';
+import ErrorState from '../components/common/ErrorState';
+import LoadingSkeleton from '../components/common/LoadingSkeleton';
+import Toast from '../components/common/Toast';
+import DateTimeField from '../components/common/DateTimeField';
 
 const SEVERITY_OPTIONS = ['critical', 'high', 'medium', 'low'];
+const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
+const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
+
+const CHECKLIST_ITEMS = [
+  { key: 'checklist_data_issue', label: 'Data format issue (inputs/outputs)' },
+  { key: 'checklist_prompt_change', label: 'Recent system prompt change' },
+  { key: 'checklist_model_update', label: 'Underlying model routing update' },
+  { key: 'checklist_infrastructure', label: 'Infrastructure or latency spike' },
+  { key: 'checklist_safety_policy', label: 'Triggered safety/rate limits' },
+];
+
+const INITIAL_FORM = {
+  service_id: '', severity: 'medium', symptoms: '', timeline: '',
+  checklist_data_issue: false, checklist_prompt_change: false,
+  checklist_model_update: false, checklist_infrastructure: false,
+  checklist_safety_policy: false,
+};
 
 export default function IncidentsPage() {
   const { canEdit } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [incidents, setIncidents] = useState([]);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
-
-  const [form, setForm] = useState({
-    service_id: '',
-    severity: 'medium',
-    symptoms: '',
-    timeline: '',
-    checklist_data_issue: false,
-    checklist_prompt_change: false,
-    checklist_model_update: false,
-    checklist_infrastructure: false,
-    checklist_safety_policy: false,
-  });
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
+  const [submitting, setSubmitting] = useState(false);
+  const [activeEnv, setActiveEnv] = useState('all');
+  // Live refresh indicator — honest "Updated Ns ago" + one-shot pulse on
+  // actual refresh, mirroring Dashboard + Evaluations.
+  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(Date.now());
+  const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
+    setError(null);
     try {
+      const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
       const [incRes, srvRes] = await Promise.all([
-        api.get('/incidents'),
-        api.get('/services')
+        api.get('/incidents', { params: envParam }),
+        api.get('/services'),
       ]);
       setIncidents(incRes.data);
       setServices(srvRes.data);
       if (srvRes.data.length > 0 && !form.service_id) {
         setForm(prev => ({ ...prev, service_id: srvRes.data[0].id }));
       }
+      setLastFetchAt(Date.now());
     } catch (err) {
-      console.error('Failed to fetch data', err);
+      setError('Failed to load incidents.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    setLoading(true);
+    fetchData();
+    const interval = setInterval(() => fetchData(), 30000);
+    return () => clearInterval(interval);
+  }, [activeEnv]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
+  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
+
+  // Prefill the form when navigated here from an alert's "Create incident"
+  // button (router state carries {prefill: {service_name, severity, symptoms,
+  // alert_type, checklist_*}}). Wait until services are loaded so we can
+  // resolve service_name → service_id, then clear the state so a refresh
+  // doesn't re-trigger the prefill.
+  useEffect(() => {
+    const prefill = location.state?.prefill;
+    if (!prefill || services.length === 0) return;
+    const matched = services.find(s => s.name === prefill.service_name);
+    setForm(prev => ({
+      ...prev,
+      ...(matched && { service_id: matched.id }),
+      ...(prefill.severity && { severity: prefill.severity }),
+      ...(prefill.symptoms && { symptoms: prefill.symptoms }),
+      ...(prefill.checklist_data_issue && { checklist_data_issue: true }),
+      ...(prefill.checklist_prompt_change && { checklist_prompt_change: true }),
+      ...(prefill.checklist_model_update && { checklist_model_update: true }),
+      ...(prefill.checklist_infrastructure && { checklist_infrastructure: true }),
+      ...(prefill.checklist_safety_policy && { checklist_safety_policy: true }),
+    }));
+    setShowForm(true);
+    showToast(
+      prefill.alert_type
+        ? `Form pre-filled from ${prefill.alert_type} alert`
+        : 'Form pre-filled from alert',
+      'info',
+    );
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, services, navigate, location.pathname]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await api.post('/incidents', form);
       setShowForm(false);
-      setForm({
-        service_id: services.length > 0 ? services[0].id : '',
-        severity: 'medium',
-        symptoms: '',
-        timeline: '',
-        checklist_data_issue: false,
-        checklist_prompt_change: false,
-        checklist_model_update: false,
-        checklist_infrastructure: false,
-        checklist_safety_policy: false,
-      });
+      setForm({ ...INITIAL_FORM, service_id: services[0]?.id || '' });
+      showToast('Incident reported', 'success');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to report incident');
+      showToast(err.response?.data?.detail || 'Failed to report incident', 'error');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const severityColor = {
-    critical: 'bg-red-100 text-red-700 border-red-200',
-    high: 'bg-orange-100 text-orange-700 border-orange-200',
-    medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-    low: 'bg-blue-100 text-blue-700 border-blue-200',
-  };
+  if (loading) {
+    return (
+      <div className="space-y-5" aria-busy="true">
+        <div className="h-5 w-48 bg-surface-elevated rounded-md animate-pulse" />
+        <LoadingSkeleton type="table" />
+      </div>
+    );
+  }
 
-  const statusColor = {
-    open: 'bg-red-50 text-red-600',
-    investigating: 'bg-yellow-50 text-yellow-600',
-    resolved: 'bg-green-50 text-green-600',
-    closed: 'bg-gray-50 text-gray-600',
-  };
-
-  if (loading) return <div className="text-gray-500">Loading incidents...</div>;
+  if (error) {
+    return <ErrorState message={error} onRetry={() => { setLoading(true); fetchData(); }} />;
+  }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Incident Triage & Maintenance</h2>
-          <p className="text-sm text-gray-500 mt-1">Report, investigate, and draft summaries for AI system incidents.</p>
-        </div>
-        {canEdit && (
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors"
+    <div className="space-y-5">
+      <PageHeader title="Incidents" description="Report, investigate, and draft summaries for AI system incidents.">
+        <div className="flex items-center gap-3">
+          {/* Live refresh indicator */}
+          <div
+            className="flex items-center gap-1.5"
+            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
+            title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
           >
-            <Plus size={16} /> Report Incident
-          </button>
-        )}
-      </div>
+            <span
+              key={lastFetchAt}
+              className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
+              aria-hidden="true"
+            />
+            <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
+              Updated {updatedLabel}
+            </span>
+          </div>
 
+          {/* Env tabs */}
+          <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Environment filter">
+            {['all', 'dev', 'staging', 'production'].map((tab) => (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={activeEnv === tab}
+                onClick={() => setActiveEnv(tab)}
+                className={`px-3 py-1 text-[12px] font-medium rounded-pill capitalize transition-standard ${
+                  activeEnv === tab
+                    ? 'bg-surface-elevated text-text shadow-xs'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {canEdit && (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard"
+            >
+              <Plus size={14} strokeWidth={1.75} /> Report
+            </button>
+          )}
+        </div>
+      </PageHeader>
+
+      {/* Create form */}
       {showForm && (
-        <form onSubmit={handleCreate} className="bg-white rounded-xl border border-gray-200 p-6 mb-6 shadow-sm">
-          <h3 className="text-sm font-medium text-gray-900 mb-4 flex items-center gap-2">
-            <AlertTriangle size={18} className="text-red-500" /> Report New Incident
+        <form onSubmit={handleCreate} className="bg-surface rounded-xl border border-hairline p-6 shadow-xs">
+          <h3 className="text-[13px] font-semibold text-text tracking-tight mb-4 flex items-center gap-2">
+            <AlertTriangle size={14} strokeWidth={1.75} className="text-status-failing" />
+            Report new incident
           </h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="space-y-4">
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+            {/* Left column: fields */}
+            <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Target Service</label>
-                <select 
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 uppercase-first"
-                  value={form.service_id} 
-                  onChange={(e) => setForm({ ...form, service_id: e.target.value })} 
-                  required
-                >
+                <label className={LABEL_CLS}>Target Service</label>
+                <select className={INPUT_CLS} value={form.service_id} onChange={(e) => setForm({ ...form, service_id: e.target.value })} required>
                   <option value="" disabled>Select a service...</option>
                   {services.map(s => <option key={s.id} value={s.id}>{s.name} ({s.environment})</option>)}
                 </select>
               </div>
-
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Severity</label>
-                <select 
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 capitalize"
-                  value={form.severity} 
-                  onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                >
+                <label className={LABEL_CLS}>Severity</label>
+                <select className={`${INPUT_CLS} capitalize`} value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })}>
                   {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Symptoms Observation</label>
-                <textarea 
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 h-24"
-                  placeholder="Describe the anomalous behaviour..."
-                  value={form.symptoms} 
-                  onChange={(e) => setForm({ ...form, symptoms: e.target.value })} 
-                  required 
-                />
+                <label className={LABEL_CLS}>Symptoms</label>
+                <textarea className={`${INPUT_CLS} h-20 resize-none`} placeholder="Describe the anomalous behaviour..." value={form.symptoms} onChange={(e) => setForm({ ...form, symptoms: e.target.value })} required />
               </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Timeline (when issue first occurred)</label>
-                <input 
-                  type="datetime-local" 
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50"
-                  value={form.timeline}
-                  onChange={(e) => setForm({ ...form, timeline: e.target.value })}
-                />
-              </div>
+              <DateTimeField
+                label="When did this occur?"
+                value={form.timeline}
+                onChange={(v) => setForm({ ...form, timeline: v })}
+                placeholder="Select an approximate time"
+              />
             </div>
 
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <h4 className="text-xs font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                <CheckSquare size={14} /> Troubleshooting Initial Checklist
+            {/* Right column: checklist */}
+            <div className="bg-surface-elevated p-4 rounded-xl border border-hairline">
+              <h4 className="text-[13px] font-semibold text-text tracking-tight mb-1 flex items-center gap-2">
+                <CheckSquare size={12} strokeWidth={1.75} /> Triage checklist
               </h4>
-              <p className="text-[11px] text-gray-500 mb-4">Check any items that apply or have been ruled out during initial triage.</p>
-              
-              <div className="space-y-3">
-                {[
-                  { key: 'checklist_data_issue', label: 'Data format issue (inputs/outputs)' },
-                  { key: 'checklist_prompt_change', label: 'Recent system prompt change' },
-                  { key: 'checklist_model_update', label: 'Underlying model routing update' },
-                  { key: 'checklist_infrastructure', label: 'Infrastructure or latency spike' },
-                  { key: 'checklist_safety_policy', label: 'Triggered safety/rate limits' },
-                ].map(({key, label}) => (
-                  <label key={key} className="flex items-center gap-3 text-sm text-gray-700 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 text-red-600 rounded border-gray-300 focus:ring-red-500"
+              <p className="text-[11px] text-text-subtle mb-3">Check items that apply or have been ruled out.</p>
+              <div className="space-y-2.5">
+                {CHECKLIST_ITEMS.map(({ key, label }) => (
+                  <label key={key} className="flex items-center gap-2.5 text-sm text-text cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5 rounded-xs accent-accent"
                       checked={form[key]}
                       onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
                     />
@@ -182,46 +253,90 @@ export default function IncidentsPage() {
             </div>
           </div>
 
-          <div className="flex gap-3 pt-4 border-t border-gray-100">
-            <button type="submit" className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">Save Incident</button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 text-gray-700">Cancel</button>
+          <div className="flex gap-2 pt-4 border-t border-hairline">
+            <button
+              type="submit"
+              disabled={submitting}
+              aria-busy={submitting}
+              className="px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? 'Saving…' : 'Save incident'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              disabled={submitting}
+              className="px-3.5 py-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface-elevated rounded-pill transition-standard disabled:opacity-50"
+            >
+              Cancel
+            </button>
           </div>
         </form>
       )}
 
-      {/* List Incidents */}
-      <div className="grid grid-cols-1 gap-4">
-        {incidents.length === 0 && !loading && (
-          <div className="text-center py-12 text-gray-400 bg-white rounded-xl border border-gray-200">No incidents reported yet</div>
-        )}
-        {incidents.map(inc => (
-          <Link to={`/incidents/${inc.id}`} key={inc.id} className="block bg-white rounded-xl border border-gray-200 p-5 hover:border-blue-300 hover:shadow-sm transition-all">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center gap-3">
-                <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wide border ${severityColor[inc.severity]}`}>
-                  {inc.severity}
-                </span>
-                <h3 className="text-base font-semibold text-gray-900">{inc.service_name}</h3>
+      {/* Incident list */}
+      {incidents.length === 0 ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="No incidents reported"
+          description="No AI system incidents have been logged yet."
+        />
+      ) : (
+        <div className="space-y-2">
+          {incidents.map(inc => (
+            <Link
+              to={`/incidents/${inc.id}`}
+              key={inc.id}
+              className="block bg-surface rounded-xl border border-hairline p-5 shadow-xs hover:shadow-sm transition-standard"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={inc.severity} />
+                  <h3 className="text-sm font-medium text-text">{inc.service_name}</h3>
+                </div>
+                <StatusBadge status={inc.status} />
               </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium capitalize ${statusColor[inc.status]}`}>
-                {inc.status}
-              </span>
-            </div>
-            
-            <p className="text-sm text-gray-600 mt-3 line-clamp-2">{inc.symptoms}</p>
-            
-            <div className="flex items-center gap-4 mt-4 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5"><Clock size={14} /> {new Date(inc.created_at).toLocaleString()}</span>
-              {inc.summary && (
-                <span className="text-green-600 font-medium flex items-center gap-1">✓ Summary Published</span>
-              )}
-               {inc.summary_draft && !inc.summary && (
-                <span className="text-orange-500 font-medium flex items-center gap-1">✎ Draft Needs Review</span>
-              )}
-            </div>
-          </Link>
-        ))}
-      </div>
+
+              <p className="text-sm text-text-muted line-clamp-1">{inc.symptoms}</p>
+
+              <div className="flex items-center gap-4 mt-3 text-xs text-text-subtle">
+                {(() => {
+                  const d = inc.created_at ? new Date(inc.created_at) : null;
+                  if (!d || Number.isNaN(d.getTime())) {
+                    return <span className="flex items-center gap-1 font-mono"><Clock size={12} strokeWidth={1.5} />—</span>;
+                  }
+                  const short = d.toLocaleString(undefined, {
+                    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                  });
+                  return (
+                    <span
+                      className="flex items-center gap-1 font-mono tabular-nums"
+                      title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+                    >
+                      <Clock size={12} strokeWidth={1.5} />
+                      {short}
+                    </span>
+                  );
+                })()}
+                {inc.summary && (
+                  <span className="text-status-healthy font-medium">Summary published</span>
+                )}
+                {inc.summary_draft && !inc.summary && (
+                  <span className="text-status-degraded font-medium">Draft needs review</span>
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {toast.visible && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ ...toast, visible: false })}
+        />
+      )}
     </div>
   );
 }

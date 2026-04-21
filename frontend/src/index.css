@@ -1,15 +1,33 @@
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-[#FCFDFD] text-slate-900 font-sans antialiased;
+    background-color: var(--color-bg);
+    color: var(--color-text);
   }
 }
 
-@layer utilities {
-  .glass-panel {
-    @apply bg-white/70 backdrop-blur-md border border-white/20 shadow-sm;
-  }
+/* Staggered reveal used on data sections (dashboards, etc.). */
+@keyframes dash-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dash-rise {
+  animation: dash-rise 420ms var(--ease-spring) both;
+  will-change: opacity, transform;
+}
+
+/* One-shot ripple for the "just refreshed" indicator. Keyed by lastFetchAt
+   in React, so remounting restarts the animation once per refresh. */
+@keyframes dash-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--status-healthy) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in oklab, var(--status-healthy) 0%,  transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.dash-pulse {
+  animation: dash-pulse 900ms ease-out 1;
 }

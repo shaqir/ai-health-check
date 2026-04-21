@@ -2,51 +2,45 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 
 export default function Toast({ message, type = 'info', onClose, duration = 5000 }) {
-  const [isVisible, setIsVisible] = useState(true);
+  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    if (duration > 0) {
-      const timer = setTimeout(() => {
-        setIsVisible(false);
-        setTimeout(onClose, 300); // Wait for transition
-      }, duration);
-      return () => clearTimeout(timer);
-    }
+    if (duration <= 0) return;
+    const timer = setTimeout(() => {
+      setVisible(false);
+      setTimeout(onClose, 200);
+    }, duration);
+    return () => clearTimeout(timer);
   }, [duration, onClose]);
 
-  const handleClose = () => {
-    setIsVisible(false);
-    setTimeout(onClose, 300);
+  const config = {
+    success: { icon: CheckCircle2, accent: 'bg-status-healthy', iconColor: 'text-status-healthy' },
+    error: { icon: AlertCircle, accent: 'bg-status-failing', iconColor: 'text-status-failing' },
+    info: { icon: Info, accent: 'bg-accent', iconColor: 'text-accent' },
   };
 
-  const icons = {
-    success: <CheckCircle2 className="text-emerald-500" size={20} />,
-    error: <AlertCircle className="text-rose-500" size={20} />,
-    info: <Info className="text-blue-500" size={20} />
-  };
-
-  const bgs = {
-    success: 'bg-emerald-50 border-emerald-200',
-    error: 'bg-rose-50 border-rose-200',
-    info: 'bg-blue-50 border-blue-200'
-  };
+  const { icon: Icon, accent, iconColor } = config[type] || config.info;
 
   return (
-    <div 
-      className={`fixed bottom-6 right-6 flex items-start gap-3 p-4 rounded-xl border shadow-lg transition-all duration-300 max-w-md w-full z-50 ${bgs[type]} ${
-        isVisible ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
+    <div
+      role="alert"
+      aria-live="assertive"
+      className={`fixed bottom-4 right-4 z-50 max-w-sm w-full rounded-xl border border-hairline bg-[var(--material-thick)] backdrop-blur-material backdrop-saturate-material shadow-lg overflow-hidden transition-spring ${
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
       }`}
     >
-      <div className="flex-shrink-0 mt-0.5">{icons[type]}</div>
-      <div className="flex-1">
-        <p className="text-sm font-medium text-slate-800">{message}</p>
+      <div className="relative flex items-start gap-3 p-3.5 pl-4">
+        <span aria-hidden="true" className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-pill ${accent}`} />
+        <Icon size={16} strokeWidth={1.75} className={`shrink-0 mt-0.5 ${iconColor}`} />
+        <p className="text-sm font-medium text-text flex-1">{message}</p>
+        <button
+          onClick={() => { setVisible(false); setTimeout(onClose, 200); }}
+          className="p-0.5 text-text-subtle hover:text-text rounded-xs transition-standard"
+          aria-label="Dismiss notification"
+        >
+          <X size={14} strokeWidth={1.5} />
+        </button>
       </div>
-      <button 
-        onClick={handleClose}
-        className="text-slate-400 hover:text-slate-600 focus:outline-none p-0.5 rounded-lg hover:bg-slate-200/50 transition-colors"
-      >
-        <X size={16} />
-      </button>
     </div>
   );
 }

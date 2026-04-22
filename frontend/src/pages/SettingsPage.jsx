@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import {
   Brain, DollarSign, Zap, ShieldCheck, Activity, Gauge, CreditCard,
-  Shield, BarChart3, Ban, Cpu, LineChart as LineChartIcon
+  Shield, BarChart3, Ban, Cpu, LineChart as LineChartIcon,
+  Regex, Bot, UserX, AlertOctagon, Maximize2, FileWarning,
+  Clock, KeyRound, ServerCrash, FileX, HelpCircle, TimerReset
 } from 'lucide-react';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -10,7 +12,380 @@ import EmptyState from '../components/common/EmptyState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import DataTable from '../components/common/DataTable';
 import StatusBadge from '../components/common/StatusBadge';
+import ModelBadge from '../components/common/ModelBadge';
+import Modal from '../components/common/Modal';
 import { InfoTip } from '../components/common/Tooltip';
+
+// Explainer content for each safety flag the scanner can emit. Keyed by the
+// literal flag string the backend puts into `flag_breakdown`. Every field is
+// optional except title + description — renderer handles missing pieces.
+//
+// Source of truth for when each flag fires: `backend/app/services/safety.py`
+// (scan_input / scan_output).
+const FLAG_EXPLAINERS = {
+  injection_attempt: {
+    icon: Regex,
+    layer: 'Input · Layer 1',
+    layerTone: 'accent',
+    action: 'Contributes to risk score (blocks at ≥80)',
+    title: 'Regex injection tripwire',
+    description:
+      'Cheap, deterministic first-pass scan of the user prompt. Fires when the input matches any of ~15 hardcoded prompt-injection patterns.',
+    examples: [
+      '"Ignore all previous instructions…"',
+      '"Disregard the system prompt above"',
+      '"You are now DAN / jailbreak mode"',
+    ],
+    how:
+      'Iterates compiled regexes over the input. Each match adds to risk_score (weighted per match) and the matched spans are stored under details.injection_matches.',
+    source: 'safety.py::scan_input — step 2 "Regex injection tripwire"',
+  },
+  llm_injection: {
+    icon: Bot,
+    layer: 'Input · Layer 2',
+    layerTone: 'accent',
+    action: 'Raises risk_score to max(existing, classifier_confidence)',
+    title: 'LLM injection classifier',
+    description:
+      'Second opinion from a small Haiku-based classifier (detect_injection). Catches paraphrased or novel injection attempts the regex layer never saw.',
+    examples: [
+      'Obfuscated phrasing that dodges the regex ("ig\\u200bnore previous…")',
+      'Indirect jailbreaks wrapped in storytelling / role-play',
+      'Non-English injection attempts',
+    ],
+    how:
+      'Sends the input to Haiku 4.5 with a classifier prompt. Returns {injection: bool, confidence: 0–100, reason}. Fail-open: a classifier outage leaves the regex layer authoritative and is silently degraded.',
+    source: 'safety.py::scan_input — step 4 + llm_client.detect_injection',
+  },
+  model_refusal: {
+    icon: UserX,
+    layer: 'Output',
+    layerTone: 'degraded',
+    action: 'Flag only — response still returned',
+    title: 'Model refusal detected',
+    description:
+      "Claude's response matched a refusal phrase. Often means the model declined a sensitive request, but in eval contexts it may mask the judge returning a non-numeric answer.",
+    examples: [
+      '"I cannot / I\'m not able to / I won\'t…"',
+      '"I apologize, but I cannot…"',
+      '"As an AI, I…"',
+    ],
+    how:
+      'Regex pass over the response text (case-insensitive). Tracks that the model refused so dashboards can distinguish "refused" from "answered with error".',
+    source: 'safety.py::scan_output — step 2 "Refusal detection"',
+  },
+  pii_detected: {
+    icon: FileWarning,
+    layer: 'Input',
+    layerTone: 'accent',
+    action: 'Adds to risk_score',
+    title: 'PII in input',
+    description:
+      'User-submitted prompt contains what looks like personally identifiable information — email, phone, SSN, credit card, etc.',
+    how: 'Pattern set in safety.py::_PII_PATTERNS. Each match type adds a fixed weight to risk_score.',
+    source: 'safety.py::scan_input — step 3 "PII detection"',
+  },
+  length_exceeded: {
+    icon: Maximize2,
+    layer: 'Input',
+    layerTone: 'failing',
+    action: 'Auto-block (risk_score += 100)',
+    title: 'Prompt too long',
+    description:
+      'Input exceeded max_prompt_length (default 10,000 chars). Hard block — never reaches the model.',
+    source: 'safety.py::scan_input — step 1 "Length check"',
+  },
+  length_warning: {
+    icon: Maximize2,
+    layer: 'Input',
+    layerTone: 'degraded',
+    action: 'Flag only',
+    title: 'Prompt nearing length limit',
+    description: 'Input is over 80% of max_prompt_length. Allowed through but flagged.',
+    source: 'safety.py::scan_input — step 1 "Length check"',
+  },
+  toxicity_detected: {
+    icon: AlertOctagon,
+    layer: 'Output',
+    layerTone: 'failing',
+    action: 'Flag only',
+    title: 'Toxic content in response',
+    description:
+      "Response matched one of the hardcoded toxicity patterns (violence + instructions, hate speech targeting protected classes, illegal-activity how-tos).",
+    source: 'safety.py::scan_output — step 3 "Toxicity / content policy"',
+  },
+  error_response: {
+    icon: AlertOctagon,
+    layer: 'Output',
+    layerTone: 'failing',
+    action: 'Flag only',
+    title: 'Error response from model',
+    description: 'Response text started with "ERROR:" — wrapper signalling upstream failure rather than a real answer.',
+    source: 'safety.py::scan_output — step 4',
+  },
+};
+
+// PII flags on OUTPUT come through prefixed, e.g. `output_pii_email`.
+// Resolver handles both exact matches and the prefix family.
+function resolveFlagExplainer(flag) {
+  if (FLAG_EXPLAINERS[flag]) return FLAG_EXPLAINERS[flag];
+  if (flag && flag.startsWith('output_pii_')) {
+    const kind = flag.slice('output_pii_'.length);
+    return {
+      icon: FileWarning,
+      layer: 'Output',
+      layerTone: 'failing',
+      action: 'Flag only',
+      title: `PII in response (${kind})`,
+      description: `Response appears to contain ${kind}. Scanner pattern-matched on the outbound text before returning to the caller.`,
+      source: 'safety.py::scan_output — step 1 "PII in response"',
+    };
+  }
+  return {
+    icon: Shield,
+    layer: 'Unknown',
+    layerTone: 'accent',
+    title: flag || 'Unknown flag',
+    description: 'This flag is not in the frontend explainer map yet. It comes from the safety scanner but no metadata is registered here.',
+    source: 'safety.py',
+  };
+}
+
+// Explainers for the Performance tab's error pills. Keys match the post-strip
+// keys the backend emits: `error_breakdown = {row[0].replace("error_", ""): count}`.
+// So `error_unknown` in the DB surfaces as `unknown` in the pill.
+//
+// Source of truth for when each error fires:
+//   backend/app/services/llm_client.py::_make_api_call_core (except blocks)
+const ERROR_EXPLAINERS = {
+  rate_limit: {
+    icon: TimerReset,
+    tone: 'degraded',
+    title: 'Anthropic rate limit (HTTP 429)',
+    description:
+      "Anthropic returned 429 — the account or this specific model tripped its per-minute or per-day request limit. The call already retried with exponential backoff and still couldn't get through.",
+    cause: [
+      'Traffic spike — too many concurrent eval runs or scheduled health checks firing simultaneously.',
+      "Workspace key is shared with another app that's saturating the limit.",
+      'The model tier (Sonnet vs Haiku) has a lower TPM/RPM ceiling than this workload needs.',
+    ],
+    fix:
+      'Reduce api_max_calls_per_minute in config, stagger scheduled jobs, or request a higher quota from Anthropic. Check the Cost tab to see if retries are inflating spend.',
+    retried: '2× exponential backoff + jitter before surfacing as an error.',
+    source: 'llm_client.py:345 anthropic.RateLimitError',
+  },
+  timeout: {
+    icon: Clock,
+    tone: 'degraded',
+    title: 'API connection error / timeout',
+    description:
+      "The HTTPS call to Anthropic didn't complete. Either the connection never established, was cut mid-stream, or didn't return within llm_timeout_seconds (default 30).",
+    cause: [
+      'Transient network blip between the backend host and api.anthropic.com.',
+      'Anthropic edge node dropped the connection (rare but happens).',
+      'The model is generating unusually long output that exceeds the timeout — not the Anthropic SDK raising internally, but the socket timing out.',
+    ],
+    fix:
+      'If spiking, check outbound egress / DNS. If persistent and latency is high, consider raising llm_timeout_seconds. Does not indicate a bad prompt or bad key.',
+    retried: '2× exponential backoff + jitter before surfacing as an error.',
+    source: 'llm_client.py:353 anthropic.APIConnectionError',
+  },
+  server: {
+    icon: ServerCrash,
+    tone: 'failing',
+    title: 'Anthropic internal server error (HTTP 5xx)',
+    description:
+      'Anthropic returned a 5xx. Their side, not ours. The SDK raised InternalServerError — request was well-formed but their API could not complete it.',
+    cause: [
+      'Anthropic platform incident — check status.anthropic.com.',
+      'Rare — routing/capacity hiccup for a specific model in a specific region.',
+    ],
+    fix:
+      "Nothing you can do locally. The code already retries. If the rate stays elevated, open a support ticket with Anthropic and reference the timestamp(s) from this panel.",
+    retried: '2× exponential backoff + jitter before surfacing as an error.',
+    source: 'llm_client.py:361 anthropic.InternalServerError',
+  },
+  auth: {
+    icon: KeyRound,
+    tone: 'failing',
+    title: 'Authentication error (HTTP 401)',
+    description:
+      "Anthropic rejected the API key. The SDK raised AuthenticationError, and we fail IMMEDIATELY — no retries, because retrying a bad key just keeps failing.",
+    cause: [
+      'anthropic_api_key in .env is missing, malformed, revoked, or rotated.',
+      'Key belongs to a workspace that lost access to the requested model.',
+      'Stray whitespace or unescaped characters around the key when loaded.',
+    ],
+    fix:
+      'Verify ANTHROPIC_API_KEY. Rotate if it was ever committed or shared. This is a configuration error — any recurrence means the fix never took.',
+    retried: 'No — non-retryable.',
+    source: 'llm_client.py:369 anthropic.AuthenticationError',
+  },
+  bad_request: {
+    icon: FileX,
+    tone: 'failing',
+    title: 'Bad request (HTTP 400)',
+    description:
+      "Anthropic rejected the request shape. SDK raised BadRequestError — malformed payload, exceeded max_tokens ceiling, empty messages array, etc. Not retried (retrying won't fix a shape problem).",
+    cause: [
+      'max_tokens requested exceeds the model\'s hard ceiling.',
+      'Prompt exceeds the model context window (post-tokenization).',
+      'Invalid content block structure (rare — would mean an SDK/backend code bug).',
+    ],
+    fix:
+      "Open APIUsageLog for the matching row and inspect prompt_text / caller. If it's a code bug, fix the request shape. If it's user input length, tighten max_prompt_length in safety config.",
+    retried: 'No — non-retryable.',
+    source: 'llm_client.py:374 anthropic.BadRequestError',
+  },
+  unknown: {
+    icon: HelpCircle,
+    tone: 'failing',
+    title: 'Unknown / uncategorised error',
+    description:
+      "Caught by the bare except Exception block after none of the specific handlers (rate-limit, timeout, 5xx, auth, bad-request) matched. Usually means something failed inside our code AFTER the Anthropic response came back, or a new Anthropic exception class we haven't wired up yet.",
+    cause: [
+      'Response parsing bug on our side (e.g. content[0].text on an empty content list).',
+      "A new or deprecated anthropic SDK exception we don't catch explicitly yet.",
+      'Downstream code raised (safety scanner, usage logger, pricing calc) before the call finalised cleanly.',
+      'OS-level issue — disk full while writing APIUsageLog, etc.',
+    ],
+    fix:
+      "Find the matching APIUsageLog rows (status='error_unknown') and cross-reference backend logs for the stack trace. If the same root cause repeats, add a specific except clause above the bare Exception handler so it stops hiding.",
+    retried: 'No — the bare except re-raises immediately after finalising the reservation.',
+    source: 'llm_client.py:382 except Exception',
+  },
+};
+
+function resolveErrorExplainer(type) {
+  if (ERROR_EXPLAINERS[type]) return ERROR_EXPLAINERS[type];
+  return {
+    icon: HelpCircle,
+    tone: 'failing',
+    title: type || 'Unknown error type',
+    description:
+      "No explainer registered for this error key. It's coming from APIUsageLog.status — check the backend for a matching error_* status that isn't mapped in the frontend yet.",
+    source: 'backend/app/services/llm_client.py',
+  };
+}
+
+function ErrorDetailModal({ errorType, count, onClose }) {
+  if (!errorType) return null;
+  const info = resolveErrorExplainer(errorType);
+  const Icon = info.icon || HelpCircle;
+  const tone = info.tone || 'failing';
+  return (
+    <Modal isOpen={Boolean(errorType)} onClose={onClose} title="API error explainer" maxWidth="max-w-xl">
+      <div className="space-y-4 text-[13px] text-text-muted leading-relaxed">
+        <div className="flex items-start gap-3">
+          <div className={`w-9 h-9 rounded-lg bg-status-${tone}-muted flex items-center justify-center shrink-0`}>
+            <Icon size={18} strokeWidth={1.75} className={`text-status-${tone}`} />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <code className="font-mono text-[13px] font-semibold text-text bg-surface-elevated px-1.5 py-0.5 rounded">error_{errorType}</code>
+              {count != null && (
+                <span className="text-[11px] text-text-subtle">{count}× today</span>
+              )}
+            </div>
+            <p className="text-[14px] font-semibold text-text mt-1">{info.title}</p>
+          </div>
+        </div>
+
+        <p>{info.description}</p>
+
+        {info.cause && info.cause.length > 0 && (
+          <div>
+            <p className="text-[11px] font-semibold text-text-subtle uppercase tracking-[0.09em] mb-1.5">Common causes</p>
+            <ul className="space-y-1 pl-4 list-disc marker:text-text-subtle">
+              {info.cause.map((c) => <li key={c}>{c}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {info.fix && (
+          <div>
+            <p className="text-[11px] font-semibold text-text-subtle uppercase tracking-[0.09em] mb-1">How to address it</p>
+            <p>{info.fix}</p>
+          </div>
+        )}
+
+        {info.retried && (
+          <div className="rounded-md bg-surface-elevated/60 border border-hairline px-3 py-2 text-[12px]">
+            <span className="font-semibold text-text">Retry policy: </span>{info.retried}
+          </div>
+        )}
+
+        <p className="text-[11px] text-text-subtle pt-2 border-t border-hairline">
+          Source: <code className="font-mono">{info.source}</code>
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+function FlagDetailModal({ flag, count, onClose }) {
+  if (!flag) return null;
+  const info = resolveFlagExplainer(flag);
+  const Icon = info.icon || Shield;
+  const tone = info.layerTone || 'accent';
+  return (
+    <Modal isOpen={Boolean(flag)} onClose={onClose} title="Safety flag explainer" maxWidth="max-w-xl">
+      <div className="space-y-4 text-[13px] text-text-muted leading-relaxed">
+        <div className="flex items-start gap-3">
+          <div className={`w-9 h-9 rounded-lg bg-status-${tone}-muted flex items-center justify-center shrink-0`}>
+            <Icon size={18} strokeWidth={1.75} className={`text-status-${tone}`} />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <code className="font-mono text-[13px] font-semibold text-text bg-surface-elevated px-1.5 py-0.5 rounded">{flag}</code>
+              <span className={`text-[10px] uppercase tracking-[0.09em] font-semibold px-2 py-0.5 rounded-pill bg-status-${tone}-muted text-status-${tone}`}>
+                {info.layer}
+              </span>
+              {count != null && (
+                <span className="text-[11px] text-text-subtle">· {count}× today</span>
+              )}
+            </div>
+            <p className="text-[14px] font-semibold text-text mt-1">{info.title}</p>
+          </div>
+        </div>
+
+        <p>{info.description}</p>
+
+        {info.examples && info.examples.length > 0 && (
+          <div>
+            <p className="text-[11px] font-semibold text-text-subtle uppercase tracking-[0.09em] mb-1.5">Example triggers</p>
+            <ul className="space-y-1 pl-4 list-disc marker:text-text-subtle">
+              {info.examples.map((ex) => (
+                <li key={ex}><span className="font-mono text-[12px] text-text">{ex}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {info.how && (
+          <div>
+            <p className="text-[11px] font-semibold text-text-subtle uppercase tracking-[0.09em] mb-1">How it's detected</p>
+            <p>{info.how}</p>
+          </div>
+        )}
+
+        {info.action && (
+          <div>
+            <p className="text-[11px] font-semibold text-text-subtle uppercase tracking-[0.09em] mb-1">What happens</p>
+            <p>{info.action}</p>
+            <p className="text-[11px] text-text-subtle mt-1">
+              A prompt is blocked when its total risk_score ≥ 80. Non-blocking flags still appear here for visibility.
+            </p>
+          </div>
+        )}
+
+        <p className="text-[11px] text-text-subtle pt-2 border-t border-hairline">
+          Source: <code className="font-mono">{info.source}</code>
+        </p>
+      </div>
+    </Modal>
+  );
+}
 
 const SECTIONS = [
   { id: 'model', label: 'Model & Pricing', icon: Cpu },
@@ -27,6 +402,10 @@ export default function SettingsPage() {
   const [apiUsage, setApiUsage] = useState(null);
   const [performance, setPerformance] = useState(null);
   const [safety, setSafety] = useState(null);
+  // Selected flag for the explainer modal — `{name, count}` or null.
+  const [flagDetail, setFlagDetail] = useState(null);
+  // Selected API error type for its explainer modal — `{type, count}` or null.
+  const [errorDetail, setErrorDetail] = useState(null);
   // Initialize active section from URL hash so /settings#safety deep-links
   // straight into the Safety tab. Falls back to 'model' when the hash is
   // empty or points at an unknown section.
@@ -47,17 +426,37 @@ export default function SettingsPage() {
 
   const fetchAll = async (showLoading = false) => {
     if (showLoading) setError(null);
-    try {
-      const [c, u, p, s] = await Promise.all([
-        api.get('/dashboard/settings'),
-        api.get('/dashboard/api-usage'),
-        api.get('/dashboard/performance'),
-        api.get('/dashboard/api-safety'),
-      ]);
-      setConfig(c.data); setApiUsage(u.data); setPerformance(p.data); setSafety(s.data);
-      setLastFetchAt(Date.now());
-    } catch { if (showLoading) setError('Failed to load settings.'); }
-    finally { if (showLoading) setLoading(false); }
+    // Fetch each endpoint with Promise.allSettled so a single failing
+    // endpoint doesn't black-hole the whole page. Partial data still
+    // renders the sections whose fetch succeeded.
+    const endpoints = [
+      ['settings',   '/dashboard/settings',   setConfig],
+      ['api-usage',  '/dashboard/api-usage',  setApiUsage],
+      ['performance','/dashboard/performance', setPerformance],
+      ['api-safety', '/dashboard/api-safety',  setSafety],
+    ];
+    const results = await Promise.allSettled(
+      endpoints.map(([, url]) => api.get(url))
+    );
+    const failures = [];
+    results.forEach((res, i) => {
+      const [name, , setter] = endpoints[i];
+      if (res.status === 'fulfilled') {
+        setter(res.value.data);
+      } else {
+        const err = res.reason;
+        const status = err?.response?.status;
+        const detail = err?.response?.data?.detail || err?.message || 'unknown error';
+        // eslint-disable-next-line no-console
+        console.error(`[SettingsPage] ${name} failed:`, status, detail, err);
+        failures.push(`${name}${status ? ` (${status})` : ''}: ${detail}`);
+      }
+    });
+    setLastFetchAt(Date.now());
+    if (showLoading) {
+      setError(failures.length === endpoints.length ? failures.join(' · ') : null);
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -97,12 +496,56 @@ export default function SettingsPage() {
         );
       },
     },
-    { key: 'caller', label: 'Function', render: v => <span className="font-mono text-xs bg-surface-elevated px-1.5 py-0.5 rounded-xs">{v}</span> },
+    {
+      key: 'caller',
+      label: 'Purpose',
+      render: v => {
+        // Humanize the internal caller string so a non-engineer panel
+        // reviewer doesn't have to guess what `detect_hallucination` means.
+        // Raw caller id still shows on hover for engineers.
+        const HUMAN = {
+          run_eval_prompt: 'Actor call',
+          test_connection: 'Connection probe',
+          score_factuality: 'Factuality judge',
+          detect_hallucination: 'Hallucination judge',
+          detect_injection: 'Injection detector',
+          generate_summary: 'Incident summary',
+          generate_dashboard_insight: 'Dashboard insight',
+          generate_compliance_summary: 'Compliance report',
+        };
+        const label = HUMAN[v] || v;
+        return (
+          <span className="text-xs" title={v}>
+            {label}
+          </span>
+        );
+      },
+    },
+    { key: 'model', label: 'Model', render: v => <ModelBadge model={v} /> },
     { key: 'input_tokens', label: 'In', render: v => <span className="font-mono tabular-nums">{v?.toLocaleString()}</span> },
     { key: 'output_tokens', label: 'Out', render: v => <span className="font-mono tabular-nums">{v?.toLocaleString()}</span> },
     { key: 'cost_usd', label: 'Cost', render: v => <span className="font-mono tabular-nums font-medium">${v?.toFixed(4)}</span> },
     { key: 'latency_ms', label: 'Latency', render: v => <span className="font-mono tabular-nums">{v?.toFixed(0)}ms</span> },
-    { key: 'status', label: 'Status', render: v => <StatusBadge status={v === 'success' ? 'healthy' : 'failed'} /> },
+    {
+      key: 'status',
+      label: 'Status',
+      render: v => {
+        // Richer status taxonomy: blocked_safety is not the same as a generic
+        // failure — the safety layer fired correctly. Error_* covers infra.
+        const MAP = {
+          success: 'healthy',
+          blocked_safety: 'blocked_safety',
+          error_rate_limit: 'failed',
+          error_timeout: 'failed',
+          error_server: 'failed',
+          error_auth: 'failed',
+          error_bad_request: 'failed',
+          error_unknown: 'failed',
+          reserved: 'investigating',
+        };
+        return <StatusBadge status={MAP[v] || 'failed'} />;
+      },
+    },
   ];
 
   if (loading) return (
@@ -116,6 +559,16 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
+      <FlagDetailModal
+        flag={flagDetail?.name}
+        count={flagDetail?.count}
+        onClose={() => setFlagDetail(null)}
+      />
+      <ErrorDetailModal
+        errorType={errorDetail?.type}
+        count={errorDetail?.count}
+        onClose={() => setErrorDetail(null)}
+      />
       <PageHeader title="API & Settings" description="Model configuration, cost monitoring, safety scanner, and performance.">
         <div
           className="flex items-center gap-1.5"
@@ -278,12 +731,21 @@ export default function SettingsPage() {
               </div>
               {Object.keys(safety.flag_breakdown).length > 0 && (
                 <div className="mb-3">
-                  <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2">Flags</h4>
+                  <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2 flex items-center gap-1.5">
+                    Flags
+                    <InfoTip content="Click a flag to see what the scanner is checking and how it's detected." size={11} />
+                  </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(safety.flag_breakdown).map(([flag, count]) => (
-                      <span key={flag} className="px-2.5 py-0.5 bg-status-failing-muted text-status-failing rounded-pill text-[11px] font-medium tracking-tight">
+                      <button
+                        key={flag}
+                        type="button"
+                        onClick={() => setFlagDetail({ name: flag, count })}
+                        className="px-2.5 py-0.5 bg-status-failing-muted text-status-failing rounded-pill text-[11px] font-medium tracking-tight hover:bg-status-failing hover:text-white transition-standard focus:outline-none focus:ring-2 focus:ring-accent/50"
+                        title={`Click to see what "${flag}" means`}
+                      >
                         {flag}: {count}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -291,15 +753,37 @@ export default function SettingsPage() {
               {safety.recent_blocked.length > 0 && (
                 <div className="space-y-1.5 pt-3 border-t border-hairline">
                   <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-1">Recently blocked</h4>
-                  {safety.recent_blocked.map((b, i) => (
-                    <div key={i} className="flex items-center justify-between px-3 py-2 bg-status-failing-muted rounded-lg text-[12px]">
-                      <div className="flex items-center gap-1.5">
-                        <Ban size={11} strokeWidth={1.5} className="text-status-failing" />
-                        <span className="font-mono text-text">{b.caller}</span>
+                  {safety.recent_blocked.map((b, i) => {
+                    // safety_flags comes as a comma-separated string; split so
+                    // each individual flag becomes its own clickable chip.
+                    const flagList = (b.safety_flags || '')
+                      .split(',')
+                      .map((f) => f.trim())
+                      .filter(Boolean);
+                    return (
+                      <div key={i} className="flex items-center justify-between px-3 py-2 bg-status-failing-muted rounded-lg text-[12px] gap-3">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Ban size={11} strokeWidth={1.5} className="text-status-failing shrink-0" />
+                          <span className="font-mono text-text truncate">{b.caller}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {flagList.length > 0 ? flagList.map((f) => (
+                            <button
+                              key={f}
+                              type="button"
+                              onClick={() => setFlagDetail({ name: f, count: null })}
+                              className="font-mono text-[11px] text-status-failing bg-surface/60 hover:bg-surface border border-status-failing/30 hover:border-status-failing rounded px-1.5 py-0.5 transition-standard"
+                              title={`Click to see what "${f}" means`}
+                            >
+                              {f}
+                            </button>
+                          )) : (
+                            <span className="font-mono text-text-subtle">—</span>
+                          )}
+                        </div>
                       </div>
-                      <span className="font-mono text-text-subtle">{b.safety_flags}</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <div className="mt-3 flex items-center gap-1.5 text-[12px] text-status-healthy">
@@ -335,10 +819,21 @@ export default function SettingsPage() {
               </div>
               {Object.keys(performance.error_breakdown).length > 0 && (
                 <div className="mb-3 pt-3 border-t border-hairline">
-                  <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2">Errors</h4>
+                  <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2 flex items-center gap-1.5">
+                    Errors
+                    <InfoTip content="Click an error type to see what triggers it, the retry behaviour, and how to address it." size={11} />
+                  </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(performance.error_breakdown).map(([type, count]) => (
-                      <span key={type} className="px-2.5 py-0.5 bg-status-failing-muted text-status-failing rounded-pill text-[11px] font-medium tracking-tight">{type}: {count}</span>
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setErrorDetail({ type, count })}
+                        className="px-2.5 py-0.5 bg-status-failing-muted text-status-failing rounded-pill text-[11px] font-medium tracking-tight hover:bg-status-failing hover:text-white transition-standard focus:outline-none focus:ring-2 focus:ring-accent/50"
+                        title={`Click to see what "${type}" means`}
+                      >
+                        {type}: {count}
+                      </button>
                     ))}
                   </div>
                 </div>

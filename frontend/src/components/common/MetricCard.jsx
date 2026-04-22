@@ -61,7 +61,7 @@ export default function MetricCard({
     >
       {/* Header: label + icon badge */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-text-subtle flex items-center gap-1.5 min-w-0">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-text-subtle flex items-center gap-1.5 min-w-0">
           <span className="truncate">{title}</span>
           {qualifier && (
             <span className={`normal-case font-medium tracking-tight ${tone.ink} opacity-90`}>

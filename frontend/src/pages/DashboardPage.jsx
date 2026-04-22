@@ -47,15 +47,15 @@ const TIP_AVG_QUALITY = (
   <TipContent
     title="Average Quality Score"
     body="How well the AI's answers match the expected output, on a 0–100 scale. Higher is better — combines accuracy, relevance, and adherence to prompt instructions."
-    source="Source: last 10 evaluation runs. Trend compares these 10 vs. the previous 10 — a ↓ arrow means answers are getting worse."
+    source="Source: last 10 COMPLETE evaluation runs. Incomplete runs (no measurable signal) are excluded so their mathematical zero doesn't drag the average. Trend compares these 10 vs. the previous 10 — a ↓ arrow means answers are getting worse."
   />
 );
 
 const TIP_ERROR_RATE = (
   <TipContent
-    title="Quality Error Rate (Drift)"
-    body="Percentage of evaluation runs in the last 7 days flagged for quality drift — the model still answered, but the response diverged from the expected output."
-    source="This is QUALITY error, not infrastructure error. HTTP 500s, timeouts, and rate-limit blocks are tracked separately on the Service Registry page. Trend compares this week to last week."
+    title="Drift Rate"
+    body="Percentage of complete evaluation runs in the last 7 days flagged for quality drift — the model still answered, but the response diverged from the expected output enough to cross the drift threshold."
+    source="This is QUALITY drift, not infrastructure error. HTTP 500s, timeouts, and rate-limit blocks are tracked separately on the Service Registry page. Incomplete runs (judge refused every test — no measurable signal) are excluded from both numerator and denominator so they cannot skew the metric."
   />
 );
 
@@ -172,9 +172,35 @@ export default function DashboardPage() {
       },
     },
     { key: 'service_name', label: 'Service' },
-    { key: 'score', label: 'Score', render: (v) => <span className="font-mono tabular-nums font-medium">{v}%</span> },
-    { key: 'type', label: 'Type' },
-    { key: 'drift', label: 'Status', render: (v) => <StatusBadge status={v ? 'Drift Detected' : 'Healthy'} /> },
+    {
+      key: 'score',
+      label: 'Score',
+      render: (v, row) => {
+        if (row && row.run_status === 'incomplete') {
+          return <span className="font-mono text-text-subtle" title="No measurable signal — see Status">—</span>;
+        }
+        return <span className="font-mono tabular-nums font-medium">{v}%</span>;
+      },
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      render: (v) => {
+        const scheduled = String(v).toLowerCase() === 'scheduled';
+        const tip = scheduled
+          ? 'Scheduler tick: APScheduler fires every eval_schedule_minutes (default 60 min) against every active non-confidential service. Disable with SCHEDULER_ENABLED=false.'
+          : 'Manual run: a logged-in user clicked Run Evaluation. Can override confidential services with allow_confidential=true.';
+        return <span title={tip} className="cursor-help">{v}</span>;
+      },
+    },
+    {
+      key: 'drift',
+      label: 'Status',
+      render: (v, row) => {
+        if (row && row.run_status === 'incomplete') return <StatusBadge status="No signal" />;
+        return <StatusBadge status={v ? 'Drift Detected' : 'Healthy'} />;
+      },
+    },
   ];
 
   if (loading) {
@@ -266,7 +292,7 @@ export default function DashboardPage() {
           tooltip={TIP_AVG_QUALITY}
         />
         <MetricCard
-          title="Error Rate"
+          title="Drift Rate"
           qualifier="quality"
           value={`${metrics.error_rate_pct.toFixed(1)}%`}
           icon={AlertTriangle}
@@ -275,7 +301,7 @@ export default function DashboardPage() {
           color="amber"
           sparklineData={errorData}
           sparklineKey="rate"
-          caption="Model quality, not server uptime"
+          caption="% of complete runs below quality threshold (7d)"
           tooltip={TIP_ERROR_RATE}
         />
         <MetricCard
@@ -318,7 +344,7 @@ export default function DashboardPage() {
                 aria-hidden="true"
               />
               <div className="flex items-baseline justify-between mb-1 pl-3">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.09em] text-text-subtle">{label}</span>
+                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-text-subtle">{label}</span>
                 <div className="flex items-baseline">
                   <span
                     className="text-[26px] font-semibold font-mono tabular-nums tracking-[-0.025em] leading-none"

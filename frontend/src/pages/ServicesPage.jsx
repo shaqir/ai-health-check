@@ -9,6 +9,142 @@ import ErrorState from '../components/common/ErrorState';
 import Modal from '../components/common/Modal';
 import ConfirmModal from '../components/common/ConfirmModal';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
+import Toast from '../components/common/Toast';
+
+// Error-detail extractor for Services page mutations.
+// Handles three shapes FastAPI / axios can return:
+//   1. Blob body (responseType:'blob' requests) → read as text + JSON.parse
+//   2. Plain { detail: "string" } → return the string
+//   3. Pydantic validation { detail: [{loc, msg, type, ...}] } → format each
+//      entry as "<field>: <msg>". This was the bug — before this, the toast
+//      rendered "[object Object]" on any 422.
+async function extractErrorDetail(err, fallback = 'Request failed') {
+  const data = err?.response?.data;
+  const status = err?.response?.status;
+
+  const formatDetail = (detail) => {
+    if (detail == null) return null;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      // Pydantic validation errors: [{loc:[...], msg:"Field required", type:"missing"}, ...]
+      const lines = detail.slice(0, 4).map((d) => {
+        const field = Array.isArray(d?.loc) ? d.loc.slice(1).join('.') || d.loc.join('.') : 'input';
+        const msg = d?.msg || d?.type || 'invalid value';
+        return `${field}: ${msg}`;
+      });
+      const extra = detail.length > 4 ? ` (+${detail.length - 4} more)` : '';
+      return `Validation error — ${lines.join('; ')}${extra}`;
+    }
+    // Object — try to stringify something useful
+    if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail);
+    return String(detail);
+  };
+
+  // Status-code prefix for the toast so users see "403 · Role 'viewer' not authorized"
+  // rather than a context-free error string.
+  const prefix = status ? `${status} · ` : '';
+
+  if (!data) {
+    // Common case: axios network error (backend down)
+    return `${err?.code === 'ERR_NETWORK' ? 'Backend unreachable — ' : ''}${err?.message || fallback}`;
+  }
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      try {
+        const parsed = JSON.parse(text);
+        const detail = formatDetail(parsed.detail);
+        return detail ? `${prefix}${detail}` : text || err?.message || fallback;
+      } catch {
+        return text || err?.message || fallback;
+      }
+    } catch {
+      return err?.message || fallback;
+    }
+  }
+  if (typeof data === 'string') return `${prefix}${data}`;
+  const detail = formatDetail(data.detail);
+  return detail ? `${prefix}${detail}` : (err?.message || fallback);
+}
+
+
+// Translate a raw Anthropic error snippet (the thing llm_client.test_connection
+// stores in response_snippet on failure) into a human-readable message + a
+// concrete fix hint. Anthropic returns Python-repr'd dicts, not JSON, so we
+// regex-extract rather than JSON.parse.
+//
+// Example raw input:
+//   "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error',
+//    'message': 'model: claude-sonnet-4-6-20250415'}, 'request_id': 'req_...'}"
+//
+// Returns: { title, hint, raw }
+function humanizeLlmProbeError(rawSnippet, service) {
+  const raw = String(rawSnippet || '').trim();
+  if (!raw) return { title: 'Ping failed', hint: 'No error detail returned.', raw };
+
+  // If this is an HTTP-mode probe snippet (my liveness fix), it's already readable.
+  if (/^HTTP \d+ \(reachable/.test(raw)) {
+    return { title: raw, hint: '', raw };
+  }
+
+  // Match the Anthropic error structure: type + message
+  const typeMatch = raw.match(/'type':\s*'([a-z_]+_error)'/);
+  const msgMatch = raw.match(/'message':\s*'([^']+)'/);
+  const errorType = typeMatch ? typeMatch[1] : null;
+  const message = msgMatch ? msgMatch[1] : '';
+
+  // Status code prefix (e.g. "Error code: 404")
+  const statusMatch = raw.match(/Error code:\s*(\d{3})/);
+  const status = statusMatch ? statusMatch[1] : null;
+
+  const MAP = {
+    not_found_error: {
+      title: `Anthropic doesn't recognize the model "${service?.model_name || message.replace(/^model:\s*/, '')}"`,
+      hint: 'Edit the service and change the Model field to a valid Anthropic ID (for example, claude-sonnet-4-5-20250929 or claude-haiku-4-5-20251001).',
+    },
+    authentication_error: {
+      title: 'Anthropic rejected the API key',
+      hint: 'Check ANTHROPIC_API_KEY in backend/.env and restart the backend.',
+    },
+    permission_error: {
+      title: 'API key does not have permission for this model',
+      hint: 'Verify the key has access to the model in the Anthropic console.',
+    },
+    rate_limit_error: {
+      title: 'Rate limited by Anthropic',
+      hint: 'Wait a moment and retry. If this persists, lower api_max_calls_per_minute or request a higher rate tier from Anthropic.',
+    },
+    overloaded_error: {
+      title: 'Anthropic is temporarily overloaded',
+      hint: 'Retry in a few seconds — this is upstream capacity, nothing to fix on our side.',
+    },
+    api_error: {
+      title: 'Anthropic API error',
+      hint: message ? `Detail: ${message}` : 'Retry; if persistent, check https://status.anthropic.com.',
+    },
+    invalid_request_error: {
+      title: 'Anthropic rejected the request',
+      hint: message || 'Check the request shape (model, max_tokens, messages).',
+    },
+  };
+
+  const friendly = errorType && MAP[errorType];
+  if (friendly) {
+    return {
+      title: status ? `${status} · ${friendly.title}` : friendly.title,
+      hint: friendly.hint,
+      raw,
+    };
+  }
+
+  // Unknown Anthropic error type — surface what we have without the request_id noise
+  const trimmed = raw.replace(/,?\s*'request_id':\s*'[^']+'/, '').slice(0, 220);
+  return {
+    title: status ? `${status} · LLM probe failed` : 'LLM probe failed',
+    hint: trimmed,
+    raw,
+  };
+}
 
 const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
 const ENV_OPTIONS = ['dev', 'staging', 'prod'];
@@ -26,8 +162,11 @@ export default function ServicesPage() {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
   const [viewMode, setViewMode] = useState('grid');
   const [search, setSearch] = useState('');
+
+  const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
   // formMode: null | 'create' | 'edit'. editingId is set only for 'edit'.
   const [formMode, setFormMode] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -87,6 +226,7 @@ export default function ServicesPage() {
     if (e && e.preventDefault) e.preventDefault();
     setIsSubmitting(true);
     setFormError(null);
+    const verb = formMode === 'edit' ? 'update' : 'create';
     try {
       if (formMode === 'edit' && editingId != null) {
         await api.put(`/services/${editingId}`, form);
@@ -95,8 +235,13 @@ export default function ServicesPage() {
       }
       closeForm();
       fetchServices();
+      showToast(`Service ${verb}d`, 'success');
     } catch (err) {
-      setFormError(err.response?.data?.detail || `Failed to ${formMode === 'edit' ? 'update' : 'create'} service`);
+      const detail = await extractErrorDetail(err, `Failed to ${verb} service`);
+      // Keep the inline formError for the dialog AND toast so the user
+      // sees it whether the modal stays open or not.
+      setFormError(detail);
+      showToast(detail, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -114,19 +259,30 @@ export default function ServicesPage() {
       await api.delete(`/services/${deleteConfirmId}`);
       closeDeleteConfirm();
       fetchServices();
+      showToast('Service deleted', 'success');
     } catch (err) {
-      setDeleteError(err.response?.data?.detail || 'Failed to delete service');
+      const detail = await extractErrorDetail(err, 'Failed to delete service');
+      setDeleteError(detail);
+      showToast(detail, 'error');
     }
   };
 
   const runPing = async (id, qs = '') => {
     setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
+    const service = services.find((s) => s.id === id);
     try {
       const res = await api.post(`/services/${id}/test-connection${qs}`);
       setTestResults((prev) => ({ ...prev, [id]: { ...res.data, status: res.data.status === 'success' ? 'healthy' : 'failed' } }));
+      if (res.data.status !== 'success') {
+        // Humanize the raw Anthropic / probe error before showing it.
+        const { title, hint } = humanizeLlmProbeError(res.data.response_snippet, service);
+        const msg = hint ? `${title} — ${hint}` : title;
+        showToast(`${service?.name || 'Service'}: ${msg}`, 'error');
+      }
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message;
+      const detail = await extractErrorDetail(err, 'Ping request failed');
       setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
+      showToast(`${service?.name || 'Service'}: ${detail}`, 'error');
     }
   };
 
@@ -299,6 +455,33 @@ export default function ServicesPage() {
                     </button>
                   )}
                 </div>
+                {/* Persistent inline error strip — stays visible after the toast
+                    auto-dismisses. Only renders on failure; success / loading /
+                    untested states omit this block. */}
+                {test && !test.loading && test.status === 'failed' && (() => {
+                  const { title, hint, raw } = humanizeLlmProbeError(test.response_snippet, s);
+                  return (
+                    <div className="px-5 pb-4">
+                      <div className="rounded-md border border-status-failing/20 bg-status-failing-muted/60 px-3 py-2">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle size={14} strokeWidth={2} className="text-status-failing shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-status-failing leading-snug">{title}</p>
+                            {hint && (
+                              <p className="text-[11px] text-text-muted mt-1 leading-snug">{hint}</p>
+                            )}
+                            {raw && raw !== title && (
+                              <details className="mt-1.5">
+                                <summary className="text-[10.5px] text-text-subtle cursor-pointer hover:text-text-muted">Show raw error</summary>
+                                <pre className="mt-1 text-[10px] font-mono text-text-subtle whitespace-pre-wrap break-words max-h-32 overflow-auto">{raw}</pre>
+                              </details>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -404,6 +587,17 @@ export default function ServicesPage() {
             : ''
         }
       />
+
+      {toast.visible && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          // Errors often contain validation detail users need time to read —
+          // 10s for errors, 4s for success/info so happy-path isn't sticky.
+          duration={toast.type === 'error' ? 10000 : 4000}
+          onClose={() => setToast({ visible: false, message: '', type: 'info' })}
+        />
+      )}
     </div>
   );
 }

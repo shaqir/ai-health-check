@@ -381,9 +381,6 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
       3. API call with retries (outside the lock)
       4. Output safety scan (scan_output)
       5. Finalize reservation with real usage + cost
-
-    No longer split into `_core` — that split existed only to break
-    recursion through the old LLM injection classifier, which is gone.
     """
     from app.services.safety import scan_input, scan_output, PromptSafetyError
 

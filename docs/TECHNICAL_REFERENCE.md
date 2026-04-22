@@ -760,8 +760,8 @@ Budget enforcement:
 
 - Daily cap: `$5.00` (configurable)
 - Monthly cap: `$25.00`
-- Global rate: 10 calls/min
-- Per-user rate: 5 calls/min
+- Global rate: 30 calls/min
+- Per-user rate: 20 calls/min
 - Budget exceeded → `BudgetExceededError`, mapped to HTTP 402
 - Rate limit exceeded → HTTP 429
 

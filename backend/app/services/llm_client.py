@@ -412,8 +412,12 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
     # 3. API call with retries (outside the lock).
     client = _get_client()
 
+    # Wall-clock start — what the USER sees. Includes retry backoff sleeps
+    # between attempts. The per-attempt elapsed is tracked separately for
+    # internal debugging but never reported upstream.
+    call_start = time.time()
+
     for attempt in range(max_retries + 1):
-        start = time.time()
         try:
             response = client.messages.create(
                 model=model,
@@ -422,7 +426,7 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
                 timeout=float(settings.llm_timeout_seconds),
                 **kwargs,
             )
-            latency_ms = round((time.time() - start) * 1000, 1)
+            wall_ms = round((time.time() - call_start) * 1000, 1)
 
             input_tokens = getattr(response.usage, "input_tokens", 0)
             output_tokens = getattr(response.usage, "output_tokens", 0)
@@ -434,52 +438,52 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
                 safety_flags_str += ("," if safety_flags_str else "") + ",".join(output_scan["flags"])
 
             _finalize_reservation(
-                reservation_id, model, input_tokens, output_tokens, latency_ms, "success",
+                reservation_id, model, input_tokens, output_tokens, wall_ms, "success",
                 safety_flags=safety_flags_str, risk_score=safety_result["risk_score"],
                 prompt_text=input_text, response_text=output_text,
             )
-            return response, latency_ms
+            return response, wall_ms
 
         except anthropic.RateLimitError:
-            latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_rate_limit")
+                wall_ms = round((time.time() - call_start) * 1000, 1)
+                _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_rate_limit")
                 raise
 
         except anthropic.APIConnectionError:
-            latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_timeout")
+                wall_ms = round((time.time() - call_start) * 1000, 1)
+                _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_timeout")
                 raise
 
         except anthropic.InternalServerError:
-            latency_ms = round((time.time() - start) * 1000, 1)
             if attempt < max_retries:
                 time.sleep((2 ** attempt) + _random.uniform(0, 0.5))
             else:
-                _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_server")
+                wall_ms = round((time.time() - call_start) * 1000, 1)
+                _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_server")
                 raise
 
         except anthropic.AuthenticationError:
-            latency_ms = round((time.time() - start) * 1000, 1)
-            _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_auth")
+            wall_ms = round((time.time() - call_start) * 1000, 1)
+            _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_auth")
             raise
 
         except anthropic.BadRequestError:
-            latency_ms = round((time.time() - start) * 1000, 1)
-            _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_bad_request")
+            wall_ms = round((time.time() - call_start) * 1000, 1)
+            _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_bad_request")
             raise
 
         except BudgetExceededError:
             raise
 
         except Exception:
-            latency_ms = round((time.time() - start) * 1000, 1)
-            _finalize_reservation(reservation_id, model, 0, 0, latency_ms, "error_unknown")
+            wall_ms = round((time.time() - call_start) * 1000, 1)
+            _finalize_reservation(reservation_id, model, 0, 0, wall_ms, "error_unknown")
             raise
 
 

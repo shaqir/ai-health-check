@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle } from 'lucide-react';
+import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -268,11 +268,23 @@ export default function ServicesPage() {
   };
 
   const runPing = async (id, qs = '') => {
-    setTestResults((prev) => ({ ...prev, [id]: { loading: true } }));
+    // Derive mode from the query string so the footer can render it without
+    // a second round-trip. `?mode=llm...` means a real Claude call — we want
+    // to tell the user that explicitly so "Connected 1.8s" stops looking
+    // like a slow HTTP probe.
+    const mode = qs.includes('mode=llm') ? 'llm' : 'http';
+    setTestResults((prev) => ({ ...prev, [id]: { loading: true, mode } }));
     const service = services.find((s) => s.id === id);
     try {
       const res = await api.post(`/services/${id}/test-connection${qs}`);
-      setTestResults((prev) => ({ ...prev, [id]: { ...res.data, status: res.data.status === 'success' ? 'healthy' : 'failed' } }));
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: {
+          ...res.data,
+          mode,
+          status: res.data.status === 'success' ? 'healthy' : 'failed',
+        },
+      }));
       if (res.data.status !== 'success') {
         // Humanize the raw Anthropic / probe error before showing it.
         const { title, hint } = humanizeLlmProbeError(res.data.response_snippet, service);
@@ -281,7 +293,10 @@ export default function ServicesPage() {
       }
     } catch (err) {
       const detail = await extractErrorDetail(err, 'Ping request failed');
-      setTestResults((prev) => ({ ...prev, [id]: { status: 'failed', latency_ms: 0, response_snippet: detail } }));
+      setTestResults((prev) => ({
+        ...prev,
+        [id]: { status: 'failed', mode, latency_ms: 0, response_snippet: detail },
+      }));
       showToast(`${service?.name || 'Service'}: ${detail}`, 'error');
     }
   };
@@ -440,7 +455,28 @@ export default function ServicesPage() {
                     <span className={`w-2 h-2 rounded-full ${statusDot}`} aria-hidden="true" />
                     <span className="text-[12px] font-medium text-text-muted">{statusLabel}</span>
                     {test && !test.loading && test.latency_ms > 0 && (
-                      <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                      <>
+                        <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
+                        {/* Mode tag: an HTTP probe is a ~100ms reachability
+                            check; an LLM ping is a real Claude call that
+                            costs money and takes 1–2s. Showing the mode
+                            explains long latencies at a glance. */}
+                        {test.mode === 'llm' ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-pill bg-accent/10 text-accent"
+                            title={`Live Claude call using ${s.model_name}. Real API spend; ~1–2s typical.`}
+                          >
+                            <Zap size={10} strokeWidth={2} /> live
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[10px] font-medium uppercase tracking-[0.08em] text-text-subtle"
+                            title="HTTP reachability probe — no LLM call, no cost."
+                          >
+                            http
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                   {canEdit && (
@@ -578,12 +614,12 @@ export default function ServicesPage() {
         isOpen={!!confidentialPingTarget}
         onClose={() => setConfidentialPingTarget(null)}
         onConfirm={confirmConfidentialPing}
-        title="Confidential service — override required"
+        title="Confidential service — live Claude call"
         variant="warning"
-        confirmLabel="Proceed with override"
+        confirmLabel="Run live check"
         description={
           confidentialPingTarget
-            ? `"${confidentialPingTarget.name}" is labelled confidential. Running the LLM test-connection will send a prompt to an external model. Only admins can override, and every override is recorded in the audit log.`
+            ? `"${confidentialPingTarget.name}" is labelled confidential. This runs a LIVE Claude call against ${confidentialPingTarget.model_name} (not a cheap HTTP probe): expect ~1–2 seconds and ~$0.0002 of real API spend. Only admins can override, and every override is recorded in the audit log.`
             : ''
         }
       />

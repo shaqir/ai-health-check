@@ -18,6 +18,7 @@ import Modal from '../components/common/Modal';
 import { InfoTip } from '../components/common/Tooltip';
 import ActivityRow from '../components/trace/ActivityRow';
 import CallDetailModal from '../components/trace/CallDetailModal';
+import ModelCard from '../components/settings/ModelCard';
 import { useAuth } from '../context/AuthContext';
 
 // Explainer content for each safety flag the scanner can emit. Keyed by the
@@ -680,16 +681,50 @@ export default function SettingsPage() {
         <div className="space-y-5 min-w-0">
           {active === 'model' && config && (
             <>
-              <Card icon={Brain} title="AI model">
-                <Row label="Provider" value={config.ai_model.provider} />
-                <Row label="Model" value={<span className="font-mono text-[12px] bg-surface-elevated px-1.5 py-0.5 rounded-xs">{config.ai_model.model}</span>} />
-                <Row label="Max tokens" value={config.ai_model.max_tokens.toLocaleString()} mono />
-                <Row label="Timeout" value={`${config.ai_model.timeout_seconds}s`} mono />
-              </Card>
-              <Card icon={CreditCard} title="Pricing">
-                <Row label="Input" value={`$${config.pricing.input_per_million_usd} / 1M tokens`} mono />
-                <Row label="Output" value={`$${config.pricing.output_per_million_usd} / 1M tokens`} mono />
-                <p className="text-[11px] text-text-subtle pt-3 border-t border-hairline mt-2">Estimated from API response token counts.</p>
+              {/* Explainer: why there are two cards. Answers "why two models?"
+                  without needing to click anywhere — the single most common
+                  viva question this page will get. */}
+              <div className="rounded-xl border border-hairline bg-surface-elevated/60 px-4 py-3">
+                <p className="text-[12px] text-text-muted leading-relaxed">
+                  The system runs <span className="font-semibold text-text">two models</span> with distinct roles.
+                  The <span className="font-semibold text-text">actor</span> generates responses being evaluated
+                  and handles synthesis tasks. The <span className="font-semibold text-text">judge</span>
+                  {' '}scores those responses on a merged factuality + hallucination rubric. Using a different
+                  model family for the judge reduces self-scoring correlation, and Haiku's lower rates keep
+                  the judge cost well under the actor cost per run.
+                </p>
+              </div>
+
+              {/* Actor + Judge side-by-side. Grid collapses to a stack on
+                  narrow viewports so the chips stay readable on mobile. */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <ModelCard
+                  role="actor"
+                  model={config.models.actor}
+                  todayUsage={apiUsage?.breakdown_by_model?.[config.models.actor.id] || null}
+                />
+                <ModelCard
+                  role="judge"
+                  model={config.models.judge}
+                  todayUsage={apiUsage?.breakdown_by_model?.[config.models.judge.id] || null}
+                />
+              </div>
+
+              {/* Global runtime settings apply to both models so they live
+                  in one card below the pair, not duplicated inside each. */}
+              <Card icon={Cpu} title="Runtime" badge="Applies to both models">
+                <Row
+                  label="Max tokens per call"
+                  value={config.runtime.max_tokens.toLocaleString()}
+                  mono
+                  tooltip="Cap on how many tokens either model can return in a single response. Also capped by the hard-limits gatekeeper (see the Limits section)."
+                />
+                <Row
+                  label="Timeout"
+                  value={`${config.runtime.timeout_seconds}s`}
+                  mono
+                  tooltip="How long the client waits for any single Claude call before giving up. Retries with exponential backoff on transient errors (rate-limit / timeout / server error) up to 2 times."
+                />
               </Card>
             </>
           )}

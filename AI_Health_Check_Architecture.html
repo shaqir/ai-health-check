@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Health Check — System Architecture</title>
+<style>
+  :root {
+    --navy:   #1B2A4E;
+    --blue:   #2E6FDB;
+    --teal:   #0E8C8C;
+    --coral:  #D64545;
+    --gold:   #C9A227;
+    --green:  #1F7A4B;
+    --grey-05:#F7F8FB;
+    --grey-10:#EEF0F6;
+    --grey-20:#DEE2EC;
+    --grey-30:#CBD2DC;
+    --grey-50:#8B94A6;
+    --text:   #1A1F2B;
+    --muted:  #4A5568;
+    --white:  #FFFFFF;
+
+    --shadow-sm: 0 1px 2px rgba(15,23,42,0.06), 0 1px 3px rgba(15,23,42,0.08);
+    --shadow-md: 0 4px 10px rgba(15,23,42,0.08), 0 2px 4px rgba(15,23,42,0.06);
+    --shadow-lg: 0 10px 25px rgba(15,23,42,0.10), 0 4px 10px rgba(15,23,42,0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: linear-gradient(180deg,#EEF2FB 0%, #F7F8FB 40%, #FFFFFF 100%); color: var(--text); font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1400px; margin: 0 auto; padding: 48px 40px 80px; }
+
+  /* ---------- Header ---------- */
+  .hdr { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid var(--navy); padding-bottom: 20px; margin-bottom: 32px; }
+  .hdr-title { font-size: 34px; font-weight: 800; color: var(--navy); letter-spacing: -0.02em; margin: 0 0 6px; }
+  .hdr-sub   { font-size: 17px; color: var(--muted); margin: 0; font-weight: 500; }
+  .hdr-meta  { text-align: right; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .hdr-meta strong { color: var(--navy); }
+
+  /* ---------- Swim lanes ---------- */
+  .lanes { display: flex; flex-direction: column; gap: 14px; margin-bottom: 40px; }
+  .lane {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    background: var(--white);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    border: 1px solid var(--grey-20);
+  }
+  .lane-label {
+    padding: 24px 18px;
+    color: var(--white);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 12px;
+    line-height: 1.45;
+    position: relative;
+  }
+  .lane-label .tier {
+    font-size: 10px;
+    opacity: 0.78;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    margin-bottom: 6px;
+  }
+  .lane-label .name {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    text-transform: none;
+  }
+  .lane-body { padding: 20px 24px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; position: relative; }
+
+  /* Lane accent colors */
+  .lane.l-user    .lane-label { background: linear-gradient(135deg, #0B1A3D, #1B2A4E); }
+  .lane.l-front   .lane-label { background: linear-gradient(135deg, #2E6FDB, #1E4FB0); }
+  .lane.l-gateway .lane-label { background: linear-gradient(135deg, #0E8C8C, #0A6464); }
+  .lane.l-app     .lane-label { background: linear-gradient(135deg, #4A5580, #2E385C); }
+  .lane.l-ai      .lane-label { background: linear-gradient(135deg, #C9A227, #A6821D); }
+  .lane.l-data    .lane-label { background: linear-gradient(135deg, #1F7A4B, #145936); }
+  .lane.l-ext     .lane-label { background: linear-gradient(135deg, #D64545, #9F2C2C); }
+
+  .lane.l-user    .lane-body { background: linear-gradient(90deg, #F4F6FD 0%, #FFFFFF 80%); }
+  .lane.l-front   .lane-body { background: linear-gradient(90deg, #EEF4FE 0%, #FFFFFF 80%); }
+  .lane.l-gateway .lane-body { background: linear-gradient(90deg, #E9F6F6 0%, #FFFFFF 80%); }
+  .lane.l-app     .lane-body { background: linear-gradient(90deg, #F1F2F8 0%, #FFFFFF 80%); }
+  .lane.l-ai      .lane-body { background: linear-gradient(90deg, #FCF6E4 0%, #FFFFFF 80%); }
+  .lane.l-data    .lane-body { background: linear-gradient(90deg, #EAF5EE 0%, #FFFFFF 80%); }
+  .lane.l-ext     .lane-body { background: linear-gradient(90deg, #FBEBEB 0%, #FFFFFF 80%); }
+
+  /* ---------- Cards inside lanes ---------- */
+  .card {
+    background: var(--white);
+    border: 1px solid var(--grey-20);
+    border-radius: 10px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow-sm);
+    min-width: 150px;
+    position: relative;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .card .title { font-weight: 700; font-size: 13px; color: var(--navy); line-height: 1.35; }
+  .card .sub   { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+  .card .tag   { position: absolute; top: -8px; right: 10px; background: var(--navy); color: var(--white); font-size: 9.5px; padding: 2px 7px; border-radius: 8px; font-weight: 600; letter-spacing: 0.04em; }
+
+  .card.accent-blue  { border-left: 3px solid var(--blue); }
+  .card.accent-teal  { border-left: 3px solid var(--teal); }
+  .card.accent-navy  { border-left: 3px solid var(--navy); }
+  .card.accent-gold  { border-left: 3px solid var(--gold); }
+  .card.accent-green { border-left: 3px solid var(--green); }
+  .card.accent-coral { border-left: 3px solid var(--coral); }
+
+  .arrow { color: var(--grey-50); font-weight: 700; font-size: 22px; line-height: 1; user-select: none; }
+
+  /* Pill tags (inside cards) */
+  .pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .pill {
+    font-size: 10.5px;
+    background: var(--grey-10);
+    color: var(--navy);
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    border: 1px solid var(--grey-20);
+  }
+
+  /* User lane — top strip with icon cards */
+  .user-card { display: flex; align-items: center; gap: 12px; }
+  .user-icon {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--navy));
+    color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(30,50,120,0.25);
+  }
+  .role-chip {
+    padding: 4px 11px;
+    border-radius: 14px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: 0.04em;
+  }
+  .role-admin { background: var(--navy); }
+  .role-main  { background: var(--blue); }
+  .role-view  { background: var(--grey-50); }
+
+  /* Middleware chain */
+  .chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .chain-box {
+    background: var(--white);
+    border: 1.5px solid var(--teal);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--teal);
+    box-shadow: var(--shadow-sm);
+  }
+  .chain-arrow { color: var(--teal); font-weight: 700; font-size: 18px; }
+
+  /* AI pipeline stages — colored stages */
+  .pipeline { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; width: 100%; }
+  .stage {
+    background: var(--white);
+    border-radius: 10px;
+    padding: 12px 12px 14px;
+    border-top: 4px solid var(--gold);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    min-height: 118px;
+  }
+  .stage:nth-child(1) { border-top-color: #1B2A4E; }
+  .stage:nth-child(2) { border-top-color: #2E6FDB; }
+  .stage:nth-child(3) { border-top-color: #0E8C8C; }
+  .stage:nth-child(4) { border-top-color: #C9A227; }
+  .stage:nth-child(5) { border-top-color: #1F7A4B; }
+  .stage:nth-child(6) { border-top-color: #D64545; }
+  .stage .num {
+    position: absolute; top: 10px; right: 11px;
+    font-size: 11px; font-weight: 800; color: var(--grey-50);
+  }
+  .stage .stitle { font-weight: 700; font-size: 12.5px; color: var(--navy); margin: 2px 0 4px; }
+  .stage .sdesc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .stage .sfunc { font-size: 10.5px; color: var(--muted); margin-top: 6px; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--grey-05); padding: 2px 5px; border-radius: 4px; display: inline-block; }
+
+  .two-tier {
+    display: flex; gap: 10px; margin-top: 14px; width: 100%;
+    padding: 14px 16px;
+    background: linear-gradient(90deg, #FDF7E2 0%, #F1F5FD 100%);
+    border: 1px dashed var(--gold);
+    border-radius: 10px;
+  }
+  .tier-card { flex: 1; background: var(--white); border-radius: 8px; padding: 10px 12px; border: 1px solid var(--grey-20); }
+  .tier-card .tlabel { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; }
+  .tier-card .tmodel { font-size: 13.5px; font-weight: 800; color: var(--navy); margin: 2px 0; }
+  .tier-card .trole  { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+  .tier-card.sonnet { border-left: 4px solid var(--blue); }
+  .tier-card.haiku  { border-left: 4px solid var(--teal); }
+
+  /* Section heading */
+  .sect-h {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 44px 0 16px;
+  }
+  .sect-h .bar { width: 6px; height: 22px; background: var(--navy); border-radius: 3px; }
+  .sect-h h2 { margin: 0; font-size: 20px; color: var(--navy); font-weight: 800; letter-spacing: -0.01em; }
+  .sect-h .kicker { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* End-to-end flow */
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .step {
+    background: var(--white);
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--grey-20);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+  }
+  .step::before {
+    content: attr(data-step);
+    position: absolute;
+    top: -12px; left: 14px;
+    background: var(--navy);
+    color: var(--white);
+    font-weight: 800;
+    font-size: 12px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow-sm);
+  }
+  .step h3 { font-size: 13px; margin: 4px 0 5px; color: var(--navy); font-weight: 700; }
+  .step p { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+
+  /* Cross-cutting grid */
+  .cross {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .concern {
+    background: var(--white);
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--grey-20);
+    border-top: 3px solid var(--blue);
+    box-shadow: var(--shadow-sm);
+  }
+  .concern h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 800;
+  }
+  .concern p {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .concern.c-auth   { border-top-color: var(--blue); }
+  .concern.c-rbac   { border-top-color: var(--navy); }
+  .concern.c-audit  { border-top-color: var(--green); }
+  .concern.c-ssrf   { border-top-color: var(--coral); }
+  .concern.c-safety { border-top-color: var(--teal); }
+  .concern.c-budget { border-top-color: var(--gold); }
+  .concern.c-hitl   { border-top-color: var(--coral); }
+  .concern.c-drift  { border-top-color: var(--teal); }
+
+  /* Footer */
+  .foot {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--grey-20);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .foot strong { color: var(--navy); }
+
+  /* Down-arrow between lanes */
+  .lane-arrow {
+    margin: -6px auto;
+    height: 14px;
+    width: 2px;
+    background: var(--grey-20);
+    position: relative;
+  }
+  .lane-arrow::after {
+    content: '';
+    position: absolute;
+    bottom: -2px; left: -4px;
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid var(--grey-50);
+  }
+
+  /* Legend */
+  .legend { display: flex; gap: 14px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  @media (max-width: 1100px) {
+    .pipeline { grid-template-columns: repeat(3, 1fr); }
+    .flow { grid-template-columns: repeat(2, 1fr); }
+    .cross { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media print {
+    body { background: #fff; }
+    .card:hover { transform: none; box-shadow: var(--shadow-sm); }
+    .page { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HEADER -->
+  <header class="hdr">
+    <div>
+      <h1 class="hdr-title">AI Health Check &mdash; System Architecture</h1>
+      <p class="hdr-sub">Centralized AI Operations Control Room &middot; High-Level Flow with Horizontal Swim Lanes</p>
+    </div>
+    <div class="hdr-meta">
+      <div><strong>ARTI-409-A</strong> Capstone</div>
+      <div>April 2026</div>
+      <div>Source: <strong>docs/ARCHITECTURE.md</strong></div>
+    </div>
+  </header>
+
+  <!-- SWIM LANES -->
+  <div class="lanes">
+
+    <!-- Lane 1: USER -->
+    <div class="lane l-user">
+      <div class="lane-label">
+        <div class="tier">Tier 0</div>
+        <div class="name">Users</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-navy" style="min-width:220px">
+          <div class="user-card">
+            <div class="user-icon">U</div>
+            <div>
+              <div class="title">Browser client</div>
+              <div class="sub">HTTPS &middot; JWT bearer &middot; re-fetched every request</div>
+            </div>
+          </div>
+        </div>
+        <span class="arrow">&rarr;</span>
+        <div class="card accent-navy" style="min-width:260px">
+          <div class="title" style="margin-bottom:6px">Role-Based Access</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <span class="role-chip role-admin">ADMIN</span>
+            <span class="role-chip role-main">MAINTAINER</span>
+            <span class="role-chip role-view">VIEWER</span>
+          </div>
+          <div class="sub" style="margin-top:8px">Every denial &rarr; <code style="color:var(--coral)">role_denied</code> audit row</div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 2: FRONTEND -->
+    <div class="lane l-front">
+      <div class="lane-label">
+        <div class="tier">Tier 1</div>
+        <div class="name">Presentation</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-blue" style="min-width:220px">
+          <span class="tag">SPA</span>
+          <div class="title">React 18 &middot; Vite 5</div>
+          <div class="sub">Tailwind 3.4 &middot; Axios with JWT interceptor &middot; polling intervals standardized</div>
+        </div>
+        <span class="arrow">&rarr;</span>
+        <div class="card accent-blue" style="flex:1; min-width:320px">
+          <div class="title">9 pages</div>
+          <div class="pills">
+            <span class="pill">Login</span>
+            <span class="pill">Dashboard</span>
+            <span class="pill">Services</span>
+            <span class="pill">Evaluations</span>
+            <span class="pill">Incidents</span>
+            <span class="pill">Maintenance</span>
+            <span class="pill">Governance</span>
+            <span class="pill">Settings</span>
+            <span class="pill">Data&nbsp;Policy</span>
+          </div>
+          <div class="sub" style="margin-top:8px">Modal dialogs &middot; NotificationsBell &middot; DateTimeField &middot; KPI tooltips &middot; audit-log UX refresh</div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 3: API GATEWAY / MIDDLEWARE -->
+    <div class="lane l-gateway">
+      <div class="lane-label">
+        <div class="tier">Tier 2</div>
+        <div class="name">API Gateway</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-teal" style="min-width:200px">
+          <span class="tag">ASGI</span>
+          <div class="title">FastAPI backend</div>
+          <div class="sub">Python 3.11 &middot; Pydantic v2 &middot; SQLAlchemy 2</div>
+        </div>
+        <span class="arrow">&rarr;</span>
+        <div style="flex:1; min-width:540px">
+          <div class="chain">
+            <div class="chain-box">CORS</div>
+            <span class="chain-arrow">&rarr;</span>
+            <div class="chain-box">JWT&nbsp;auth</div>
+            <span class="chain-arrow">&rarr;</span>
+            <div class="chain-box">RBAC&nbsp;depends()</div>
+            <span class="chain-arrow">&rarr;</span>
+            <div class="chain-box">Rate&nbsp;Limit</div>
+            <span class="chain-arrow">&rarr;</span>
+            <div class="chain-box">Audit&nbsp;Log</div>
+          </div>
+          <div class="sub" style="margin-top:8px; color:var(--muted)">Middleware chain &mdash; every mutating request passes all five gates, in order. Denials self-audit.</div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 4: APPLICATION / ROUTERS -->
+    <div class="lane l-app">
+      <div class="lane-label">
+        <div class="tier">Tier 3</div>
+        <div class="name">Application</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-navy" style="min-width:180px">
+          <span class="tag">9 routers</span>
+          <div class="title">One router per pillar</div>
+          <div class="pills">
+            <span class="pill">auth</span>
+            <span class="pill">services</span>
+            <span class="pill">evaluations</span>
+            <span class="pill">incidents</span>
+            <span class="pill">maintenance</span>
+            <span class="pill">governance</span>
+            <span class="pill">policies</span>
+            <span class="pill">users</span>
+            <span class="pill">health</span>
+          </div>
+        </div>
+        <span class="arrow">&rarr;</span>
+        <div class="card accent-navy" style="min-width:260px; flex:1">
+          <div class="title">Service layer (business logic)</div>
+          <div class="sub">
+            <code>eval_runner.py</code> &middot; <code>drift_service.py</code> &middot; <code>draft_service.py</code> &middot; <code>compliance.py</code>
+          </div>
+          <div class="sub" style="margin-top:6px; color:var(--blue)">
+            &rarr; All LLM-touching services funnel through a single chokepoint in the next lane
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 5: AI PIPELINE -->
+    <div class="lane l-ai">
+      <div class="lane-label">
+        <div class="tier">Tier 4</div>
+        <div class="name">AI Pipeline</div>
+      </div>
+      <div class="lane-body" style="flex-direction:column; align-items:stretch; gap:14px">
+        <div style="display:flex; align-items:center; gap:14px; width:100%">
+          <div class="card accent-gold" style="min-width:230px">
+            <span class="tag" style="background:var(--gold)">CHOKEPOINT</span>
+            <div class="title">_make_api_call()</div>
+            <div class="sub"><code>llm_client.py</code> &middot; the only place in the backend that talks to Claude</div>
+            <div class="sub" style="margin-top:6px; color:var(--navy)">
+              Public wrapper + <code>_make_api_call_core</code> split &rarr; no infinite recursion when the input scan itself calls Haiku
+            </div>
+          </div>
+          <span class="arrow">&rarr;</span>
+          <div class="pipeline" style="flex:1">
+            <div class="stage">
+              <span class="num">01</span>
+              <div class="stitle">Sensitivity Gate</div>
+              <div class="sdesc">Confidential services blocked unless admin passes explicit override</div>
+              <div class="sfunc">sensitivity.py</div>
+            </div>
+            <div class="stage">
+              <span class="num">02</span>
+              <div class="stitle">Two-Layer Safety Scan</div>
+              <div class="sdesc">15 regex tripwires + Haiku classifier &middot; max(scores) &middot; fail-open</div>
+              <div class="sfunc">safety.scan_input</div>
+            </div>
+            <div class="stage">
+              <span class="num">03</span>
+              <div class="stitle">Budget &amp; Rate</div>
+              <div class="sdesc">Atomic check-and-reserve under <code>_BUDGET_LOCK</code> &middot; 60/min global, 40/user</div>
+              <div class="sfunc">_BUDGET_LOCK</div>
+            </div>
+            <div class="stage">
+              <span class="num">04</span>
+              <div class="stitle">Anthropic Call</div>
+              <div class="sdesc">Retry + back-off &middot; two-tier dispatch to Sonnet or Haiku</div>
+              <div class="sfunc">client.messages.create</div>
+            </div>
+            <div class="stage">
+              <span class="num">05</span>
+              <div class="stitle">Output Scan</div>
+              <div class="sdesc">PII leakage, refusal, toxicity &middot; redactions surfaced to UI</div>
+              <div class="sfunc">safety.scan_output</div>
+            </div>
+            <div class="stage">
+              <span class="num">06</span>
+              <div class="stitle">Persist &amp; Audit</div>
+              <div class="sdesc">Cost, tokens, latency, model, safety flags &rarr; hash-chained ledger</div>
+              <div class="sfunc">APIUsageLog + audit</div>
+            </div>
+          </div>
+        </div>
+        <!-- Two-tier routing band -->
+        <div class="two-tier">
+          <div class="tier-card sonnet">
+            <div class="tlabel">Actor Tier</div>
+            <div class="tmodel">Claude Sonnet 4.6</div>
+            <div class="trole">Service under test &middot; incident summaries &middot; dashboard insights &middot; compliance narratives</div>
+            <div class="sub" style="margin-top:6px"><strong>$3 / $15</strong> per M tokens</div>
+          </div>
+          <div class="tier-card haiku">
+            <div class="tlabel">Judge Tier</div>
+            <div class="tmodel">Claude Haiku 4.5</div>
+            <div class="trole">Factuality score &middot; hallucination detection &middot; independent prompt-injection classifier</div>
+            <div class="sub" style="margin-top:6px"><strong>$1 / $5</strong> per M tokens &middot; <code>EvalRun.judge_model</code> logs which judge served each score</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 6: DATA & BACKGROUND -->
+    <div class="lane l-data">
+      <div class="lane-label">
+        <div class="tier">Tier 5</div>
+        <div class="name">Data &amp; Scheduler</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-green" style="min-width:260px">
+          <span class="tag" style="background:var(--green)">SQLite</span>
+          <div class="title">aiops.db &middot; 14 models</div>
+          <div class="sub">FK enforced &middot; SQLAlchemy 2 &middot; SHA-256 hash chain on AuditLog</div>
+          <div class="sub" style="margin-top:6px; color:var(--coral)"><strong>BEFORE&nbsp;UPDATE&nbsp;/&nbsp;DELETE</strong> triggers block app-path mutation of audit rows</div>
+        </div>
+        <span class="arrow">&rarr;</span>
+        <div class="card accent-green" style="min-width:220px; flex:1">
+          <span class="tag" style="background:var(--green)">APScheduler</span>
+          <div class="title">Background jobs</div>
+          <div class="pills">
+            <span class="pill">Health probe &middot; 5&nbsp;min</span>
+            <span class="pill">Auto eval &middot; 60&nbsp;min</span>
+          </div>
+          <div class="sub" style="margin-top:6px">SSRF-guarded &middot; 4xx treated as reachable (POST-only endpoints don&rsquo;t false-fail)</div>
+        </div>
+      </div>
+    </div>
+    <div class="lane-arrow"></div>
+
+    <!-- Lane 7: EXTERNAL -->
+    <div class="lane l-ext">
+      <div class="lane-label">
+        <div class="tier">Tier 6</div>
+        <div class="name">External</div>
+      </div>
+      <div class="lane-body">
+        <div class="card accent-coral" style="min-width:260px">
+          <span class="tag" style="background:var(--coral)">Anthropic API</span>
+          <div class="title">api.anthropic.com</div>
+          <div class="sub">/v1/messages &middot; /v1/messages/batches &middot; accessed <strong>only</strong> from <code>llm_client.py</code></div>
+        </div>
+        <div class="card accent-coral" style="min-width:260px; flex:1">
+          <div class="title">Registered AI services under test</div>
+          <div class="sub">Each row in the <code>services</code> table &middot; SSRF-validated endpoint_url at register / update / probe / tick</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- END-TO-END FLOW -->
+  <div class="sect-h">
+    <div class="bar"></div>
+    <h2>End-to-End Flow &mdash; &ldquo;Run an evaluation&rdquo;</h2>
+    <span class="kicker">4 lanes, 1 audit chain, 4 Claude calls</span>
+  </div>
+  <div class="flow">
+    <div class="step" data-step="1">
+      <h3>Click &amp; dispatch</h3>
+      <p>React fires <code>POST /api/v1/evaluations/run</code>. Axios attaches the JWT; FastAPI middleware verifies it, re-fetches the user&rsquo;s role, enforces <strong>maintainer+</strong>, and emits <code>eval_run_started</code> to the audit ledger.</p>
+    </div>
+    <div class="step" data-step="2">
+      <h3>Load &amp; gate</h3>
+      <p><code>eval_runner.py</code> loads <code>EvalTestCase</code> rows for the service. The <strong>sensitivity gate</strong> fires: confidential services require an explicit admin <code>allow_confidential=true</code> override, itself audited.</p>
+    </div>
+    <div class="step" data-step="3">
+      <h3>Actor &rarr; Judges</h3>
+      <p>Per test case: <strong>Sonnet 4.6</strong> generates the answer through the 6-stage pipeline. Then <strong>Haiku 4.5</strong> runs <code>score_factuality</code> and <code>detect_hallucination</code>. Each call books its own cost at the correct per-model rate.</p>
+    </div>
+    <div class="step" data-step="4">
+      <h3>Aggregate &amp; alert</h3>
+      <p><code>EvalRun</code> persists with <code>judge_model</code> stamped. Split-half drift math runs; if the recent window is &gt;15 points below baseline, an <code>Alert</code> row is created with severity Critical and <code>drift_detected</code> is appended to the chain.</p>
+    </div>
+  </div>
+
+  <!-- CROSS-CUTTING CONCERNS -->
+  <div class="sect-h">
+    <div class="bar" style="background:var(--teal)"></div>
+    <h2>Cross-Cutting Concerns</h2>
+    <span class="kicker">Applied at every layer &middot; enforced by construction</span>
+  </div>
+  <div class="cross">
+    <div class="concern c-auth">
+      <h4>Auth</h4>
+      <p>JWT at middleware. bcrypt in <code>auth.py</code>. <code>LoginAttempt</code> throttles after 5 failures per 15 min.</p>
+    </div>
+    <div class="concern c-rbac">
+      <h4>RBAC</h4>
+      <p><code>Depends(require_role)</code> per route. Roles re-fetched every request. 403s audited as <code>role_denied</code>.</p>
+    </div>
+    <div class="concern c-audit">
+      <h4>Audit</h4>
+      <p><code>middleware/audit.py</code> &mdash; SHA-256 hash chain under <code>threading.Lock</code>. SQLite triggers block app-path UPDATE/DELETE.</p>
+    </div>
+    <div class="concern c-ssrf">
+      <h4>SSRF</h4>
+      <p><code>url_validator.py</code> runs at 4 points: register, update, test probe, scheduled tick. DNS rebinding defeated.</p>
+    </div>
+    <div class="concern c-safety">
+      <h4>Safety</h4>
+      <p>15 regex tripwires + independent <strong>Haiku classifier</strong>. Fail-open. Risk = <code>max(regex, classifier)</code>.</p>
+    </div>
+    <div class="concern c-budget">
+      <h4>Budget</h4>
+      <p>Atomic check-and-reserve under <code>_BUDGET_LOCK</code>. $5 / day, $25 / month caps. Sized for 4 calls/request.</p>
+    </div>
+    <div class="concern c-hitl">
+      <h4>HITL</h4>
+      <p><code>AILlmDraft</code> + <code>draft_service.py</code>. 20-char reviewer note at 3 layers. Idempotent approval.</p>
+    </div>
+    <div class="concern c-drift">
+      <h4>Drift</h4>
+      <p>Split-half: recent window vs. historical baseline. Absolute floor at Quality&nbsp;&lt;&nbsp;75. Strict judge parser excludes refusals.</p>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend" style="margin-top:30px">
+    <div class="legend-item"><span class="legend-dot" style="background:var(--navy)"></span>Users &amp; Application</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span>Presentation</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--teal)"></span>Gateway / Safety</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--gold)"></span>AI Pipeline</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>Data / Scheduler</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--coral)"></span>External</div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <div><strong>AI Health Check</strong> &middot; Centralized AI Operations Control Room</div>
+    <div>Two-tier Claude &middot; 158 tests &middot; 78% coverage &middot; one audit chain</div>
+  </div>
+</div>
+</body>
+</html>

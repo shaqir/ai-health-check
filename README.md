@@ -41,12 +41,12 @@ AI Health Check is an **AI Operations Control Room** that answers all four quest
 
 Every time the app talks to the AI model, it goes through this pipeline:
 
-1. **Scan the input** -- Check for prompt injection attempts, personal information (emails, phone numbers, SSNs), toxicity (violence, bias, illegal content), and length limits
+1. **Scan the input (two-layer)** -- Regex tripwire for known injection patterns, PII (emails, phone numbers, SSNs), and length limits, plus a Haiku-based LLM classifier that catches paraphrased / novel injection attempts. Fail-open: if the Haiku layer errors, regex stays authoritative.
 2. **Check the budget** -- Block the call if daily ($5) or monthly ($25) spend limits are reached
-3. **Check rate limits** -- Throttle if the user exceeds 5 calls/minute or the system exceeds 10/minute
-4. **Call the model** -- If all checks pass, send the request. If it fails, retry up to 2 times with backoff
+3. **Check rate limits** -- Throttle if the user exceeds 40 calls/minute or the system exceeds 60/minute (sized for the two-tier architecture's ~4 calls per user request)
+4. **Call the model** -- Sonnet for actor + synthesis tasks; Haiku for the judges that score factuality and hallucination. If it fails, retry up to 2 times with backoff
 5. **Scan the output** -- Check the AI's response for personal information before showing it to the user
-6. **Log everything** -- Record tokens, cost, latency, and any safety flags
+6. **Log everything** -- Record tokens, cost, latency, model used, and any safety flags (per-model cost accounting keeps Haiku vs Sonnet rows priced correctly)
 
 ## Tech Stack
 
@@ -55,8 +55,9 @@ Every time the app talks to the AI model, it goes through this pipeline:
 | Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts |
 | Backend | FastAPI, Python 3.11+, SQLAlchemy |
 | Database | SQLite |
-| LLM | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) |
-| Testing | Pytest (123 tests, ~71% coverage) |
+| LLM (actor) | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) — services under test + synthesis tasks |
+| LLM (judge + safety) | Anthropic Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) — factuality, hallucination, LLM-based prompt-injection detector |
+| Testing | Pytest (158 tests, ~78% coverage) |
 
 ## Quick Start
 

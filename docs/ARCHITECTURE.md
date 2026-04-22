@@ -21,7 +21,9 @@ FastAPI Backend (7 routers, 47 endpoints)
     |
     |--- SQLite (SQLAlchemy ORM, 13 models, Alembic migrations)
     |
-    |--- Anthropic API (Claude Sonnet 4.6)
+    |--- Anthropic API — two-tier:
+    |       Sonnet 4.6  (actor: services under test + synthesis tasks)
+    |       Haiku 4.5   (judges + injection detector)
     |        ^
     |        |-- [1] Input safety scan
     |        |-- [2] Budget check
@@ -88,22 +90,42 @@ Compliance was split into three cohesive files mounted under the same
 
 ## 4. LLM Client Pipeline
 
-All Anthropic API calls are centralized in `llm_client.py`. The 7 public functions each delegate to `_make_api_call`.
+All Anthropic API calls are centralized in `llm_client.py`. Two-tier model architecture:
 
-### `_make_api_call` Flow (6 stages)
+- **Actor — `settings.llm_model` (Sonnet 4.6 default):** the service under test and every synthesis task (incident summaries, dashboard insights, compliance reports).
+- **Judge — `settings.judge_model` (Haiku 4.5 default):** `score_factuality`, `detect_hallucination`. Different size/training emphasis from the actor narrows the "model scoring itself" correlation.
+- **Injection detector — `settings.injection_model` (Haiku 4.5 default):** `detect_injection`, an LLM-based prompt-injection classifier run on every input as a second layer over the regex tripwire in `safety.py`. Fail-open on classifier outage — regex stays authoritative.
+
+### `_make_api_call` vs `_make_api_call_core`
+
+The wrapper runs the input safety scan (which itself calls `detect_injection`); the core skips it. `detect_injection` uses `_make_api_call_core` directly because its own prompt is system-controlled — recursing back through `scan_input` would loop forever.
+
+### Flow through `_make_api_call` (6 stages)
 
 ```
-[1] Input Safety Scan        -> scan_input() from safety.py. Raises PromptSafetyError (422) if risk >= 80.
+[1] Input Safety Scan        -> scan_input() from safety.py: regex tripwire + Haiku LLM classifier
+                                (detect_injection). Fail-open on classifier errors. Raises
+                                PromptSafetyError (422) if combined risk >= 80.
 [2] Atomic check + reserve   -> _check_budget() AND a reservation INSERT into APIUsageLog (status='reserved',
-                                worst-case cost) happen under _BUDGET_LOCK so concurrent callers cannot all
-                                race past the limit. Raises BudgetExceededError (402/429) on over-limit.
+                                worst-case cost per-model) happen under _BUDGET_LOCK so concurrent callers
+                                cannot race past the limit. Raises BudgetExceededError (402/429).
 [3] API Call with Retry      -> client.messages.create() with exponential backoff. Lock released before
                                 the call so slow requests don't block other evaluators. 2 retries.
 [4] Output Safety Scan       -> scan_output() checks response for PII leakage and refusal patterns.
-[5] Finalize reservation     -> Update the reserved row with real tokens, cost, latency, status
+[5] Finalize reservation     -> Update the reserved row with real tokens, cost, latency, status. Cost
+                                is computed from a per-model `_PRICING` dict so Haiku vs Sonnet rows
+                                are priced correctly. Statuses:
                                 (success | error_timeout | error_rate_limit | error_server | error_auth |
-                                 error_bad_request | error_unknown).
+                                 error_bad_request | error_unknown | blocked_safety).
 ```
+
+### Per-model `_PRICING`
+
+| Model | Input ($/M tokens) | Output ($/M tokens) | Used for |
+|-------|-------------------|---------------------|----------|
+| `claude-sonnet-4-6-20250415` | 3.00 | 15.00 | Actor, synthesis |
+| `claude-haiku-4-5-20251001`  | 1.00 |  5.00 | Judges, injection detector |
+| unknown model | 3.00 (Sonnet fallback, warns once) | 15.00 | Future model additions |
 
 ### LLM Function Signatures
 
@@ -116,6 +138,7 @@ All Anthropic API calls are centralized in `llm_client.py`. The 7 public functio
 | `generate_dashboard_insight(metrics)` | `generate_dashboard_insight` | M2 | 1024 | Summarize platform health + action items |
 | `generate_compliance_summary(audit_data, incidents_data, drift_data)` | `generate_compliance_summary` | M4 | 1024 | Generate governance compliance report |
 | `detect_hallucination(expected, actual)` | `detect_hallucination` | M2 | 10 | LLM-as-judge hallucination score 0-100, runs on factuality eval cases. Returns `None` on judge refusal — never misread as 100 (severe hallucination) |
+| `detect_injection(prompt_text)` | `detect_injection` | safety | 120 | Haiku-based prompt-injection classifier. Runs on **every** input as a second layer over the regex tripwire in `safety.py::scan_input`. Uses `_make_api_call_core` (not the wrapper) to avoid recursing through `scan_input`. Fail-open — classifier outage returns `{injection: False, confidence: 0, reason: "classifier_unavailable"}` so the regex layer stays authoritative |
 
 Full prompt templates are documented in [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md).
 
@@ -129,7 +152,7 @@ This is the canonical model inventory. All models are defined in `backend/app/mo
 | `AIService` | `ai_services` | Service registry: endpoint URLs (SSRF-validated), owner, model tags, environment, sensitivity label |
 | `ConnectionLog` | `connection_logs` | Health check history per service: latency, status, response snippet |
 | `EvalTestCase` | `eval_test_cases` | Evaluation dataset: input prompts, expected outputs, categories |
-| `EvalRun` | `eval_runs` | Evaluation execution records: aggregate scores, drift status, run type |
+| `EvalRun` | `eval_runs` | Evaluation execution records: aggregate scores, drift status, run type, `judge_model` (which model produced the scores — traces each run back to its judge for audit) |
 | `EvalResult` | `eval_results` | Per-test-case results: individual scores, variance, latency, drift tracking |
 | `Incident` | `incidents` | Incident records: severity, status, symptoms, checklist, LLM summary draft/approved, `reviewer_note` (required on approve), `approved_at` timestamp |
 | `MaintenancePlan` | `maintenance_plans` | Maintenance actions: rollback plan, validation steps, approval status |
@@ -273,7 +296,9 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 | Setting | Default | Category |
 |---------|---------|----------|
 | `anthropic_api_key` | (required) | LLM |
-| `llm_model` | `claude-sonnet-4-6` | LLM |
+| `llm_model` | `claude-sonnet-4-6-20250415` | LLM — actor / synthesis |
+| `judge_model` | `claude-haiku-4-5-20251001` | LLM — factuality + hallucination judge |
+| `injection_model` | `claude-haiku-4-5-20251001` | LLM — prompt-injection classifier |
 | `llm_max_tokens` | 1024 | LLM |
 | `llm_timeout_seconds` | 30 | LLM |
 | `database_url` | `sqlite:///./aiops.db` | Database |
@@ -288,8 +313,8 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 | `health_check_schedule_minutes` | 5 | Scheduling |
 | `api_daily_budget` | 5.0 | Budget |
 | `api_monthly_budget` | 25.0 | Budget |
-| `api_max_calls_per_minute` | 30 | Rate Limiting |
-| `api_max_calls_per_user_per_minute` | 20 | Rate Limiting |
+| `api_max_calls_per_minute` | 60 | Rate Limiting (bumped from 30 when two-tier landed — 4 calls/request instead of 3) |
+| `api_max_calls_per_user_per_minute` | 40 | Rate Limiting (bumped from 20 for the same reason) |
 | `app_name` | `AI Health Check` | Application |
 | `debug` | `true` | Application |
 | `cors_origins` | `http://localhost:5173,http://localhost:3000` | Application |

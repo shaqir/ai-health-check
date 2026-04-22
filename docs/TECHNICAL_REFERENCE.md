@@ -62,10 +62,11 @@ single schema, a single audit chain, and a single human-in-the-loop
 rather than production scale.
 
 The system comprises a FastAPI backend, a React 18 frontend, a SQLite
-database, a single-pipeline integration with Anthropic Claude Sonnet 4.6,
-123 automated tests with 71 % coverage, and 15 maintained documentation
-files covering architecture, risks, methodology, and operational
-runbooks.
+database, a two-tier Anthropic integration (Claude Sonnet 4.6 as actor,
+Claude Haiku 4.5 as judge + prompt-injection detector, both via the same
+`_make_api_call` pipeline), 158 automated tests with 78 % coverage, and
+15 maintained documentation files covering architecture, risks,
+methodology, and operational runbooks.
 
 ---
 
@@ -181,7 +182,8 @@ involves a human who signs off.
 | Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts 2.12 | Single-file build, tree-shakable, fast dev feedback |
 | Backend | FastAPI, Pydantic, SQLAlchemy 2.0, Alembic (scaffolded) | Typed request validation, auto-OpenAPI docs, dialect-portable ORM |
 | Database | SQLite (file-based) | Zero-config for demo scope; migration path to Postgres documented |
-| LLM | Anthropic Claude Sonnet 4.6 via `anthropic>=0.49.0` SDK | Single-vendor for this project; swap path is one file |
+| LLM (actor) | Anthropic Claude Sonnet 4.6 via `anthropic>=0.49.0` SDK | Service-under-test model + synthesis tasks (incident summaries, dashboard insights, compliance reports) |
+| LLM (judge + safety) | Anthropic Claude Haiku 4.5 via the same SDK | Factuality judge, hallucination detector, prompt-injection classifier. Cheaper/faster; different size/training emphasis from the actor partially breaks the "model scoring itself" correlation |
 | Auth | JWT (HS256), bcrypt password hashing | Stateless token, industry-standard hashing |
 | Background jobs | APScheduler | Lightweight, in-process, toggleable for demos |
 | Testing | pytest, pytest-asyncio, pytest-cov | 123 tests, 71 % coverage, 65 % floor |
@@ -211,7 +213,9 @@ involves a human who signs off.
                     │
 ┌───────────────────▼───────────────────────────┐
 │         External Dependencies                 │
-│  Anthropic API (Claude Sonnet 4.6)            │
+│  Anthropic API — two-tier:                    │
+│    Sonnet 4.6 (actor + synthesis)             │
+│    Haiku 4.5  (judges + injection detector)   │
 │  APScheduler job loop                         │
 └───────────────────────────────────────────────┘
 ```
@@ -1237,8 +1241,9 @@ strong default.
    router imports the Anthropic SDK directly.
 5. **Tech stack justification (45 sec).** React/Vite for fast dev
    feedback; FastAPI for typed validation; SQLite for zero-config
-   (migration path to Postgres documented); Anthropic Claude Sonnet
-   4.6 via a single pipeline so vendor-swap is one file.
+   (migration path to Postgres documented); Anthropic two-tier
+   (Sonnet 4.6 actor + Haiku 4.5 judges / injection detector) via a
+   single pipeline so vendor-swap is one file.
 6. **Demo data readiness (30 sec).** Fresh seed includes 15 eval runs
    with a deliberate drift scenario visible on first login — today's
    dashboard proves itself before we touch anything.

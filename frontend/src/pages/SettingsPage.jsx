@@ -4,7 +4,7 @@ import {
   Shield, BarChart3, Ban, Cpu, LineChart as LineChartIcon,
   Regex, Bot, UserX, AlertOctagon, Maximize2, FileWarning,
   Clock, KeyRound, ServerCrash, FileX, HelpCircle, TimerReset,
-  Lock, Coins, Hash
+  Lock, Coins, Hash, Network, RefreshCw,
 } from 'lucide-react';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -16,6 +16,9 @@ import StatusBadge from '../components/common/StatusBadge';
 import ModelBadge from '../components/common/ModelBadge';
 import Modal from '../components/common/Modal';
 import { InfoTip } from '../components/common/Tooltip';
+import ActivityRow from '../components/trace/ActivityRow';
+import CallDetailModal from '../components/trace/CallDetailModal';
+import { useAuth } from '../context/AuthContext';
 
 // Explainer content for each safety flag the scanner can emit. Keyed by the
 // literal flag string the backend puts into `flag_breakdown`. Every field is
@@ -392,9 +395,27 @@ const SECTIONS = [
   { id: 'model', label: 'Model & Pricing', icon: Cpu },
   { id: 'evaluation', label: 'Evaluation', icon: Activity },
   { id: 'limits', label: 'API Limits', icon: Lock },
+  { id: 'trace', label: 'Call Trace', icon: Network },
   { id: 'usage', label: 'API Usage', icon: Zap },
   { id: 'safety', label: 'Safety', icon: Shield },
   { id: 'performance', label: 'Performance', icon: LineChartIcon },
+];
+
+const FAMILY_OPTIONS = [
+  { value: 'all',               label: 'All families' },
+  { value: 'connection_test',   label: 'Connection test' },
+  { value: 'evaluation',        label: 'Evaluation run' },
+  { value: 'incident_triage',   label: 'Incident triage' },
+  { value: 'dashboard_insight', label: 'Dashboard insight' },
+  { value: 'compliance_report', label: 'Compliance report' },
+  { value: 'other',             label: 'Other' },
+];
+
+const SINCE_OPTIONS = [
+  { value: 60,    label: 'Last hour' },
+  { value: 360,   label: 'Last 6 hours' },
+  { value: 1440,  label: 'Last 24 hours' },
+  { value: 10080, label: 'Last 7 days' },
 ];
 
 export default function SettingsPage() {
@@ -408,6 +429,18 @@ export default function SettingsPage() {
   // configured via env vars, surfaced here so reviewers can see what the
   // gatekeeper is actually enforcing.
   const [limits, setLimits] = useState(null);
+  // Call Trace state. Fetched lazily when the Trace section is active
+  // so we don't hit /trace/activities when the user is looking at Model
+  // & Pricing. Filters live here, not in URL, so sidebar nav doesn't
+  // reset them.
+  const [traceActivities, setTraceActivities] = useState(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceError, setTraceError] = useState(null);
+  const [traceFamily, setTraceFamily] = useState('all');
+  const [traceSince, setTraceSince] = useState(1440);
+  const [selectedCall, setSelectedCall] = useState(null);
+  const { user } = useAuth();
+  const canDrillDown = user?.role === 'admin' || user?.role === 'maintainer';
   // Selected flag for the explainer modal — `{name, count}` or null.
   const [flagDetail, setFlagDetail] = useState(null);
   // Selected API error type for its explainer modal — `{type, count}` or null.
@@ -465,6 +498,27 @@ export default function SettingsPage() {
       setLoading(false);
     }
   };
+
+  const fetchTrace = async () => {
+    setTraceLoading(true);
+    setTraceError(null);
+    try {
+      const params = new URLSearchParams({ since_minutes: String(traceSince), limit: '25' });
+      if (traceFamily !== 'all') params.set('family', traceFamily);
+      const res = await api.get(`/settings/trace/activities?${params.toString()}`);
+      setTraceActivities(res.data);
+    } catch (err) {
+      setTraceError(err?.response?.data?.detail || err?.message || 'Failed to load trace');
+    } finally {
+      setTraceLoading(false);
+    }
+  };
+
+  // Lazy-load trace when the user enters that section, and whenever filters change.
+  useEffect(() => {
+    if (active === 'trace') fetchTrace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, traceFamily, traceSince]);
 
   useEffect(() => {
     fetchAll(true);
@@ -575,6 +629,10 @@ export default function SettingsPage() {
         errorType={errorDetail?.type}
         count={errorDetail?.count}
         onClose={() => setErrorDetail(null)}
+      />
+      <CallDetailModal
+        call={selectedCall}
+        onClose={() => setSelectedCall(null)}
       />
       <PageHeader title="API & Settings" description="Model configuration, cost monitoring, safety scanner, and performance.">
         <div
@@ -795,6 +853,90 @@ export default function SettingsPage() {
                     tooltip="Claude calls fired by your user account in the last 60 seconds. Compared against the per-user rate limit."
                   />
                 </div>
+              </Card>
+            </>
+          )}
+
+          {active === 'trace' && (
+            <>
+              <Card icon={Network} title="Call Trace" badge="Grouped by user action">
+                <p className="text-[12px] text-text-muted mb-4 leading-relaxed">
+                  Every user action in this app shares a single correlation ID.
+                  Each row below is one action — click to drill down and see
+                  every Claude call it fired, including the exact prompt and
+                  response. Background scheduler activity is excluded (it isn't
+                  a user action).
+                </p>
+
+                <div className="flex items-center gap-2 flex-wrap mb-4">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] text-text-subtle">Family</label>
+                    <select
+                      value={traceFamily}
+                      onChange={(e) => setTraceFamily(e.target.value)}
+                      className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
+                    >
+                      {FAMILY_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] text-text-subtle">Window</label>
+                    <select
+                      value={traceSince}
+                      onChange={(e) => setTraceSince(Number(e.target.value))}
+                      className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
+                    >
+                      {SINCE_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchTrace}
+                    className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-accent bg-surface-elevated rounded-pill px-2.5 py-1 border border-hairline"
+                  >
+                    <RefreshCw size={12} className={traceLoading ? 'animate-spin' : ''} />
+                    Refresh
+                  </button>
+                </div>
+
+                {traceError && (
+                  <ErrorState title="Failed to load trace" message={traceError} />
+                )}
+
+                {traceLoading && !traceActivities && (
+                  <LoadingSkeleton rows={3} />
+                )}
+
+                {traceActivities && traceActivities.activities.length === 0 && !traceLoading && (
+                  <EmptyState
+                    icon={Network}
+                    title="No traced activities"
+                    description="User actions appear here once the app fires Claude calls with a correlation id. Try clicking Ping on a service or running an evaluation."
+                  />
+                )}
+
+                {traceActivities && traceActivities.activities.length > 0 && (
+                  <>
+                    <div className="space-y-2">
+                      {traceActivities.activities.map((a) => (
+                        <ActivityRow
+                          key={a.correlation_id}
+                          activity={a}
+                          onCallClick={(c) => setSelectedCall(c)}
+                          canDrillDown={canDrillDown}
+                        />
+                      ))}
+                    </div>
+                    <p className="mt-3 text-[11px] text-text-subtle">
+                      Showing {traceActivities.activities.length} of {traceActivities.total} activities.
+                      {!canDrillDown && ' Drill-down (prompts + responses) is admin/maintainer only.'}
+                    </p>
+                  </>
+                )}
               </Card>
             </>
           )}

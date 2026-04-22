@@ -23,6 +23,7 @@
 | R15 | Compliance Evidence Silently Incomplete | Medium | Critical | Implemented |
 | R16 | LLM Judge Refusal Misread as Score | Medium | Medium | Implemented |
 | R17 | Rubber-Stamp Approval of LLM Drafts | Medium | High | Implemented |
+| R18 | Unredacted prompt/response text in APIUsageLog | Medium | High | Partial |
 
 ---
 
@@ -96,7 +97,7 @@ Automated evaluations or heavy usage exceeds budget.
 - `_check_budget()` in `llm_client.py` enforces daily ($5) and monthly ($25) limits before every call
 - Per-call cost estimation using `_estimate_cost()` at Sonnet 4.6 pricing ($3/M input, $15/M output)
 - Every call logged to `api_usage_log` with `estimated_cost_usd`; `BudgetExceededError` raised at HTTP 402
-- Rate limits: 10 calls/min global, 5 calls/min per-user
+- Rate limits: 30 calls/min global, 20 calls/min per-user (enforced inside `_BUDGET_LOCK` with atomic reservation — see R14)
 
 Residual: Token-based estimation is approximate; actual Anthropic billing may differ.
 
@@ -238,3 +239,16 @@ A maintainer with a malicious agenda writes incident symptoms containing a promp
 - Frontend `IncidentDetailPage.handleApproveSummary` prompts for the note; backend rejects short notes even if the frontend is bypassed.
 
 Residual: A determined admin who writes "looks fine lgtm approved moving on" passes the length check. The note's existence is a deterrent and an audit artifact, not a guarantee of careful review. Four-eyes approval (requires a second admin) would be the next step; tracked as a P2 item.
+
+---
+
+### R18: Unredacted prompt/response text in APIUsageLog
+
+`APIUsageLog.prompt_text` and `APIUsageLog.response_text` store up to 2000 chars of the exact Claude input/output on every call. A user prompt containing PII is persisted verbatim even when `scan_input` flagged `pii_detected`. The same text surfaces in the Settings → Call Trace UI and in DB backups.
+
+- Row is populated by `_finalize_reservation()` in `llm_client.py` on every call (success or error).
+- Truncation at `[:2000]` is silent — no column indicates truncation.
+- `safety_flags` column records *that* PII was detected but not *where* in the text.
+- Mitigated partially by `scan_input`'s pre-call PII detection, which surfaces the flag but does not redact the persisted text.
+
+Residual: Redaction before DB write is a P1 item (Batch B). For demo scope, the local SQLite DB is single-tenant and not shared; in production compliance this is a GDPR blocker and must be redacted at log time using the same regex patterns as `safety.py`. Same patterns could truncate / mask the text before the `_finalize_reservation` write, preserving the flag + risk score without keeping the raw PII.

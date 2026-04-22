@@ -4,7 +4,7 @@ Dashboard router for Module 2: metrics aggregation, trends, and AI-powered insig
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -833,7 +833,7 @@ def get_call_detail(
     """Get full trace of an LLM call including prompt and response text."""
     call = db.query(APIUsageLog).filter(APIUsageLog.id == call_id).first()
     if not call:
-        return {"detail": "Call not found"}
+        raise HTTPException(status_code=404, detail="Call not found")
 
     service = db.query(AIService).filter(AIService.id == call.service_id).first() if call.service_id else None
 
@@ -927,7 +927,7 @@ def acknowledge_alert(
     """Acknowledge an alert (dismiss it)."""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
-        return {"detail": "Alert not found"}
+        raise HTTPException(status_code=404, detail="Alert not found")
 
     alert.acknowledged = True
     alert.acknowledged_by = current_user.id

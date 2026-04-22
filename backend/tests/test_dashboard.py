@@ -201,3 +201,26 @@ def test_error_rate_uses_drift_flags_not_connection_failures(client, db, admin_t
     assert 33.0 <= data["error_rate_pct"] <= 34.0, (
         f"Expected ~33.3% (1 drift / 3 runs), got {data['error_rate_pct']}%"
     )
+
+
+# ── Not-found contract ──────────────────────────────────────────────
+# These endpoints used to return HTTP 200 with {"detail": "... not
+# found"} so clients couldn't distinguish a missing resource from
+# success. Both now raise HTTPException(404).
+
+def test_api_call_trace_missing_id_returns_404(client, admin_token):
+    res = client.get(
+        "/api/v1/dashboard/api-calls/999999",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Call not found"
+
+
+def test_acknowledge_missing_alert_returns_404(client, admin_token):
+    res = client.post(
+        "/api/v1/dashboard/alerts/999999/acknowledge",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Alert not found"

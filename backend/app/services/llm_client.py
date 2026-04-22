@@ -604,6 +604,8 @@ ROOT CAUSES:
 2. [cause 2]
 3. [cause 3]"""
 
+    from app.services.safety import PromptSafetyError
+
     try:
         response, _ = _make_api_call(
             caller="generate_summary",
@@ -623,7 +625,16 @@ ROOT CAUSES:
             root_causes_draft = parts[1].strip()
 
         return {"summary_draft": summary_draft, "root_causes_draft": root_causes_draft}
+    except (CallLimitExceeded, PromptSafetyError):
+        # Structured errors must surface to the UI as HTTP 402/413/422/
+        # 429 — never as approvable draft content. The global FastAPI
+        # handlers in main.py do the status mapping.
+        raise
     except Exception as e:
+        # Transient Anthropic failures (post-retry 5xx, network) fall
+        # back to the draft-with-error UX so a flaky API doesn't wipe
+        # the HITL flow. The approver will still see plainly that the
+        # draft is an error message.
         return {"summary_draft": f"Error generating summary: {str(e)}", "root_causes_draft": ""}
 
 
@@ -743,6 +754,8 @@ ACTION ITEMS:
 2. [item 2]
 3. [item 3]"""
 
+    from app.services.safety import PromptSafetyError
+
     try:
         response, _ = _make_api_call(
             caller="generate_dashboard_insight",
@@ -753,7 +766,12 @@ ACTION ITEMS:
         )
         text = response.content[0].text if response.content else ""
         return {"insight_text": text}
+    except (CallLimitExceeded, PromptSafetyError):
+        # Structured errors propagate to the global handler — never
+        # end up as approvable draft content.
+        raise
     except Exception as e:
+        # Transient API failures keep the HITL fallback UX.
         return {"insight_text": f"Error generating insight: {str(e)}"}
 
 
@@ -788,6 +806,8 @@ Write a professional compliance report with these sections:
 
 Keep the report under 500 words."""
 
+    from app.services.safety import PromptSafetyError
+
     try:
         response, _ = _make_api_call(
             caller="generate_compliance_summary",
@@ -798,7 +818,12 @@ Keep the report under 500 words."""
         )
         text = response.content[0].text if response.content else ""
         return {"report_text": text}
+    except (CallLimitExceeded, PromptSafetyError):
+        # Structured errors propagate to the global handler — never
+        # end up as approvable draft content.
+        raise
     except Exception as e:
+        # Transient API failures keep the HITL fallback UX.
         return {"report_text": f"Error generating compliance report: {str(e)}"}
 
 

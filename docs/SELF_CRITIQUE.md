@@ -298,6 +298,61 @@ the judge would expose this. Not in scope for the capstone."*
 
 ---
 
+## 9. Seeded-data changes don't auto-reconcile with live databases
+
+**What we claim.** The project is reproducible: `python -m app.seed`
+boots a demo-ready DB, and `backend/.env` governs configurable values
+like user passwords (commit `df4f9d0`), model IDs, budget caps.
+
+**What it actually is.** `seed.py` is guarded by
+`if db.query(User).first(): return "already seeded, skipping"`. So when
+we change the seed's *policy* — e.g., switching password sources from
+hardcoded literals to env-var overrides — the change only affects a
+**freshly created** DB. An existing `aiops.db` keeps the old hashes
+(or old model IDs, or old sensitivity defaults, whatever the previous
+policy produced) forever until someone runs `rm aiops.db && python -m
+app.seed`, which also destroys every incident, audit row, telemetry
+entry, and alert accumulated since day one.
+
+There is no framework here that reconciles the gap between "code knows
+the new policy" and "live data was shaped by the old policy." A
+developer who pulls the new code gets surprised when the old demo
+passwords still work on their existing DB.
+
+**What the professor will ask.**
+- What happens to an existing deployment when you change seed logic?
+- Where is the migration story? Alembic is scaffolded — do you use it
+  for data migrations?
+- If I changed the password policy today, how would production databases
+  stay in sync?
+
+**Honest answer.** They don't — we handle it case-by-case with
+targeted one-shots. For the specific case of password rotation after
+the env-override refactor, we shipped
+`backend/scripts/rotate_seed_passwords.py` — reads the SEED_*_PASSWORD
+env vars, updates existing user hashes, appends a `rotate_password` row
+to the tamper-evident audit log. Six tests cover rotate / skip /
+missing / audit-trail paths. But it's ONE script for ONE policy change.
+Every future seeded-data policy change will need its own migration, and
+there's no lint / CI that enforces the discipline — it relies on the
+contributor remembering to ship a reconciliation script.
+
+Alembic is present (`backend/alembic/versions/` has three schema
+migrations), so the infrastructure for data migrations exists. What's
+missing is the *discipline* — the convention that every PR touching
+seed policy ships an accompanying `alembic revision --autogenerate`
+or one-shot script. That's a process change, not a code fix.
+
+**Recovery move for viva.** *"Schema migrations are automated via
+Alembic; seed-policy migrations aren't — they're handled as targeted
+one-shots like `rotate_seed_passwords.py`. The general-case fix is
+Alembic data migrations (or a custom 'seed version' column) on every
+seed-logic change, but we haven't adopted that discipline yet. The
+current rotation script is the minimum viable answer for the one case
+that actually bit us."*
+
+---
+
 ## Highest-leverage move before the viva
 
 Read the README's "Key Features" list and the demo walkthrough's

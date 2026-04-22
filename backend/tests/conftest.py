@@ -3,6 +3,18 @@ Test configuration — shared fixtures for all backend tests.
 Uses an in-memory SQLite database so tests don't touch the real DB.
 """
 
+# Pin a strong SECRET_KEY BEFORE any app import so the startup
+# assertion in main.py accepts the test run regardless of what the
+# developer's local .env holds. setdefault so CI-provided SECRET_KEY
+# still wins. Must live above the `from app.main import app` line —
+# Pydantic BaseSettings reads env vars at Settings() construction,
+# which is triggered by that import.
+import os
+os.environ.setdefault(
+    "SECRET_KEY",
+    "test-suite-secret-key-at-least-thirty-two-characters-long",
+)
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

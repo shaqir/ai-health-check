@@ -82,7 +82,7 @@
 
 **Trigger:** User receives HTTP 429 indicating rate limit exceeded.
 
-**Check:** Determine if global (10 calls/min) or per-user (5 calls/min) | Review `api_usage_log` for the past minute.
+**Check:** Determine if global (30 calls/min) or per-user (20 calls/min) | Review `api_usage_log` for the past minute.
 
 **Fix:** Advise user to space out operations | Check APScheduler intervals for overlapping jobs | Adjust `API_MAX_CALLS_PER_MINUTE` or `API_MAX_CALLS_PER_USER_PER_MINUTE` in `.env`.
 

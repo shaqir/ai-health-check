@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert, Filter, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import DataTable from '../components/common/DataTable';
 import EmptyState from '../components/common/EmptyState';
@@ -65,56 +66,6 @@ function categorize(rawAction) {
 
 function titleCase(raw) {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-// Axios error-detail extractor. When `responseType: 'blob'` is set on a
-// request (we need this for PDF), axios returns *even error bodies* as a
-// Blob — so `err.response.data.detail` is undefined and the fallback shows
-// the raw "Request failed with status 403" instead of the server's message.
-// Read the blob as text + JSON.parse to get back to the normal shape.
-async function extractErrorDetail(err, fallback = 'Request failed') {
-  const data = err?.response?.data;
-  const status = err?.response?.status;
-
-  const formatDetail = (detail) => {
-    if (detail == null) return null;
-    if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) {
-      // Pydantic validation errors: [{loc:[...], msg:"...", type:"..."}, ...]
-      const lines = detail.slice(0, 4).map((d) => {
-        const field = Array.isArray(d?.loc) ? d.loc.slice(1).join('.') || d.loc.join('.') : 'input';
-        const msg = d?.msg || d?.type || 'invalid value';
-        return `${field}: ${msg}`;
-      });
-      const extra = detail.length > 4 ? ` (+${detail.length - 4} more)` : '';
-      return `Validation error — ${lines.join('; ')}${extra}`;
-    }
-    if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail);
-    return String(detail);
-  };
-
-  const prefix = status ? `${status} · ` : '';
-
-  if (!data) {
-    return `${err?.code === 'ERR_NETWORK' ? 'Backend unreachable — ' : ''}${err?.message || fallback}`;
-  }
-  if (data instanceof Blob) {
-    try {
-      const text = await data.text();
-      try {
-        const parsed = JSON.parse(text);
-        const detail = formatDetail(parsed.detail);
-        return detail ? `${prefix}${detail}` : text || err?.message || fallback;
-      } catch {
-        return text || err?.message || fallback;
-      }
-    } catch {
-      return err?.message || fallback;
-    }
-  }
-  if (typeof data === 'string') return `${prefix}${data}`;
-  const detail = formatDetail(data.detail);
-  return detail ? `${prefix}${detail}` : (err?.message || fallback);
 }
 
 export default function GovernancePage() {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Play, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import Modal from '../components/common/Modal';
 import ConfirmModal from '../components/common/ConfirmModal';
@@ -67,7 +68,10 @@ export default function EvaluationsPage() {
       setForm({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
       showToast('Test case created', 'success');
       fetchData();
-    } catch (err) { showToast(err.response?.data?.detail || 'Failed to create', 'error'); }
+    } catch (err) {
+      const detail = await extractErrorDetail(err, 'Failed to create test case');
+      showToast(detail, 'error');
+    }
   };
 
   const handleRunEval = async (serviceId) => {
@@ -80,8 +84,9 @@ export default function EvaluationsPage() {
     try {
       const res = await api.get(`/evaluations/cost-preview/${serviceId}`);
       preview = res.data;
-    } catch {
-      showToast('Failed to get cost preview', 'error');
+    } catch (err) {
+      const detail = await extractErrorDetail(err, 'Failed to get cost preview');
+      showToast(detail, 'error');
       return;
     }
 
@@ -106,7 +111,8 @@ export default function EvaluationsPage() {
       fetchData();
       setSelectedDriftService(service.id);
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Evaluation failed', 'error');
+      const detail = await extractErrorDetail(err, 'Evaluation failed');
+      showToast(detail, 'error');
     } finally {
       setRunningService(null);
     }

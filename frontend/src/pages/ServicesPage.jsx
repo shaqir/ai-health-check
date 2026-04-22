@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Wifi, Trash2, Pencil, LayoutGrid, List as ListIcon, Loader2, Server, Search, AlertCircle, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
@@ -10,62 +11,6 @@ import Modal from '../components/common/Modal';
 import ConfirmModal from '../components/common/ConfirmModal';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
-
-// Error-detail extractor for Services page mutations.
-// Handles three shapes FastAPI / axios can return:
-//   1. Blob body (responseType:'blob' requests) → read as text + JSON.parse
-//   2. Plain { detail: "string" } → return the string
-//   3. Pydantic validation { detail: [{loc, msg, type, ...}] } → format each
-//      entry as "<field>: <msg>". This was the bug — before this, the toast
-//      rendered "[object Object]" on any 422.
-async function extractErrorDetail(err, fallback = 'Request failed') {
-  const data = err?.response?.data;
-  const status = err?.response?.status;
-
-  const formatDetail = (detail) => {
-    if (detail == null) return null;
-    if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) {
-      // Pydantic validation errors: [{loc:[...], msg:"Field required", type:"missing"}, ...]
-      const lines = detail.slice(0, 4).map((d) => {
-        const field = Array.isArray(d?.loc) ? d.loc.slice(1).join('.') || d.loc.join('.') : 'input';
-        const msg = d?.msg || d?.type || 'invalid value';
-        return `${field}: ${msg}`;
-      });
-      const extra = detail.length > 4 ? ` (+${detail.length - 4} more)` : '';
-      return `Validation error — ${lines.join('; ')}${extra}`;
-    }
-    // Object — try to stringify something useful
-    if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail);
-    return String(detail);
-  };
-
-  // Status-code prefix for the toast so users see "403 · Role 'viewer' not authorized"
-  // rather than a context-free error string.
-  const prefix = status ? `${status} · ` : '';
-
-  if (!data) {
-    // Common case: axios network error (backend down)
-    return `${err?.code === 'ERR_NETWORK' ? 'Backend unreachable — ' : ''}${err?.message || fallback}`;
-  }
-  if (data instanceof Blob) {
-    try {
-      const text = await data.text();
-      try {
-        const parsed = JSON.parse(text);
-        const detail = formatDetail(parsed.detail);
-        return detail ? `${prefix}${detail}` : text || err?.message || fallback;
-      } catch {
-        return text || err?.message || fallback;
-      }
-    } catch {
-      return err?.message || fallback;
-    }
-  }
-  if (typeof data === 'string') return `${prefix}${data}`;
-  const detail = formatDetail(data.detail);
-  return detail ? `${prefix}${detail}` : (err?.message || fallback);
-}
 
 
 // Translate a raw Anthropic error snippet (the thing llm_client.test_connection

@@ -186,6 +186,23 @@
 
 ---
 
+### S16: Rotate seed user passwords without dropping the DB
+
+**Trigger:** Operator wants to change the password for `admin@aiops.local`, `maintainer@aiops.local`, or `viewer@aiops.local` on a running instance, AND wants to preserve the existing `aiops.db` (incidents, audit log, telemetry, connection logs).
+
+**Check:** Confirm the target user rows exist via `sqlite3 aiops.db "SELECT email FROM users"`. Confirm the desired passwords are set in `backend/.env` as `SEED_ADMIN_PASSWORD` / `SEED_MAINTAINER_PASSWORD` / `SEED_VIEWER_PASSWORD`. Env vars left unset → that role is skipped (password unchanged).
+
+**Fix:** 
+```bash
+cd backend
+python -m scripts.rotate_seed_passwords
+```
+Script updates only the rows whose env var is set, bcrypt-hashes the new password, and appends one `rotate_password` row to `audit_log` per rotation (with `user_id=None` — system action). Output names the rotated / skipped / missing lists so you know exactly what happened.
+
+**Prevent:** `python -m app.seed` only runs on an EMPTY DB (idempotency guard), so changing `seed.py`'s password policy alone doesn't propagate to a populated demo DB. Use this script whenever you change the SEED_*_PASSWORD env vars on an already-seeded instance, OR reset entirely with `rm aiops.db && python -m app.seed` if you also want to discard the rest of the data. See SELF_CRITIQUE §9 for the broader seeded-data-drift discussion.
+
+---
+
 ## Maintenance Schedule
 
 | Frequency | Task |

@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 
-export default function Toast({ message, type = 'info', onClose, duration = 5000 }) {
+// Per-type default auto-dismiss. Errors persist until the user clicks
+// the close button — a 402/429/safety-block message needs to stay long
+// enough to read. Success + info keep the 5s auto-dismiss so happy
+// toasts don't pile up. Callers can still override with an explicit
+// `duration` prop if they want different behaviour.
+const DEFAULT_DURATION_MS = { success: 5000, info: 5000, error: 0 };
+
+export default function Toast({ message, type = 'info', onClose, duration }) {
   const [visible, setVisible] = useState(true);
+  const resolvedDuration = duration ?? DEFAULT_DURATION_MS[type] ?? 5000;
+  const isPersistent = resolvedDuration <= 0;
 
   useEffect(() => {
-    if (duration <= 0) return;
+    if (isPersistent) return;
     const timer = setTimeout(() => {
       setVisible(false);
       setTimeout(onClose, 200);
-    }, duration);
+    }, resolvedDuration);
     return () => clearTimeout(timer);
-  }, [duration, onClose]);
+  }, [resolvedDuration, isPersistent, onClose]);
 
   const config = {
     success: { icon: CheckCircle2, accent: 'bg-status-healthy', iconColor: 'text-status-healthy' },
@@ -20,6 +29,14 @@ export default function Toast({ message, type = 'info', onClose, duration = 5000
   };
 
   const { icon: Icon, accent, iconColor } = config[type] || config.info;
+
+  const handleDismiss = () => { setVisible(false); setTimeout(onClose, 200); };
+
+  // Error close button gets higher contrast + visible hover background
+  // so long error messages never leave the user hunting for an X.
+  const dismissClasses = type === 'error'
+    ? 'shrink-0 p-1.5 -mr-1 -mt-1 rounded-md text-status-failing hover:bg-status-failing/10 focus:outline-none focus:ring-2 focus:ring-status-failing/40 transition-standard'
+    : 'shrink-0 p-1 -mr-0.5 -mt-0.5 rounded-md text-text-subtle hover:text-text hover:bg-hairline/50 focus:outline-none focus:ring-2 focus:ring-hairline transition-standard';
 
   return (
     <div
@@ -32,13 +49,16 @@ export default function Toast({ message, type = 'info', onClose, duration = 5000
       <div className="relative flex items-start gap-3 p-3.5 pl-4">
         <span aria-hidden="true" className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-pill ${accent}`} />
         <Icon size={16} strokeWidth={1.75} className={`shrink-0 mt-0.5 ${iconColor}`} />
-        <p className="text-sm font-medium text-text flex-1">{message}</p>
+        <div className="text-sm font-medium text-text flex-1 max-h-40 overflow-y-auto break-words pr-1">
+          {message}
+        </div>
         <button
-          onClick={() => { setVisible(false); setTimeout(onClose, 200); }}
-          className="p-0.5 text-text-subtle hover:text-text rounded-xs transition-standard"
+          onClick={handleDismiss}
+          className={dismissClasses}
           aria-label="Dismiss notification"
+          title={isPersistent ? 'Dismiss (this notification stays until you close it)' : 'Dismiss'}
         >
-          <X size={14} strokeWidth={1.5} />
+          <X size={type === 'error' ? 16 : 14} strokeWidth={2} />
         </button>
       </div>
     </div>

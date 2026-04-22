@@ -152,6 +152,143 @@ def test_list_eval_runs(client, db, admin_token):
     assert len(res.json()) >= 1
 
 
+def test_get_eval_run_preserves_run_status(client, db, admin_token):
+    """GET /runs/{id} must echo the persisted run_status.
+
+    Before this was guarded, the endpoint constructed EvalRunResponse
+    without passing run_status, so Pydantic's schema default ("complete")
+    was returned for every row — an "incomplete" run (all cases errored
+    or the judge refused every one) silently looked complete.
+    """
+    svc = _create_service(db)
+    # Persist a run with the honest-tri-state INCOMPLETE value.
+    run = EvalRun(
+        service_id=svc.id, quality_score=0.0, drift_flagged=False,
+        run_type="manual", run_status="incomplete",
+        judge_model="claude-haiku-4-5-20251001",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    res = client.get(f"/api/v1/evaluations/runs/{run.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["run_status"] == "incomplete", (
+        f"GET /runs/{{id}} must echo DB run_status; got {body['run_status']!r}"
+    )
+    # Regression guard on the other fields too — we don't want to
+    # accidentally drop anything else from the response.
+    assert body["quality_score"] == 0.0
+    assert body["judge_model"] == "claude-haiku-4-5-20251001"
+
+
+def test_get_eval_run_round_trips_complete_status(client, db, admin_token):
+    """Regression guard the happy path stays unchanged."""
+    svc = _create_service(db)
+    run = EvalRun(
+        service_id=svc.id, quality_score=87.5, drift_flagged=False,
+        run_type="scheduled", run_status="complete",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    res = client.get(f"/api/v1/evaluations/runs/{run.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert res.json()["run_status"] == "complete"
+
+
+# ── Cost preview per-model pricing ─────────────────────────────────
+
+def _create_service_with_model(db, model_name: str, name: str = "Svc"):
+    svc = AIService(
+        name=name, owner="Team", environment=Environment.prod,
+        model_name=model_name, sensitivity_label=SensitivityLabel.internal,
+        endpoint_url="https://example.com",
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+    return svc
+
+
+def _seed_two_factuality_cases(db, service_id: int):
+    db.add_all([
+        EvalTestCase(service_id=service_id, prompt="q1",
+                     expected_output="a1", category="factuality"),
+        EvalTestCase(service_id=service_id, prompt="q2",
+                     expected_output="a2", category="factuality"),
+    ])
+    db.commit()
+
+
+def test_cost_preview_sonnet_uses_sonnet_rates(client, db, admin_token):
+    """Regression guard the Sonnet happy path stays unchanged.
+
+    2 factuality cases → api_calls = test_cases + factuality_count = 4
+    est_input_tokens = 4 * 500 = 2000
+    est_output_tokens = 4 * 200 = 800
+    Sonnet rates: $3/M input, $15/M output
+    Expected: (2000/1e6)*3 + (800/1e6)*15 = 0.006 + 0.012 = 0.018 USD
+    """
+    svc = _create_service_with_model(db, "claude-sonnet-4-6", name="SonnetSvc")
+    _seed_two_factuality_cases(db, svc.id)
+
+    res = client.get(
+        f"/api/v1/evaluations/cost-preview/{svc.id}",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["api_calls"] == 4
+    assert body["estimated_cost_usd"] == 0.018
+
+
+def test_cost_preview_haiku_uses_haiku_rates(client, db, admin_token):
+    """Haiku service must be priced at Haiku's $1/$5, not Sonnet's $3/$15.
+
+    Pre-fix behaviour: used hardcoded Sonnet constants regardless of
+    the service's actual model_name — Haiku services were over-
+    estimated by ~3×.
+
+    Same workload as above (4 api_calls, 2000 input / 800 output
+    tokens) should yield: (2000/1e6)*1 + (800/1e6)*5 = 0.002 + 0.004
+    = 0.006 USD  (exactly 1/3 of the Sonnet cost).
+    """
+    svc = _create_service_with_model(db, "claude-haiku-4-5", name="HaikuSvc")
+    _seed_two_factuality_cases(db, svc.id)
+
+    res = client.get(
+        f"/api/v1/evaluations/cost-preview/{svc.id}",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["api_calls"] == 4
+    assert body["estimated_cost_usd"] == 0.006, (
+        f"Haiku should cost 1/3 of Sonnet; got {body['estimated_cost_usd']} "
+        f"— still using hardcoded Sonnet rates?"
+    )
+
+
+def test_cost_preview_dated_model_id_normalizes_to_same_rate(client, db, admin_token):
+    """A dated snapshot (claude-sonnet-4-6-20250415) must price identically
+    to the undated family id. Pricing lookup uses normalize_model_id
+    which strips the -YYYYMMDD suffix."""
+    svc = _create_service_with_model(
+        db, "claude-sonnet-4-6-20250415", name="DatedSnapshotSvc",
+    )
+    _seed_two_factuality_cases(db, svc.id)
+
+    res = client.get(
+        f"/api/v1/evaluations/cost-preview/{svc.id}",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    assert res.json()["estimated_cost_usd"] == 0.018  # same as undated Sonnet
+
+
 def test_drift_check(client, db, admin_token):
     svc = _create_service(db)
     res = client.get(f"/api/v1/evaluations/drift-check/{svc.id}", headers=auth_header(admin_token))

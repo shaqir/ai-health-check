@@ -303,6 +303,7 @@ def get_eval_run(
         hallucination_score=run.hallucination_score,
         drift_flagged=run.drift_flagged,
         run_type=run.run_type,
+        run_status=run.run_status,
         judge_model=run.judge_model,
         run_at=run.run_at,
         created_at=run.created_at,
@@ -315,7 +316,16 @@ def eval_cost_preview(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Preview the estimated cost and API calls before running an evaluation."""
+    """Preview the estimated cost and API calls before running an evaluation.
+
+    Pricing is looked up per-service-model via `model_catalog.pricing_for`
+    so a Haiku-backed service gets Haiku's $1/$5 rates (not Sonnet's
+    $3/$15 as was hardcoded previously). Unknown models fall back to
+    Sonnet rates — same safe over-estimate rule the runtime cost
+    estimator in llm_client._estimate_cost uses.
+    """
+    service = db.query(AIService).filter(AIService.id == service_id).first()
+
     test_cases = (
         db.query(EvalTestCase)
         .filter(EvalTestCase.service_id == service_id)
@@ -330,7 +340,14 @@ def eval_cost_preview(
 
     est_input_tokens = api_calls * 500
     est_output_tokens = api_calls * 200
-    est_cost = round((est_input_tokens / 1_000_000) * 3.0 + (est_output_tokens / 1_000_000) * 15.0, 6)
+
+    from app.services.model_catalog import pricing_for
+    input_rate, output_rate = pricing_for(service.model_name if service else "")
+    est_cost = round(
+        (est_input_tokens / 1_000_000) * input_rate
+        + (est_output_tokens / 1_000_000) * output_rate,
+        6,
+    )
 
     return {
         "service_id": service_id,

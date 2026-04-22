@@ -183,10 +183,10 @@ involves a human who signs off.
 | Backend | FastAPI, Pydantic, SQLAlchemy 2.0, Alembic (scaffolded) | Typed request validation, auto-OpenAPI docs, dialect-portable ORM |
 | Database | SQLite (file-based) | Zero-config for demo scope; migration path to Postgres documented |
 | LLM (actor) | Anthropic Claude Sonnet 4.6 via `anthropic>=0.49.0` SDK | Service-under-test model + synthesis tasks (incident summaries, dashboard insights, compliance reports) |
-| LLM (judge + safety) | Anthropic Claude Haiku 4.5 via the same SDK | Factuality judge, hallucination detector, prompt-injection classifier. Cheaper/faster; different size/training emphasis from the actor partially breaks the "model scoring itself" correlation |
+| LLM (judge) | Anthropic Claude Haiku 4.5 via the same SDK | Merged factuality + hallucination judge — one structured call per factuality test case (see commit `0fbddac`). Different size/training emphasis from the actor partially breaks the "model scoring itself" correlation. Input safety is single-layer regex after commit `73e09b3` — no LLM classifier. |
 | Auth | JWT (HS256), bcrypt password hashing | Stateless token, industry-standard hashing |
 | Background jobs | APScheduler | Lightweight, in-process, toggleable for demos |
-| Testing | pytest, pytest-asyncio, pytest-cov | 123 tests, 71 % coverage, 65 % floor |
+| Testing | pytest, pytest-asyncio, pytest-cov | 188 tests across 22 files, 71 % coverage, 65 % floor |
 | Reporting | reportlab | PDF compliance export |
 
 ### 4.2 Layered architecture
@@ -878,24 +878,33 @@ fonts stay consistent.
 
 ### 9.1 Coverage summary
 
-**123 tests** across **13 test files**, 71 % code coverage, 65 % floor
+**188 tests** across **22 test files**, 71 % code coverage, 65 % floor
 enforced in `pyproject.toml`.
 
 | File | Count | Focus |
 |---|---|---|
-| `test_services.py` | 21 | CRUD, RBAC, connection testing, SSRF rejection, confidential override |
-| `test_evaluations.py` | 14 | Test case CRUD, eval lifecycle, drift severity, budget enforcement, Alert creation |
-| `test_dashboard.py` | 9 | Metrics aggregation, percentiles, trend queries, empty-state defaults |
-| `test_compliance.py` | 24 | Audit CRUD, user management, export with incidents/maintenance, hash-chain verify, tamper detection, strict date parsing, truncation warnings |
-| `test_drafts.py` | 8 | Draft/approve for dashboard + compliance AI |
+| `test_compliance.py` | 28 | Audit CRUD, hash-chain integrity, tampering detection, append-only triggers, user management, export JSON + PDF, strict date parsing, truncation warnings |
+| `test_services.py` | 20 | CRUD, RBAC (viewer blocked), SSRF at register / update / probe, sensitivity + admin override, connection log |
+| `test_evaluations.py` | 17 | Test case CRUD, eval lifecycle, drift severity, budget 402/429, drift-triggered Alert, env filter on `/runs`, cascading delete |
+| `test_model_catalog.py` | 14 | Model inventory endpoints, actor vs judge routing |
+| `test_dashboard.py` | 11 | Metrics, percentiles, latency / quality / error trends, drift alerts, env-filter scoping |
+| `test_incidents.py` | 10 | Reviewer-note validation (422/400), idempotent approval (409), maintenance plan cascades |
+| `test_url_validator.py` | 10 | SSRF — metadata, loopback, RFC1918, IPv6, non-http scheme, mixed DNS |
+| `test_enforce_call_limits.py` | 9 | Hard caps, single-gatekeeper, per-model pricing flow |
+| `test_judge_routing.py` | 9 | Haiku for judge vs Sonnet for synthesis, single-call merged judge, JSON parser edge cases |
+| `test_user_attribution.py` | 9 | `user_id` propagation through LLM call stack into `APIUsageLog` |
+| `test_trace_endpoints.py` | 8 | Settings → Call Trace read endpoints |
+| `test_drafts.py` | 7 | HITL draft / approve for dashboard + compliance AI |
+| `test_correlation_id.py` | 5 | Per-request correlation ID into `APIUsageLog`, echoed in response header |
 | `test_draft_service.py` | 5 | Unit tests for shared draft service |
-| `test_incidents.py` | 6 | Reviewer-note validation + idempotent approval |
+| `test_pricing_multi_model.py` | 5 | Sonnet vs Haiku rate math, unknown-model fallback |
+| `test_probe_liveness.py` | 5 | Probe 4xx/5xx semantics (4xx = reachable, 5xx = down) |
 | `test_auth.py` | 4 | Login events mirrored to audit log |
-| `test_url_validator.py` | 10 | SSRF guard for metadata, loopback, RFC1918, IPv6 loopback, mixed DNS |
-| `test_integrity.py` | 3 | FK enforcement + concurrent log_action walkable chain |
-| `test_judge_parser.py` | 13 | Strict parsing rejects refusals, clamps over-range |
+| `test_dual_model_settings.py` | 4 | Model config surface (`llm_model` / `judge_model` overrides) |
+| `test_integrity.py` | 3 | FK enforcement, concurrent `log_action` walkable chain, monotonic timestamps |
+| `test_integration.py` | 2 | Full service lifecycle + RBAC across CRUD |
+| `test_retry_latency.py` | 2 | Retry backoff wall-clock accounting |
 | `test_budget_race.py` | 1 | 20 concurrent callers respect per-user rate limit |
-| `test_integration.py` | 2 | Full service lifecycle with RBAC across CRUD |
 
 ### 9.2 Unit vs integration split
 
@@ -1454,7 +1463,7 @@ of the gap rather than defence of an overclaim.
 
 *"We built a centralised AI operations platform with real
 security-hardening rigour and an honest understanding of its
-limitations. Four modules, 14 database models, 9 routers, 123 tests,
+limitations. Four modules, 14 database models, 9 routers, 188 tests,
 71 % coverage, 15 maintained documents. Not production-ready, but
 demonstrably designed for production. Thank you."*
 
@@ -1490,7 +1499,7 @@ demonstrably designed for production. Thank you."*
 - 17 formally tracked risks with mitigations and residuals
 - 15 operational scenarios in the maintenance runbook
 - 15 UI pages + components in the React frontend
-- 123 automated tests across 13 files
+- 188 automated tests across 22 files
 - 71 % test coverage (65 % enforced floor)
 - 3 user roles (admin, maintainer, viewer)
 - 3 sensitivity labels (public, internal, confidential)

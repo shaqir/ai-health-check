@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     api_max_calls_per_minute: int = 30
     api_max_calls_per_user_per_minute: int = 20
     max_prompt_length: int = 10000
+
+    # ── Hard caps enforced by enforce_call_limits (single gatekeeper) ──
+    # These reject a Claude call BEFORE it touches the network, so a bug
+    # or misuse can't silently spend the daily budget in one shot.
+    # Tuned for demo-scale prompts; raise in .env if your use case is
+    # genuinely larger.
+    hard_max_cost_per_call_usd: float = 0.05   # worst-case cost per single call
+    hard_max_tokens_per_call: int = 2000        # max_tokens ceiling regardless of caller
+    hard_max_prompt_chars: int = 12000          # hard ceiling on input text length
     max_login_attempts: int = 5
     login_lockout_minutes: int = 15
 

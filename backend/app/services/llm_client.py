@@ -57,11 +57,30 @@ _RETRYABLE_ERRORS = (
 )
 
 
-class BudgetExceededError(Exception):
-    """Raised when API budget or rate limit is exceeded."""
-    def __init__(self, message: str, exceeded_type: str = "daily"):
-        super().__init__(message)
-        self.exceeded_type = exceeded_type
+class CallLimitExceeded(Exception):
+    """
+    Raised by enforce_call_limits when a Claude call would violate any
+    hard cap or soft budget/rate limit. Structured fields let the Settings
+    UI and error handlers render *which* limit was hit and by how much.
+
+    limit_type ∈ {"prompt_chars", "max_tokens", "per_call_cost",
+                  "daily", "monthly", "rate_limit", "user_rate_limit"}
+    """
+    def __init__(self, limit_type: str, current: float, cap: float,
+                 message: str | None = None):
+        self.limit_type = limit_type
+        self.current = current
+        self.cap = cap
+        # Backward-compat alias so existing handlers reading `exceeded_type`
+        # keep working without modification.
+        self.exceeded_type = limit_type
+        super().__init__(message or f"Call limit exceeded: {limit_type} "
+                                    f"{current} >= cap {cap}")
+
+
+# Preserve the old name so existing `except BudgetExceededError`, module
+# imports, and FastAPI exception handlers keep working verbatim.
+BudgetExceededError = CallLimitExceeded
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -196,6 +215,82 @@ def _check_budget(user_id: int | None = None) -> dict | None:
         db.close()
 
 
+def enforce_call_limits(
+    model: str,
+    max_tokens: int,
+    prompt_text: str,
+    user_id: int | None = None,
+) -> None:
+    """
+    SINGLE GATEKEEPER for every Claude call.
+
+    Every path that invokes Claude passes through `_make_api_call`, which
+    invokes this function BEFORE reserving a slot or touching the network.
+    New callers never need to know budget limits exist — they automatically
+    inherit enforcement. Do not bypass.
+
+    Checks in cheapest-first order:
+      1. Prompt length hard cap (in-memory string length)
+      2. max_tokens hard cap (int compare)
+      3. Per-call worst-case cost hard cap (one arithmetic op)
+      4-7. Soft budgets + rate limits (via _check_budget, which hits the DB).
+
+    The first violation raises CallLimitExceeded and no later checks run.
+    Must be called inside _BUDGET_LOCK when the caller intends to reserve
+    a slot — keeps the rate-check + reservation atomic across threads.
+    """
+    # 1. Prompt length hard cap — reject before any tokenization cost.
+    prompt_len = len(prompt_text) if prompt_text else 0
+    if settings.hard_max_prompt_chars > 0 and prompt_len > settings.hard_max_prompt_chars:
+        raise CallLimitExceeded(
+            "prompt_chars", prompt_len, settings.hard_max_prompt_chars,
+            message=(f"Prompt length {prompt_len} chars exceeds hard cap of "
+                     f"{settings.hard_max_prompt_chars}. Trim the prompt or "
+                     f"raise HARD_MAX_PROMPT_CHARS."),
+        )
+
+    # 2. max_tokens hard cap — a caller asking for 100k tokens is almost
+    # certainly a bug or a hostile actor.
+    if settings.hard_max_tokens_per_call > 0 and max_tokens > settings.hard_max_tokens_per_call:
+        raise CallLimitExceeded(
+            "max_tokens", max_tokens, settings.hard_max_tokens_per_call,
+            message=(f"Requested max_tokens={max_tokens} exceeds hard cap of "
+                     f"{settings.hard_max_tokens_per_call}. Lower max_tokens "
+                     f"or raise HARD_MAX_TOKENS_PER_CALL."),
+        )
+
+    # 3. Per-call worst-case cost hard cap. Worst case = all output tokens
+    # (output is the more expensive rate).
+    if settings.hard_max_cost_per_call_usd > 0:
+        worst_cost = _estimate_cost(model, 0, max_tokens)
+        if worst_cost > settings.hard_max_cost_per_call_usd:
+            raise CallLimitExceeded(
+                "per_call_cost", worst_cost, settings.hard_max_cost_per_call_usd,
+                message=(f"Worst-case call cost ${worst_cost:.4f} exceeds hard "
+                         f"cap of ${settings.hard_max_cost_per_call_usd:.4f}. "
+                         f"Lower max_tokens or raise HARD_MAX_COST_PER_CALL_USD."),
+            )
+
+    # 4-7. Soft budgets + rate limits — DB-backed, delegated to _check_budget.
+    budget_check = _check_budget(user_id=user_id)
+    if budget_check:
+        exceeded = budget_check["exceeded"]
+        spent = budget_check["spent"]
+        limit = budget_check["limit"]
+        if exceeded in ("rate_limit", "user_rate_limit"):
+            raise CallLimitExceeded(
+                exceeded, spent, limit,
+                message=(f"Rate limit exceeded: {spent} / {limit} calls/min. "
+                         f"Wait a moment and try again."),
+            )
+        raise CallLimitExceeded(
+            exceeded, spent, limit,
+            message=(f"API {exceeded} budget exceeded: ${spent:.4f} / "
+                     f"${limit:.2f}. Increase the limit in .env or wait "
+                     f"for the next period."),
+        )
+
+
 def _reserve_slot(
     caller: str, model: str, max_tokens: int,
     user_id: int | None, service_id: int | None,
@@ -302,23 +397,16 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             risk_score=safety_result["risk_score"],
         )
 
-    # 2. Atomic budget check + reservation.
+    # 2. Single gatekeeper: hard caps + soft budgets + rate limits. All
+    # limit enforcement goes through enforce_call_limits — no ad-hoc
+    # checks scattered around the codebase.
     with _BUDGET_LOCK:
-        budget_check = _check_budget(user_id=user_id)
-        if budget_check:
-            exceeded = budget_check["exceeded"]
-            if exceeded in ("rate_limit", "user_rate_limit"):
-                raise BudgetExceededError(
-                    f"Rate limit exceeded: {budget_check['spent']} / {budget_check['limit']} calls/min. "
-                    f"Wait a moment and try again.",
-                    exceeded_type="rate_limit",
-                )
-            raise BudgetExceededError(
-                f"API {exceeded} budget exceeded: "
-                f"${budget_check['spent']:.4f} / ${budget_check['limit']:.2f}. "
-                f"Increase the limit in .env or wait for the next period.",
-                exceeded_type=exceeded,
-            )
+        enforce_call_limits(
+            model=model,
+            max_tokens=max_tokens,
+            prompt_text=input_text,
+            user_id=user_id,
+        )
         reservation_id = _reserve_slot(caller, model, max_tokens, user_id, service_id)
 
     # 3. API call with retries (outside the lock).

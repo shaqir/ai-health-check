@@ -30,7 +30,7 @@ from app.models import (  # noqa: F401
 )
 
 # Import routers
-from app.routers import auth, services, incidents, maintenance, evaluations, dashboard
+from app.routers import auth, services, incidents, maintenance, evaluations, dashboard, settings as settings_router
 from app.routers import users as compliance_users, audit as compliance_audit, export as compliance_export
 
 settings = get_settings()
@@ -246,6 +246,7 @@ app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incident
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
 # Compliance surface — split into three routers, all mounted under
 # /api/v1/compliance so the frontend paths are unchanged.
 app.include_router(compliance_users.router, prefix="/api/v1/compliance", tags=["Compliance · Users"])
@@ -257,10 +258,29 @@ app.include_router(compliance_export.router, prefix="/api/v1/compliance", tags=[
 
 @app.exception_handler(BudgetExceededError)
 async def budget_exceeded_handler(request, exc: BudgetExceededError):
-    status_code = 429 if exc.exceeded_type == "rate_limit" else 402
+    # HTTP status mapping by limit type:
+    #   rate_limit / user_rate_limit  → 429 Too Many Requests
+    #   daily / monthly               → 402 Payment Required (budget)
+    #   prompt_chars                  → 413 Payload Too Large
+    #   max_tokens / per_call_cost    → 422 Unprocessable Entity (bad request shape)
+    limit_type = exc.limit_type
+    if limit_type in ("rate_limit", "user_rate_limit"):
+        status_code = 429
+    elif limit_type in ("daily", "monthly"):
+        status_code = 402
+    elif limit_type == "prompt_chars":
+        status_code = 413
+    else:
+        status_code = 422
     return JSONResponse(
         status_code=status_code,
-        content={"detail": str(exc), "exceeded_type": exc.exceeded_type},
+        content={
+            "detail": str(exc),
+            "limit_type": limit_type,
+            "exceeded_type": limit_type,  # kept for backward-compat clients
+            "current": exc.current,
+            "cap": exc.cap,
+        },
     )
 
 

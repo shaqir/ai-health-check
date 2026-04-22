@@ -393,14 +393,20 @@ function FlagDetailModal({ flag, count, onClose }) {
 }
 
 const SECTIONS = [
-  { id: 'model', label: 'Model & Pricing', icon: Cpu },
+  { id: 'model', label: 'Models', icon: Cpu },
   { id: 'evaluation', label: 'Evaluation', icon: Activity },
-  { id: 'limits', label: 'API Limits', icon: Lock },
+  { id: 'limits', label: 'Limits', icon: Lock },
   { id: 'trace', label: 'Call Trace', icon: Network },
-  { id: 'usage', label: 'API Usage', icon: Zap },
   { id: 'safety', label: 'Safety', icon: Shield },
   { id: 'performance', label: 'Performance', icon: LineChartIcon },
 ];
+
+// Deep-link fallback: anyone who bookmarked /settings#usage before commit
+// 17 arrives at Limits now, which absorbed the Budget + Cost-by-function
+// cards. Separate from SECTIONS so we don't pollute the sidebar list.
+const SECTION_ALIASES = {
+  usage: 'limits',
+};
 
 const FAMILY_OPTIONS = [
   { value: 'all',               label: 'All families' },
@@ -439,6 +445,12 @@ export default function SettingsPage() {
   const [traceError, setTraceError] = useState(null);
   const [traceFamily, setTraceFamily] = useState('all');
   const [traceSince, setTraceSince] = useState(1440);
+  // Two views share the Call Trace tab: 'grouped' collapses calls by
+  // correlation_id (the typical reviewer workflow), 'flat' is the raw
+  // per-call list (for drill-down debugging). The flat list is the
+  // same data apiUsage.recent_calls used to show — it lived on the
+  // retired API Usage tab, now it lives here where it belongs.
+  const [traceView, setTraceView] = useState('grouped');
   const [selectedCall, setSelectedCall] = useState(null);
   const { user } = useAuth();
   const canDrillDown = user?.role === 'admin' || user?.role === 'maintainer';
@@ -451,7 +463,10 @@ export default function SettingsPage() {
   // empty or points at an unknown section.
   const [active, setActive] = useState(() => {
     const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : '';
-    return SECTIONS.some(s => s.id === hash) ? hash : 'model';
+    if (SECTIONS.some(s => s.id === hash)) return hash;
+    // Legacy hash fallback (e.g. #usage → #limits)
+    if (SECTION_ALIASES[hash]) return SECTION_ALIASES[hash];
+    return 'model';
   });
   // Live refresh indicator — matches Dashboard / Evaluations / Incidents.
   const [lastFetchAt, setLastFetchAt] = useState(Date.now());
@@ -889,158 +904,186 @@ export default function SettingsPage() {
                   />
                 </div>
               </Card>
+
+              {/* Cost by function — answers "what's driving today's spend?"
+                  right next to "what are the caps?" Absorbed from the
+                  retired API Usage section where it was duplicated work. */}
+              {apiUsage && apiUsage.breakdown && apiUsage.breakdown.length > 0 && (
+                <Card icon={Coins} title="Cost by function" badge="Today">
+                  <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                    Which functions are driving today's Claude spend. Useful for
+                    spotting runaway loops or unexpected usage patterns before
+                    the budget cap fires.
+                  </p>
+                  <div className="space-y-1.5">
+                    {apiUsage.breakdown
+                      .slice()
+                      .sort((a, b) => b.cost_usd - a.cost_usd)
+                      .map((b) => (
+                        <div
+                          key={b.function}
+                          className="flex items-center justify-between px-3 py-2 bg-surface-elevated rounded-lg text-[12px]"
+                        >
+                          <code className="font-mono text-text-muted">{b.function}</code>
+                          <div className="flex items-center gap-3 font-mono tabular-nums">
+                            <span className="text-text-subtle">{b.calls} call{b.calls === 1 ? '' : 's'}</span>
+                            <span className="font-medium text-text">${b.cost_usd.toFixed(4)}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </Card>
+              )}
             </>
           )}
 
           {active === 'trace' && (
             <>
-              <Card icon={Network} title="Call Trace" badge="Grouped by user action">
+              <Card
+                icon={Network}
+                title="Call Trace"
+                badge={traceView === 'grouped' ? 'Grouped by user action' : 'Flat — raw call list'}
+              >
                 <p className="text-[12px] text-text-muted mb-4 leading-relaxed">
                   Every user action in this app shares a single correlation ID.
-                  Each row below is one action — click to drill down and see
-                  every Claude call it fired, including the exact prompt and
-                  response. Background scheduler activity is excluded (it isn't
-                  a user action).
+                  Use <span className="font-semibold text-text">Grouped</span> for a
+                  user-action view (default — click to drill down into each
+                  Claude call), or <span className="font-semibold text-text">Flat</span>
+                  {' '}for a raw chronological call feed. Background scheduler
+                  activity is excluded from Grouped (it isn't a user action).
                 </p>
 
-                <div className="flex items-center gap-2 flex-wrap mb-4">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[11px] text-text-subtle">Family</label>
-                    <select
-                      value={traceFamily}
-                      onChange={(e) => setTraceFamily(e.target.value)}
-                      className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
-                    >
-                      {FAMILY_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[11px] text-text-subtle">Window</label>
-                    <select
-                      value={traceSince}
-                      onChange={(e) => setTraceSince(Number(e.target.value))}
-                      className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
-                    >
-                      {SINCE_OPTIONS.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                {/* Grouped/Flat toggle — the visual pair owns the section. Both
+                    views read from the same underlying data, so switching is
+                    instant (no extra fetch in most cases). */}
+                <div className="inline-flex rounded-pill border border-hairline bg-surface-elevated overflow-hidden mb-4">
                   <button
                     type="button"
-                    onClick={fetchTrace}
-                    className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-accent bg-surface-elevated rounded-pill px-2.5 py-1 border border-hairline"
+                    onClick={() => setTraceView('grouped')}
+                    className={`px-3 py-1 text-[12px] font-medium transition-standard ${
+                      traceView === 'grouped'
+                        ? 'bg-accent text-white'
+                        : 'text-text-muted hover:text-text'
+                    }`}
                   >
-                    <RefreshCw size={12} className={traceLoading ? 'animate-spin' : ''} />
-                    Refresh
+                    Grouped
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTraceView('flat')}
+                    className={`px-3 py-1 text-[12px] font-medium transition-standard ${
+                      traceView === 'flat'
+                        ? 'bg-accent text-white'
+                        : 'text-text-muted hover:text-text'
+                    }`}
+                  >
+                    Flat
                   </button>
                 </div>
 
-                {traceError && (
-                  <ErrorState title="Failed to load trace" message={traceError} />
-                )}
-
-                {traceLoading && !traceActivities && (
-                  <LoadingSkeleton rows={3} />
-                )}
-
-                {traceActivities && traceActivities.activities.length === 0 && !traceLoading && (
-                  <EmptyState
-                    icon={Network}
-                    title="No traced activities"
-                    description="User actions appear here once the app fires Claude calls with a correlation id. Try clicking Ping on a service or running an evaluation."
-                  />
-                )}
-
-                {traceActivities && traceActivities.activities.length > 0 && (
-                  <>
-                    <div className="space-y-2">
-                      {traceActivities.activities.map((a) => (
-                        <ActivityRow
-                          key={a.correlation_id}
-                          activity={a}
-                          onCallClick={(c) => setSelectedCall(c)}
-                          canDrillDown={canDrillDown}
-                        />
-                      ))}
+                {/* Filters — grouped view uses family + time window. Flat
+                    view just shows recent calls straight from apiUsage, so
+                    these filters intentionally don't apply there (the
+                    flat list is inherently a "last 10 raw" snapshot). */}
+                {traceView === 'grouped' && (
+                  <div className="flex items-center gap-2 flex-wrap mb-4">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] text-text-subtle">Family</label>
+                      <select
+                        value={traceFamily}
+                        onChange={(e) => setTraceFamily(e.target.value)}
+                        className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
+                      >
+                        {FAMILY_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
                     </div>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] text-text-subtle">Window</label>
+                      <select
+                        value={traceSince}
+                        onChange={(e) => setTraceSince(Number(e.target.value))}
+                        className="text-[12px] bg-surface-elevated border border-hairline rounded-md px-2 py-1 text-text"
+                      >
+                        {SINCE_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={fetchTrace}
+                      className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-accent bg-surface-elevated rounded-pill px-2.5 py-1 border border-hairline"
+                    >
+                      <RefreshCw size={12} className={traceLoading ? 'animate-spin' : ''} />
+                      Refresh
+                    </button>
+                  </div>
+                )}
+
+                {traceView === 'grouped' && (
+                  <>
+                    {traceError && (
+                      <ErrorState title="Failed to load trace" message={traceError} />
+                    )}
+
+                    {traceLoading && !traceActivities && (
+                      <LoadingSkeleton rows={3} />
+                    )}
+
+                    {traceActivities && traceActivities.activities.length === 0 && !traceLoading && (
+                      <EmptyState
+                        icon={Network}
+                        title="No traced activities"
+                        description="User actions appear here once the app fires Claude calls with a correlation id. Try clicking Ping on a service or running an evaluation."
+                      />
+                    )}
+
+                    {traceActivities && traceActivities.activities.length > 0 && (
+                      <>
+                        <div className="space-y-2">
+                          {traceActivities.activities.map((a) => (
+                            <ActivityRow
+                              key={a.correlation_id}
+                              activity={a}
+                              onCallClick={(c) => setSelectedCall(c)}
+                              canDrillDown={canDrillDown}
+                            />
+                          ))}
+                        </div>
+                        <p className="mt-3 text-[11px] text-text-subtle">
+                          Showing {traceActivities.activities.length} of {traceActivities.total} activities.
+                          {!canDrillDown && ' Drill-down (prompts + responses) is admin/maintainer only.'}
+                        </p>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {traceView === 'flat' && (
+                  <>
+                    {apiUsage?.recent_calls?.length > 0 ? (
+                      <DataTable
+                        columns={callColumns}
+                        data={apiUsage.recent_calls}
+                        searchPlaceholder="Search calls..."
+                      />
+                    ) : (
+                      <EmptyState
+                        icon={Zap}
+                        title="No API calls yet"
+                        description="Recent Claude calls appear here once the app fires them. Showing at most the last 10 calls."
+                      />
+                    )}
                     <p className="mt-3 text-[11px] text-text-subtle">
-                      Showing {traceActivities.activities.length} of {traceActivities.total} activities.
-                      {!canDrillDown && ' Drill-down (prompts + responses) is admin/maintainer only.'}
+                      Raw per-call feed, newest first. Background scheduler calls
+                      and pre-correlation-id rows are included here (unlike the
+                      Grouped view, which filters them out).
                     </p>
                   </>
                 )}
               </Card>
-            </>
-          )}
-
-          {active === 'usage' && apiUsage && config && (
-            <>
-              <Card icon={ShieldCheck} title="Budget & rate limits" badge="Configured in .env">
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  <BudgetCard
-                    label="Daily"
-                    spent={apiUsage.daily.cost_usd}
-                    budget={apiUsage.daily.budget_usd}
-                    pct={apiUsage.daily.budget_pct_used}
-                    tooltip="Total USD spent on the Claude API today vs. the daily cap. New calls are blocked at 100%."
-                  />
-                  <BudgetCard
-                    label="Monthly"
-                    spent={apiUsage.monthly.cost_usd}
-                    budget={apiUsage.monthly.budget_usd}
-                    pct={apiUsage.monthly.budget_pct_used}
-                    tooltip="Total USD spent this month vs. the monthly cap. Prevents runaway costs."
-                  />
-                  <div className="bg-surface-elevated rounded-lg p-3">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Gauge size={12} strokeWidth={1.5} className="text-text-subtle" />
-                      <span className="text-[10px] font-medium text-text-subtle tracking-tight">Rate limit</span>
-                      <InfoTip content="Max API calls per minute. Prevents bursts that could trigger provider-side throttling." size={10} />
-                    </div>
-                    <p className="text-xl font-semibold font-mono tabular-nums text-text">{config.budget.rate_limit_per_min}</p>
-                    <p className="text-[10px] text-text-subtle">calls/min</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[12px] text-text-muted">
-                  <div className="flex items-center gap-1.5"><ShieldCheck size={12} strokeWidth={1.5} className="text-accent shrink-0" /> Budget blocks calls at limit</div>
-                  <div className="flex items-center gap-1.5"><Gauge size={12} strokeWidth={1.5} className="text-accent shrink-0" /> Rate limiter prevents bursts</div>
-                </div>
-              </Card>
-
-              <Card icon={Zap} title="Token usage">
-                <div className="grid grid-cols-4 gap-3 mb-4">
-                  <Stat label="Today calls" value={apiUsage.daily.calls} tooltip="Number of Claude API calls made today." />
-                  <Stat label="Today tokens" value={apiUsage.daily.total_tokens.toLocaleString()} tooltip="Total input + output tokens used today. Tokens are roughly 4 characters each." />
-                  <Stat label="Month calls" value={apiUsage.monthly.calls} tooltip="Total API calls made this calendar month." />
-                  <Stat label="Month tokens" value={apiUsage.monthly.total_tokens.toLocaleString()} tooltip="Total tokens consumed this month, input and output combined." />
-                </div>
-                {apiUsage.breakdown.length > 0 && (
-                  <div className="pt-3 border-t border-hairline space-y-1.5">
-                    <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2">Cost by function</h4>
-                    {apiUsage.breakdown.map(b => (
-                      <div key={b.function} className="flex items-center justify-between px-3 py-2 bg-surface-elevated rounded-lg text-[12px]">
-                        <span className="font-mono text-text-muted">{b.function}</span>
-                        <div className="flex items-center gap-3 font-mono tabular-nums">
-                          <span className="text-text-subtle">{b.calls} calls</span>
-                          <span className="font-medium text-text">${b.cost_usd.toFixed(4)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-
-              <div>
-                <h3 className="text-[13px] font-semibold text-text tracking-tight mb-3">Recent API calls</h3>
-                {apiUsage?.recent_calls?.length > 0 ? (
-                  <DataTable columns={callColumns} data={apiUsage.recent_calls} searchPlaceholder="Search calls..." />
-                ) : (
-                  <EmptyState icon={Zap} title="No API calls yet" description="Usage appears here when Claude API features are used." />
-                )}
-              </div>
             </>
           )}
 
@@ -1119,7 +1162,42 @@ export default function SettingsPage() {
 
           {active === 'performance' && performance && (
             <Card icon={BarChart3} title="Performance">
-              <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2 flex items-center gap-1.5">
+              {/* Volume headline — token totals absorbed from the retired API
+                  Usage section. These are activity measurements (scale), not
+                  health measurements, so they live at the top of Performance
+                  above the latency percentiles rather than in Limits. */}
+              {apiUsage && (
+                <>
+                  <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2 flex items-center gap-1.5">
+                    Volume
+                    <InfoTip content="How much Claude traffic this deployment has moved. Different from Limits, which are caps — these are the raw totals over the given window." />
+                  </h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+                    <Stat
+                      label="Calls today"
+                      value={apiUsage.daily.calls.toLocaleString()}
+                      tooltip="Number of Claude API calls made today, all callers, all models."
+                    />
+                    <Stat
+                      label="Tokens today"
+                      value={apiUsage.daily.total_tokens.toLocaleString()}
+                      tooltip="Total input + output tokens used today. Roughly 4 characters per token."
+                    />
+                    <Stat
+                      label="Calls this month"
+                      value={apiUsage.monthly.calls.toLocaleString()}
+                      tooltip="Total API calls this calendar month."
+                    />
+                    <Stat
+                      label="Tokens this month"
+                      value={apiUsage.monthly.total_tokens.toLocaleString()}
+                      tooltip="Total tokens consumed this month, input and output combined."
+                    />
+                  </div>
+                </>
+              )}
+
+              <h4 className="text-[11px] font-medium text-text-subtle tracking-tight mb-2 flex items-center gap-1.5 pt-3 border-t border-hairline">
                 API latency · today
                 <InfoTip content="Response times today across all Claude API calls, in milliseconds. Percentile labels describe where a given value sits in the distribution." />
               </h4>

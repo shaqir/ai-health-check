@@ -8,14 +8,14 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # LLM — two-tier model economy
+    # LLM — two-model architecture
     # Actor: the service-under-test model (synthesis, dashboard insights, compliance reports).
-    # Judge: scores factuality + hallucination. Haiku keeps the judge cheap + fast + independent-ish.
-    # Injection: LLM-based prompt-injection classifier run on every input as a second layer over regex.
+    # Judge: scores factuality + hallucination. Haiku keeps the judge cheap + fast and
+    # a different family from the actor to reduce self-scoring correlation.
+    # Input safety is regex-only (see safety.py) — no LLM classifier, no third model.
     anthropic_api_key: str = ""
     llm_model: str = "claude-sonnet-4-6-20250415"
     judge_model: str = "claude-haiku-4-5-20251001"
-    injection_model: str = "claude-haiku-4-5-20251001"
     llm_max_tokens: int = 1024
     llm_timeout_seconds: int = 30
 
@@ -48,12 +48,12 @@ class Settings(BaseSettings):
     # API Budget (USD) — set 0 for unlimited
     api_daily_budget: float = 5.0
     api_monthly_budget: float = 25.0
-    # Sized for multi-test-case eval batches. Two-tier architecture raises the
-    # call budget per user request: 1 actor + 1 injection classifier + 1 factuality
-    # judge + 1 hallucination judge = 4 Claude calls/request (vs. 3 in single-tier).
-    # Limits bumped proportionally so demo throughput stays snappy.
-    api_max_calls_per_minute: int = 60
-    api_max_calls_per_user_per_minute: int = 40
+    # Sized for demo eval batches. Two-model + merged judge architecture means a
+    # factuality test case now fires 2 Claude calls (1 actor + 1 merged judge),
+    # and a format_json case fires 1 — so these limits are comfortable headroom
+    # for a 10-case eval (~16 calls) plus concurrent UI activity.
+    api_max_calls_per_minute: int = 30
+    api_max_calls_per_user_per_minute: int = 20
     max_prompt_length: int = 10000
     max_login_attempts: int = 5
     login_lockout_minutes: int = 15

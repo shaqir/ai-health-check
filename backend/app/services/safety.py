@@ -22,14 +22,19 @@ _INJECTION_PATTERNS = [
     r"ignore\s+(all\s+)?prior\s+instructions",
     r"disregard\s+(all\s+)?(previous|prior|above)",
     r"forget\s+(all\s+)?(previous|prior|above)\s+(instructions|context)",
+    r"forget\s+everything",
     r"you\s+are\s+now\s+(a|an|the)",
     r"new\s+instructions?\s*:",
+    r"new\s+persona\s*:",
+    r"updated\s+(system\s+)?(instructions|prompt)\s*:",
     r"system\s*prompt\s*:",
-    r"(reveal|show|output|print|display)\s+(your\s+)?(system\s+)?(prompt|instructions)",
+    r"(reveal|show|output|print|display|leak|expose)\s+(your\s+)?(system\s+)?(prompt|instructions)",
+    r"(reveal|show|leak|expose)\s+(the\s+)?(api[\s_-]?key|secret[\s_-]?key|access[\s_-]?token|password)",
     r"what\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions)",
     r"repeat\s+(all|your)\s+(system\s+)?(messages|prompts|instructions)",
     r"act\s+as\s+(if\s+)?(you\s+are|a|an)",
     r"pretend\s+(you\s+are|to\s+be)",
+    r"roleplay\s+as",
     r"jailbreak",
     r"DAN\s+mode",
     r"developer\s+mode\s+(enabled|on|activated)",
@@ -61,22 +66,17 @@ class PromptSafetyError(Exception):
 
 def scan_input(text: str) -> dict:
     """
-    Two-layer input safety scan:
-      1. Regex tripwire — cheap, deterministic, fires on known injection patterns + PII + length.
-      2. LLM classifier (Haiku, via `llm_client.detect_injection`) — second opinion
-         that catches paraphrased / novel injections the regex misses. Fail-open:
-         classifier outages degrade the second layer silently so the actor path
-         never wedges on injection-checker problems.
+    Single-layer regex tripwire for input safety. Checks length, known
+    injection patterns, and PII. Fast, deterministic, observable in logs.
 
-    Returns: {safe: bool, flags: list[str], risk_score: int (0-100), details: dict, llm_classifier: dict}
+    Returns: {safe: bool, flags: list[str], risk_score: int (0-100), details: dict}
     """
     flags = []
     details = {}
     risk_score = 0
 
     if not text:
-        return {"safe": True, "flags": [], "risk_score": 0, "details": {},
-                "llm_classifier": {"injection": False, "confidence": 0, "reason": "empty_input"}}
+        return {"safe": True, "flags": [], "risk_score": 0, "details": {}}
 
     # 1. Length check
     max_len = settings.max_prompt_length
@@ -89,7 +89,7 @@ def scan_input(text: str) -> dict:
         details["length"] = {"actual": len(text), "max": max_len}
         risk_score += RISK_WEIGHT_LENGTH
 
-    # 2. Regex injection tripwire
+    # 2. Injection tripwire
     injection_matches = []
     for pattern in _INJECTION_COMPILED:
         match = pattern.search(text)
@@ -113,26 +113,6 @@ def scan_input(text: str) -> dict:
         details["pii"] = pii_found
         risk_score += RISK_WEIGHT_PII * len(pii_found)
 
-    # 4. LLM injection classifier (second layer). Lazy import to avoid a
-    # circular dependency: llm_client imports safety for scan_input/scan_output.
-    llm_classifier = {"injection": False, "confidence": 0, "reason": "classifier_unavailable"}
-    try:
-        from app.services.llm_client import detect_injection
-        llm_classifier = detect_injection(text)
-    except Exception:
-        # Fail-open: any wiring/import error leaves regex as the authoritative layer.
-        pass
-
-    if llm_classifier.get("injection"):
-        flags.append("llm_injection")
-        details["llm_injection"] = {
-            "confidence": llm_classifier.get("confidence", 0),
-            "reason": llm_classifier.get("reason", "unknown"),
-        }
-        # Merge: the LLM confidence (0-100) becomes an independent signal.
-        # We take the max so neither layer can silence the other.
-        risk_score = max(risk_score, int(llm_classifier.get("confidence", 0)))
-
     risk_score = min(risk_score, 100)
 
     return {
@@ -140,7 +120,6 @@ def scan_input(text: str) -> dict:
         "flags": flags,
         "risk_score": risk_score,
         "details": details,
-        "llm_classifier": llm_classifier,
     }
 
 

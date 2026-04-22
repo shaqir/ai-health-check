@@ -3,7 +3,8 @@ import {
   Brain, DollarSign, Zap, ShieldCheck, Activity, Gauge, CreditCard,
   Shield, BarChart3, Ban, Cpu, LineChart as LineChartIcon,
   Regex, Bot, UserX, AlertOctagon, Maximize2, FileWarning,
-  Clock, KeyRound, ServerCrash, FileX, HelpCircle, TimerReset
+  Clock, KeyRound, ServerCrash, FileX, HelpCircle, TimerReset,
+  Lock, Coins, Hash
 } from 'lucide-react';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -390,6 +391,7 @@ function FlagDetailModal({ flag, count, onClose }) {
 const SECTIONS = [
   { id: 'model', label: 'Model & Pricing', icon: Cpu },
   { id: 'evaluation', label: 'Evaluation', icon: Activity },
+  { id: 'limits', label: 'API Limits', icon: Lock },
   { id: 'usage', label: 'API Usage', icon: Zap },
   { id: 'safety', label: 'Safety', icon: Shield },
   { id: 'performance', label: 'Performance', icon: LineChartIcon },
@@ -402,6 +404,10 @@ export default function SettingsPage() {
   const [apiUsage, setApiUsage] = useState(null);
   const [performance, setPerformance] = useState(null);
   const [safety, setSafety] = useState(null);
+  // Hard caps + live usage from the single-gatekeeper endpoint. Read-only —
+  // configured via env vars, surfaced here so reviewers can see what the
+  // gatekeeper is actually enforcing.
+  const [limits, setLimits] = useState(null);
   // Selected flag for the explainer modal — `{name, count}` or null.
   const [flagDetail, setFlagDetail] = useState(null);
   // Selected API error type for its explainer modal — `{type, count}` or null.
@@ -434,6 +440,7 @@ export default function SettingsPage() {
       ['api-usage',  '/dashboard/api-usage',  setApiUsage],
       ['performance','/dashboard/performance', setPerformance],
       ['api-safety', '/dashboard/api-safety',  setSafety],
+      ['limits',     '/settings/limits',      setLimits],
     ];
     const results = await Promise.allSettled(
       endpoints.map(([, url]) => api.get(url))
@@ -650,6 +657,146 @@ export default function SettingsPage() {
                 tooltip="How often the background scheduler runs evaluations against every active, non-confidential service with test cases. Saved as scheduled runs; drift alerts fire on threshold breach."
               />
             </Card>
+          )}
+
+          {active === 'limits' && limits && (
+            <>
+              <Card
+                icon={Lock}
+                title="Hard caps — single gatekeeper"
+                badge="Read-only · configured via env"
+              >
+                <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                  Every Claude call in the system passes through one function
+                  (<code className="font-mono text-[12px] bg-surface-elevated px-1 py-0.5 rounded">enforce_call_limits</code>)
+                  that rejects requests exceeding these hard caps <em>before</em>
+                  the network call. This is defense against bugs and misuse;
+                  normal operation never hits these.
+                </p>
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  <LimitStat
+                    icon={Coins}
+                    label="Cost per call"
+                    value={`$${limits.hard_caps.max_cost_per_call_usd.toFixed(4)}`}
+                    sub="worst-case per single call"
+                    tooltip="Rejects any call whose worst-case cost (max_tokens × output rate for the chosen model) would exceed this. Per-model pricing means Haiku passes where Sonnet fails for the same token count."
+                  />
+                  <LimitStat
+                    icon={Hash}
+                    label="Tokens per call"
+                    value={limits.hard_caps.max_tokens_per_call.toLocaleString()}
+                    sub="max_tokens ceiling"
+                    tooltip="Maximum max_tokens regardless of what the caller requested. Blocks accidental 100k-token asks."
+                  />
+                  <LimitStat
+                    icon={FileWarning}
+                    label="Prompt length"
+                    value={`${limits.hard_caps.max_prompt_chars.toLocaleString()} chars`}
+                    sub="hard ceiling"
+                    tooltip="Hard ceiling on input text length. Checked before any tokenization or DB work — cheapest reject path."
+                  />
+                </div>
+                <p className="text-[11px] text-text-subtle pt-3 border-t border-hairline">
+                  Configured via <code className="font-mono">HARD_MAX_*</code> environment variables. Raise in <code className="font-mono">.env</code> if your use case is genuinely larger.
+                </p>
+              </Card>
+
+              <Card
+                icon={ShieldCheck}
+                title="Soft limits"
+                badge="Read-only · configured via env"
+              >
+                <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                  Aggregated ceilings that reject calls only <em>after</em> the limit is reached (based on usage-log history).
+                </p>
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                  <LimitStat
+                    icon={CreditCard}
+                    label="Daily budget"
+                    value={`$${limits.soft_limits.daily_budget_usd.toFixed(2)}`}
+                    sub="total spend cap / day"
+                    tooltip="Blocks new Claude calls once today's total API spend reaches this amount. Resets at midnight UTC."
+                  />
+                  <LimitStat
+                    icon={CreditCard}
+                    label="Monthly budget"
+                    value={`$${limits.soft_limits.monthly_budget_usd.toFixed(2)}`}
+                    sub="total spend cap / month"
+                    tooltip="Blocks new Claude calls once this month's total API spend reaches this amount. Resets on the 1st."
+                  />
+                  <LimitStat
+                    icon={Gauge}
+                    label="Global rate"
+                    value={`${limits.soft_limits.calls_per_minute}`}
+                    sub="calls/minute (all users)"
+                    tooltip="Maximum Claude calls across the whole system per rolling 60-second window. Prevents bursts that would trigger provider-side throttling."
+                  />
+                  <LimitStat
+                    icon={UserX}
+                    label="Per-user rate"
+                    value={`${limits.soft_limits.calls_per_user_per_minute}`}
+                    sub="calls/minute per user"
+                    tooltip="Maximum Claude calls that a single authenticated user can fire per rolling 60-second window."
+                  />
+                  <LimitStat
+                    icon={FileWarning}
+                    label="Prompt length (soft)"
+                    value={`${limits.soft_limits.max_prompt_length_soft.toLocaleString()} chars`}
+                    sub="regex-scanner threshold"
+                    tooltip="The regex safety scanner flags prompts above 80% of this length as a length_warning, and blocks at 100%. Independent from the hard prompt_chars cap above."
+                  />
+                </div>
+              </Card>
+
+              <Card
+                icon={BarChart3}
+                title="Current usage"
+                badge="Live · refresh every 60s"
+              >
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <LimitStat
+                    icon={DollarSign}
+                    label="Today"
+                    value={`$${limits.current_usage.today_usd.toFixed(4)}`}
+                    sub={`/ $${limits.soft_limits.daily_budget_usd.toFixed(2)} daily`}
+                    pct={limits.soft_limits.daily_budget_usd > 0
+                      ? (limits.current_usage.today_usd / limits.soft_limits.daily_budget_usd) * 100
+                      : null}
+                    tooltip="Sum of estimated cost for every Claude call today (all users, all callers). Compared against the daily budget."
+                  />
+                  <LimitStat
+                    icon={DollarSign}
+                    label="This month"
+                    value={`$${limits.current_usage.month_usd.toFixed(4)}`}
+                    sub={`/ $${limits.soft_limits.monthly_budget_usd.toFixed(2)} monthly`}
+                    pct={limits.soft_limits.monthly_budget_usd > 0
+                      ? (limits.current_usage.month_usd / limits.soft_limits.monthly_budget_usd) * 100
+                      : null}
+                    tooltip="Sum of estimated cost for every Claude call this month (all users, all callers). Compared against the monthly budget."
+                  />
+                  <LimitStat
+                    icon={Gauge}
+                    label="Last minute (all)"
+                    value={`${limits.current_usage.calls_last_minute}`}
+                    sub={`/ ${limits.soft_limits.calls_per_minute} cap`}
+                    pct={limits.soft_limits.calls_per_minute > 0
+                      ? (limits.current_usage.calls_last_minute / limits.soft_limits.calls_per_minute) * 100
+                      : null}
+                    tooltip="Claude calls in the last 60 seconds across all users. Compared against the global rate limit."
+                  />
+                  <LimitStat
+                    icon={UserX}
+                    label="Last minute (you)"
+                    value={`${limits.current_usage.calls_last_minute_by_user}`}
+                    sub={`/ ${limits.soft_limits.calls_per_user_per_minute} cap`}
+                    pct={limits.soft_limits.calls_per_user_per_minute > 0
+                      ? (limits.current_usage.calls_last_minute_by_user / limits.soft_limits.calls_per_user_per_minute) * 100
+                      : null}
+                    tooltip="Claude calls fired by your user account in the last 60 seconds. Compared against the per-user rate limit."
+                  />
+                </div>
+              </Card>
+            </>
           )}
 
           {active === 'usage' && apiUsage && config && (
@@ -904,6 +1051,36 @@ function BudgetCard({ label, spent, budget, pct, tooltip }) {
         <span>{pct.toFixed(1)}% used</span>
         <span>${remaining.toFixed(2)} left</span>
       </div>
+    </div>
+  );
+}
+
+function LimitStat({ icon: Icon, label, value, sub, pct, tooltip }) {
+  // `pct` is optional. When provided, renders a tiny progress bar that
+  // goes yellow >70%, red >90% — same palette as BudgetCard so reviewers
+  // read "approaching cap" consistently across the page.
+  const barColor = pct == null
+    ? null
+    : pct > 90 ? 'bg-status-failing' : pct > 70 ? 'bg-status-degraded' : 'bg-accent';
+  return (
+    <div className="bg-surface-elevated rounded-lg p-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        {Icon && <Icon size={12} strokeWidth={1.5} className="text-text-subtle" />}
+        <span className="text-[10px] font-medium text-text-subtle tracking-tight">{label}</span>
+        {tooltip && <InfoTip content={tooltip} size={10} />}
+      </div>
+      <p className="text-xl font-semibold font-mono tabular-nums text-text">{value}</p>
+      {sub && <p className="text-[10px] text-text-subtle mt-0.5">{sub}</p>}
+      {pct != null && (
+        <>
+          <div className="w-full bg-hairline rounded-pill h-1.5 mt-2">
+            <div className={`h-1.5 rounded-pill transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+          </div>
+          <div className="text-[10px] text-text-subtle font-mono tabular-nums mt-0.5">
+            {pct.toFixed(1)}% of cap
+          </div>
+        </>
+      )}
     </div>
   );
 }

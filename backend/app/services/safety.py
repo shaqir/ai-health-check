@@ -61,15 +61,22 @@ class PromptSafetyError(Exception):
 
 def scan_input(text: str) -> dict:
     """
-    Scan input text for safety risks before sending to Claude.
-    Returns: {safe: bool, flags: list[str], risk_score: int (0-100), details: dict}
+    Two-layer input safety scan:
+      1. Regex tripwire — cheap, deterministic, fires on known injection patterns + PII + length.
+      2. LLM classifier (Haiku, via `llm_client.detect_injection`) — second opinion
+         that catches paraphrased / novel injections the regex misses. Fail-open:
+         classifier outages degrade the second layer silently so the actor path
+         never wedges on injection-checker problems.
+
+    Returns: {safe: bool, flags: list[str], risk_score: int (0-100), details: dict, llm_classifier: dict}
     """
     flags = []
     details = {}
     risk_score = 0
 
     if not text:
-        return {"safe": True, "flags": [], "risk_score": 0, "details": {}}
+        return {"safe": True, "flags": [], "risk_score": 0, "details": {},
+                "llm_classifier": {"injection": False, "confidence": 0, "reason": "empty_input"}}
 
     # 1. Length check
     max_len = settings.max_prompt_length
@@ -82,7 +89,7 @@ def scan_input(text: str) -> dict:
         details["length"] = {"actual": len(text), "max": max_len}
         risk_score += RISK_WEIGHT_LENGTH
 
-    # 2. Injection detection
+    # 2. Regex injection tripwire
     injection_matches = []
     for pattern in _INJECTION_COMPILED:
         match = pattern.search(text)
@@ -106,6 +113,26 @@ def scan_input(text: str) -> dict:
         details["pii"] = pii_found
         risk_score += RISK_WEIGHT_PII * len(pii_found)
 
+    # 4. LLM injection classifier (second layer). Lazy import to avoid a
+    # circular dependency: llm_client imports safety for scan_input/scan_output.
+    llm_classifier = {"injection": False, "confidence": 0, "reason": "classifier_unavailable"}
+    try:
+        from app.services.llm_client import detect_injection
+        llm_classifier = detect_injection(text)
+    except Exception:
+        # Fail-open: any wiring/import error leaves regex as the authoritative layer.
+        pass
+
+    if llm_classifier.get("injection"):
+        flags.append("llm_injection")
+        details["llm_injection"] = {
+            "confidence": llm_classifier.get("confidence", 0),
+            "reason": llm_classifier.get("reason", "unknown"),
+        }
+        # Merge: the LLM confidence (0-100) becomes an independent signal.
+        # We take the max so neither layer can silence the other.
+        risk_score = max(risk_score, int(llm_classifier.get("confidence", 0)))
+
     risk_score = min(risk_score, 100)
 
     return {
@@ -113,6 +140,7 @@ def scan_input(text: str) -> dict:
         "flags": flags,
         "risk_score": risk_score,
         "details": details,
+        "llm_classifier": llm_classifier,
     }
 
 

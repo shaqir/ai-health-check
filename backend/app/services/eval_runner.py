@@ -12,6 +12,7 @@ calling site when there's a user to attribute to.
 """
 
 import json
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,33 @@ from app.models import AIService, Alert, EvalRun, EvalResult, EvalTestCase, Tele
 from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
 
 settings = get_settings()
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
+_JSON_OBJECT_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
+
+
+def _score_json_payload(text: str) -> float:
+    """Return 100 if `text` contains a well-formed JSON object/array, else 0.
+
+    Tries, in order: raw parse, fenced ```json``` block, first {...}/[...] span.
+    """
+    if not text:
+        return 0.0
+    candidates = [text]
+    fence = _JSON_FENCE_RE.search(text)
+    if fence:
+        candidates.append(fence.group(1))
+    span = _JSON_OBJECT_RE.search(text)
+    if span:
+        candidates.append(span.group(1))
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+            return 100.0
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return 0.0
 
 
 def _compute_trend(scores: list[float]) -> str:
@@ -81,11 +109,10 @@ async def run_service_evaluation(
             if halluc_score is not None:
                 hallucination_scores.append(halluc_score)
         elif tc.category == "format_json":
-            try:
-                json.loads(response_text)
-                score = 100.0
-            except (json.JSONDecodeError, TypeError):
-                score = 0.0
+            # Claude often wraps JSON in ```json fences or adds prose around it.
+            # Extract the JSON payload before validating so a well-formed object
+            # inside markdown still scores 100.
+            score = _score_json_payload(response_text)
             format_scores.append(score)
 
         if judge_refused:
@@ -144,6 +171,12 @@ async def run_service_evaluation(
     else:
         drift_flagged = False
 
+    # Explicit completeness state so the UI doesn't have to infer "0% but
+    # Healthy" from the shape of the data. An incomplete run means every test
+    # either errored or the judge refused — quality_score=0 is math, not
+    # signal.
+    run_status = "complete" if valid_scores else "incomplete"
+
     eval_run = EvalRun(
         service_id=service.id,
         quality_score=quality_score,
@@ -152,6 +185,8 @@ async def run_service_evaluation(
         format_score=format_score,
         drift_flagged=drift_flagged,
         run_type=run_type,
+        run_status=run_status,
+        judge_model=settings.judge_model,
     )
     db.add(eval_run)
     db.flush()  # get eval_run.id for child FKs

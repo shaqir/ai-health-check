@@ -119,13 +119,22 @@ def get_metrics(
     # "Error rate" here is the DRIFT RATE — percentage of eval runs in the last
     # 7 days flagged for drift. This is quality error (bad model output), NOT
     # infra error (HTTP failures, timeouts). Infra failures live in ConnectionLog.
+    #
+    # Incomplete runs are EXCLUDED from both the numerator and denominator.
+    # An "incomplete" run produced no measurable score (every test errored or
+    # the judge refused), so counting it as either clean or drift would skew
+    # the metric in a way the Panel would rightly call out.
     recent_run_total = _env_filter(
-        db.query(EvalRun).filter(EvalRun.run_at >= week_ago),
+        db.query(EvalRun).filter(
+            EvalRun.run_at >= week_ago,
+            EvalRun.run_status == "complete",
+        ),
         environment,
     ).count()
     recent_run_flagged = _env_filter(
         db.query(EvalRun).filter(
             EvalRun.run_at >= week_ago,
+            EvalRun.run_status == "complete",
             EvalRun.drift_flagged == True,
         ),
         environment,
@@ -137,6 +146,7 @@ def get_metrics(
         db.query(EvalRun).filter(
             EvalRun.run_at >= two_weeks_ago,
             EvalRun.run_at < week_ago,
+            EvalRun.run_status == "complete",
         ),
         environment,
     ).count()
@@ -144,15 +154,19 @@ def get_metrics(
         db.query(EvalRun).filter(
             EvalRun.run_at >= two_weeks_ago,
             EvalRun.run_at < week_ago,
+            EvalRun.run_status == "complete",
             EvalRun.drift_flagged == True,
         ),
         environment,
     ).count()
     prev_error_rate = (prev_run_flagged / prev_run_total * 100) if prev_run_total > 0 else 0
 
-    # Avg quality score (last 10 env-filtered runs).
+    # Avg quality score (last 10 env-filtered runs). Exclude incomplete runs
+    # — their quality_score=0 is math, not signal, and would drag the average
+    # to a value that doesn't reflect actual model health.
     recent_runs = (
         _env_filter(db.query(EvalRun), environment)
+        .filter(EvalRun.run_status == "complete")
         .order_by(EvalRun.run_at.desc())
         .limit(10)
         .all()
@@ -165,6 +179,7 @@ def get_metrics(
     # Previous 10 runs for quality trend.
     older_runs = (
         _env_filter(db.query(EvalRun), environment)
+        .filter(EvalRun.run_status == "complete")
         .order_by(EvalRun.run_at.desc())
         .offset(10)
         .limit(10)
@@ -313,6 +328,7 @@ def get_recent_evals(
             "timestamp": run.run_at.replace(tzinfo=timezone.utc).isoformat() if run.run_at else "",
             "score": run.quality_score,
             "drift": run.drift_flagged,
+            "run_status": run.run_status,
             "type": run.run_type.capitalize(),
             "service_name": service.name if service else "",
         })

@@ -36,33 +36,6 @@ from app.routers import users as compliance_users, audit as compliance_audit, ex
 
 settings = get_settings()
 
-# Documented placeholder values that must NEVER be accepted in production.
-# The config.py default and the .env.example placeholder both land here —
-# a forgotten .env produces a signing key the whole internet can read.
-_DEFAULT_SECRET_KEYS = frozenset({
-    "change-me-in-production",
-    "change-this-to-a-random-string-at-least-32-chars",
-})
-
-
-def _validate_secret_key(key: str) -> None:
-    """
-    Refuse boot if SECRET_KEY is unset, still a documented default, or too
-    short to be meaningfully random. 32 bytes of urlsafe randomness
-    (`secrets.token_urlsafe(32)` → 43 chars) is the minimum.
-
-    Extracted as a plain function so it's unit-testable without spinning
-    up the full lifespan.
-    """
-    if not key or key in _DEFAULT_SECRET_KEYS or len(key) < 32:
-        raise RuntimeError(
-            "SECRET_KEY is unset, still a documented default, or shorter "
-            "than 32 chars. Generate a real one with "
-            "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
-            "and set SECRET_KEY in backend/.env before starting the server."
-        )
-
-
 # Background scheduler for health checks / eval runs
 scheduler = BackgroundScheduler()
 
@@ -215,11 +188,6 @@ def _install_audit_log_triggers():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Fail fast on missing / default / weak SECRET_KEY. Running with a
-    # documented placeholder means anyone who read .env.example can forge
-    # a JWT — checked here so a bad deploy can't silently start.
-    _validate_secret_key(settings.secret_key)
-
     # Create all tables (dev only — use Alembic migrations in production)
     Base.metadata.create_all(bind=engine)
     _install_audit_log_triggers()

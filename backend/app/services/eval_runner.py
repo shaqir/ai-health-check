@@ -109,16 +109,20 @@ async def run_service_evaluation(
         score = 0.0
 
         if tc.category == "factuality":
-            # Short-circuit 1: actor errored — no point asking the judge to
-            # score an error string. The status transition below marks this
-            # as "error", which is excluded from valid_scores aggregation.
             if response_text.startswith("ERROR:"):
+                # Short-circuit 1 — actor errored. Skip the judge entirely:
+                # score=0.0 default stands, halluc_score stays None, and
+                # the status transition below marks this row "error",
+                # which is excluded from valid_scores aggregation. The
+                # `pass` is load-bearing — without it the elif collapses
+                # into an if and ERROR: responses would waste a Claude
+                # round-trip on the judge.
                 pass
-
-            # Short-circuit 2: exact match — a judge call here would just
-            # confirm 100 and waste a Claude round-trip. Compare on stripped
-            # text so trailing whitespace doesn't demote a perfect answer.
             elif response_text.strip() == (tc.expected_output or "").strip():
+                # Short-circuit 2 — exact match. A judge call here would
+                # just confirm 100 and waste a Claude round-trip. Compare
+                # on stripped text so trailing whitespace doesn't demote
+                # a perfect answer.
                 score = 100.0
                 factuality_scores.append(100.0)
                 halluc_score = 0.0

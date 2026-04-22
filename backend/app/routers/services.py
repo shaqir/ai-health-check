@@ -296,11 +296,44 @@ def delete_service(
     # Cache before delete expires the ORM attributes.
     service_name = service.name
 
+    # Snapshot cascaded children BEFORE the delete. AIService has
+    # cascade="all, delete-orphan" on incidents, and Incident has the
+    # same on maintenance_plans — the ORM will silently sweep both on
+    # `db.delete(service)`. Without this snapshot a compliance reviewer
+    # asking "who deleted this plan?" gets nothing. Plans are captured
+    # before incidents so the emitted audit rows read in tree order
+    # (plans -> incidents -> service) which matches the delete order.
+    cascaded_plans: list[tuple[int, int]] = []  # (plan_id, incident_id)
+    cascaded_incidents: list[int] = []
+    for incident in service.incidents:
+        cascaded_incidents.append(incident.id)
+        for plan in incident.maintenance_plans:
+            cascaded_plans.append((plan.id, incident.id))
+
     db.delete(service)
     db.commit()
 
-    # Log after the commit so a failed delete doesn't leave an orphan audit row
-    # pointing at a service that still exists.
+    # Emit cascade audit rows first so they carry the original ids of
+    # rows that no longer exist. Then the service's own delete_service
+    # row caps the tree.
+    for plan_id, incident_id in cascaded_plans:
+        log_action(
+            db,
+            current_user.id,
+            "cascade_delete_maintenance_plan",
+            "maintenance_plans",
+            plan_id,
+            old_value=f"incident_id={incident_id}",
+        )
+    for incident_id in cascaded_incidents:
+        log_action(
+            db,
+            current_user.id,
+            "cascade_delete_incident",
+            "incidents",
+            incident_id,
+            old_value=f"service_id={service_id}",
+        )
     log_action(
         db,
         current_user.id,

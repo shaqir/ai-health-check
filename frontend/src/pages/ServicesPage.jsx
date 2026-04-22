@@ -150,7 +150,9 @@ const SENSITIVITY_OPTIONS = ['public', 'internal', 'confidential'];
 const ENV_OPTIONS = ['dev', 'staging', 'prod'];
 const DEFAULT_FORM = {
   name: '', owner: '', environment: 'dev',
-  model_name: 'claude-sonnet-4-6-20250415',
+  // Canonical catalog id (undated). Backend normalizes either form, but
+  // writing the canonical value here keeps new rows tidy.
+  model_name: 'claude-sonnet-4-6',
   sensitivity_label: 'internal', endpoint_url: '',
 };
 
@@ -172,6 +174,11 @@ export default function ServicesPage() {
   const [editingId, setEditingId] = useState(null);
   const [formError, setFormError] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  // Supported-models catalog for the dropdown. Lazy-loaded on first form
+  // open. `null` = not loaded yet; `[]` = catalog fetched but empty;
+  // object with `error` = fetch failed → UI falls back to free-text.
+  const [catalog, setCatalog] = useState(null);
+  const [catalogError, setCatalogError] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -195,11 +202,29 @@ export default function ServicesPage() {
 
   useEffect(() => { fetchServices(); }, []);
 
+  // Lazy-load the supported-models catalog on first form open. Subsequent
+  // opens reuse the cached value. On fetch failure we note the error and
+  // fall back to a free-text input so a catalog outage doesn't block
+  // creating a service.
+  const ensureCatalogLoaded = async () => {
+    if (catalog !== null) return;
+    try {
+      const res = await api.get('/settings/models/catalog');
+      setCatalog(res.data.models || []);
+      setCatalogError(null);
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'catalog fetch failed';
+      setCatalog([]);
+      setCatalogError(msg);
+    }
+  };
+
   const openCreateForm = () => {
     setForm(DEFAULT_FORM);
     setFormError(null);
     setEditingId(null);
     setFormMode('create');
+    ensureCatalogLoaded();
   };
 
   const openEditForm = (service) => {
@@ -214,6 +239,7 @@ export default function ServicesPage() {
     setFormError(null);
     setEditingId(service.id);
     setFormMode('edit');
+    ensureCatalogLoaded();
   };
 
   const closeForm = () => {
@@ -576,8 +602,57 @@ export default function ServicesPage() {
             </div>
           </div>
           <div>
-            <label className={LABEL_CLS}>Model Identifier *</label>
-            <input className={`${INPUT_CLS} font-mono`} placeholder="claude-sonnet-4-6-20250415" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} required />
+            <label className={LABEL_CLS}>Model *</label>
+            {catalog === null ? (
+              <div className={`${INPUT_CLS} text-text-subtle text-[12px] flex items-center gap-2`}>
+                <Loader2 size={12} strokeWidth={1.5} className="animate-spin" />
+                Loading supported models…
+              </div>
+            ) : catalogError ? (
+              // Graceful fallback: catalog unreachable → free-text entry so a
+              // transient outage doesn't block creating a service. Warning
+              // banner tells the user exactly why they're seeing plain text.
+              <>
+                <input
+                  className={`${INPUT_CLS} font-mono`}
+                  placeholder="claude-sonnet-4-6"
+                  value={form.model_name}
+                  onChange={(e) => setForm({ ...form, model_name: e.target.value })}
+                  required
+                />
+                <p className="mt-1.5 text-[11px] text-status-degraded flex items-start gap-1.5">
+                  <AlertCircle size={11} strokeWidth={2} className="shrink-0 mt-0.5" />
+                  Catalog unreachable ({catalogError}) — entering free text. Double-check spelling; typos fall back to Sonnet pricing.
+                </p>
+              </>
+            ) : (
+              <>
+                <select
+                  className={`${INPUT_CLS} font-mono`}
+                  value={form.model_name}
+                  onChange={(e) => setForm({ ...form, model_name: e.target.value })}
+                  required
+                >
+                  {/* If editing an existing service with an id that isn't in
+                      the current catalog (e.g. legacy dated id from seed
+                      data), preserve it as a selectable option so the edit
+                      doesn't silently change the model. */}
+                  {form.model_name && !catalog.some((m) => m.id === form.model_name) && (
+                    <option value={form.model_name}>
+                      {form.model_name} (not in catalog)
+                    </option>
+                  )}
+                  {catalog.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} — ${m.pricing.input_per_million_usd}/${m.pricing.output_per_million_usd} per 1M tok · recommended for {m.recommended_for}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-[11px] text-text-subtle">
+                  Supported Anthropic models only. Adding a new model is a one-line backend change (<code className="font-mono">model_catalog.py</code>).
+                </p>
+              </>
+            )}
           </div>
           <div>
             <label className={LABEL_CLS}>Endpoint URL</label>

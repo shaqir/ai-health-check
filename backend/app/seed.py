@@ -61,7 +61,12 @@ def seed():
             name="Customer Support Bot",
             owner="Support Team",
             environment=Environment.prod,
-            model_name="claude-sonnet-4-6-20250415",
+            # Canonical catalog id (undated). A dated snapshot like
+            # claude-sonnet-4-6-20250415 is fragile — Anthropic has
+            # retired some snapshots and returns 404, which shows up on
+            # the Services page as a Ping failure. The undated form
+            # always resolves to the latest release within the family.
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.internal,
             endpoint_url="https://api.anthropic.com/v1/messages",
         ),
@@ -69,7 +74,7 @@ def seed():
             name="Internal Report Generator",
             owner="Analytics Team",
             environment=Environment.prod,
-            model_name="claude-sonnet-4-6-20250415",
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.confidential,
             endpoint_url="https://api.anthropic.com/v1/messages/batches",
         ),
@@ -77,7 +82,7 @@ def seed():
             name="Dev Chatbot (Staging)",
             owner="Engineering",
             environment=Environment.dev,
-            model_name="claude-sonnet-4-6-20250415",
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.public,
             endpoint_url="https://api.anthropic.com/v1/messages",
         ),

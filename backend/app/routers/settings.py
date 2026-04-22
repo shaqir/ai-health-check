@@ -23,6 +23,7 @@ from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, APIUsageLog, User
 from app.services.call_families import FAMILY_LABELS, family_for_caller
+from app.services.model_catalog import CATALOG as MODEL_CATALOG
 
 router = APIRouter()
 settings = get_settings()
@@ -109,6 +110,64 @@ def get_limits(
             calls_last_minute=int(calls_last_min),
             calls_last_minute_by_user=int(calls_last_min_user),
         ),
+    )
+
+
+# ── Model catalog — powers the Service Registry dropdown ─────────────
+#
+# Single source of truth for "what models does this system support?"
+# Reads from app.services.model_catalog.CATALOG so adding a new model
+# is a one-line change that automatically updates:
+#   - this endpoint (→ the Service Registry dropdown)
+#   - pricing lookups in llm_client._estimate_cost
+#   - the /dashboard/settings Models tab
+
+
+class CatalogPricing(BaseModel):
+    input_per_million_usd: float
+    output_per_million_usd: float
+
+
+class CatalogModel(BaseModel):
+    id: str
+    family: str
+    tier: str
+    label: str
+    recommended_for: str
+    pricing: CatalogPricing
+
+
+class CatalogResponse(BaseModel):
+    models: list[CatalogModel]
+
+
+@router.get("/models/catalog", response_model=CatalogResponse)
+def get_models_catalog(
+    _: User = Depends(get_current_user),
+) -> CatalogResponse:
+    """
+    Return the list of supported Anthropic models. The frontend Service
+    Registry dropdown consumes this to offer a constrained set of
+    model IDs — free-text entry is a historical mistake that lets
+    typos silently fall back to Sonnet pricing.
+
+    Auth-required (any logged-in user can see it — this isn't sensitive).
+    """
+    return CatalogResponse(
+        models=[
+            CatalogModel(
+                id=m.id,
+                family=m.family,
+                tier=m.tier,
+                label=m.label,
+                recommended_for=m.recommended_for,
+                pricing=CatalogPricing(
+                    input_per_million_usd=m.input_per_million_usd,
+                    output_per_million_usd=m.output_per_million_usd,
+                ),
+            )
+            for m in MODEL_CATALOG
+        ]
     )
 
 

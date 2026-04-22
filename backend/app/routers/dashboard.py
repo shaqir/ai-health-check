@@ -496,22 +496,23 @@ def get_platform_settings(
     factuality + hallucination via one merged-rubric call). Pricing differs
     per model, so the UI needs both rows, not a flat single model.
 
-    The source of truth for pricing lives in llm_client._PRICING — we
-    read it here so the page can never drift from what the cost estimator
-    is actually charging against the budget.
+    The source of truth for pricing lives in app.services.model_catalog —
+    we read it here (via pricing_for, which normalizes date-suffixed ids)
+    so the page can never drift from what the cost estimator is actually
+    charging against the budget, even if the env sets a dated model id.
     """
-    from app.services.llm_client import _PRICING, _PRICING_FALLBACK
+    from app.services.model_catalog import pricing_for
 
     def _model_entry(role: str, model_id: str, purpose: str) -> dict:
-        rates = _PRICING.get(model_id, _PRICING_FALLBACK)
+        input_rate, output_rate = pricing_for(model_id)
         return {
             "role": role,
             "provider": "Anthropic",
             "id": model_id,
             "purpose": purpose,
             "pricing": {
-                "input_per_million_usd": rates["input_per_million"],
-                "output_per_million_usd": rates["output_per_million"],
+                "input_per_million_usd": input_rate,
+                "output_per_million_usd": output_rate,
                 "currency": "USD",
             },
         }

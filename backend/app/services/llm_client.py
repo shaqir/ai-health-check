@@ -38,13 +38,16 @@ _BUDGET_LOCK = threading.Lock()
 # Initialize the Anthropic client once
 _client = None
 
-# Per-model pricing (USD per million tokens). Two-model architecture runs Sonnet
-# for the actor and Haiku for the judge, so cost accounting has to be per-model
-# to stay honest. Unknown models fall back to Sonnet rates with a one-time
-# warning so a future model addition can never silently under-count cost.
+# Per-model pricing — sourced from app.services.model_catalog so adding a
+# new model means editing exactly one file (the catalog). _PRICING here is
+# kept as a legacy view for any external code that still inspects it; new
+# callers should use model_catalog.pricing_for().
+from app.services.model_catalog import CATALOG, find_model, pricing_for
+
 _PRICING = {
-    "claude-sonnet-4-6-20250415": {"input_per_million": 3.0, "output_per_million": 15.0},
-    "claude-haiku-4-5-20251001":  {"input_per_million": 1.0, "output_per_million": 5.0},
+    m.id: {"input_per_million": m.input_per_million_usd,
+           "output_per_million": m.output_per_million_usd}
+    for m in CATALOG
 }
 _PRICING_FALLBACK = {"input_per_million": 3.0, "output_per_million": 15.0}
 _unknown_model_warned: set = set()
@@ -95,15 +98,18 @@ def _get_client() -> anthropic.Anthropic:
 
 
 def _estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate cost in USD from token counts, per model."""
-    rates = _PRICING.get(model)
-    if rates is None:
-        rates = _PRICING_FALLBACK
+    """Estimate cost in USD from token counts, per model. Normalizes the
+    model id first (strips -YYYYMMDD date suffixes) so both the dated
+    and undated forms of the same model resolve to the same rates."""
+    # Warn-once for models missing from the catalog. find_model returns
+    # None → pricing_for falls back to Sonnet rates (safe over-estimate).
+    if find_model(model) is None:
         if model not in _unknown_model_warned:
             _unknown_model_warned.add(model)
             print(f"[llm_client] WARNING: unknown model '{model}', falling back to Sonnet pricing")
-    input_cost = (input_tokens / 1_000_000) * rates["input_per_million"]
-    output_cost = (output_tokens / 1_000_000) * rates["output_per_million"]
+    input_rate, output_rate = pricing_for(model)
+    input_cost = (input_tokens / 1_000_000) * input_rate
+    output_cost = (output_tokens / 1_000_000) * output_rate
     return round(input_cost + output_cost, 6)
 
 

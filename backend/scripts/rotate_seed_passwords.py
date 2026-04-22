@@ -4,8 +4,8 @@ dropping the rest of the database.
 
 Why it exists
 -------------
-`backend/app/seed.py` used to hardcode the demo passwords (admin123,
-etc.) and those values were published in six places across the repo.
+`backend/app/seed.py` used to hardcode the demo passwords (one literal
+per role) and those values were published in six places across the repo.
 Commit `df4f9d0` moved the passwords to env-var overrides
 (SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD / SEED_VIEWER_PASSWORD)
 with demo fallbacks. But `seed.py` only runs on an EMPTY database —

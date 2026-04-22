@@ -152,6 +152,38 @@ def test_list_eval_runs(client, db, admin_token):
     assert len(res.json()) >= 1
 
 
+def test_list_eval_runs_maps_service_name_correctly_with_multiple_services(
+    client, db, admin_token,
+):
+    """Regression guard for the service-name map-by-id batch lookup.
+
+    Before batching, each run re-queried AIService individually so the
+    correctness was obvious. After batching we use a dict keyed by
+    service_id — if that map ever gets the wrong key, the bug silently
+    swaps service names between runs. Three services with distinct
+    names + one run each catches that class of mistake.
+    """
+    svc_a = _create_service_with_model(db, "claude-sonnet-4-6", name="Alpha")
+    svc_b = _create_service_with_model(db, "claude-haiku-4-5", name="Beta")
+    svc_c = _create_service_with_model(db, "claude-sonnet-4-6", name="Gamma")
+    db.add_all([
+        EvalRun(service_id=svc_a.id, quality_score=90.0, drift_flagged=False, run_type="manual"),
+        EvalRun(service_id=svc_b.id, quality_score=80.0, drift_flagged=False, run_type="manual"),
+        EvalRun(service_id=svc_c.id, quality_score=70.0, drift_flagged=False, run_type="manual"),
+    ])
+    db.commit()
+
+    res = client.get("/api/v1/evaluations/runs", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    runs = res.json()
+
+    # Index by quality_score since we set them distinct above.
+    by_score = {r["quality_score"]: r for r in runs}
+    assert by_score[90.0]["service_name"] == "Alpha"
+    assert by_score[80.0]["service_name"] == "Beta"
+    assert by_score[70.0]["service_name"] == "Gamma"
+
+
 def test_get_eval_run_preserves_run_status(client, db, admin_token):
     """GET /runs/{id} must echo the persisted run_status.
 

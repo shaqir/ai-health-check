@@ -254,9 +254,18 @@ def list_eval_runs(
     query = apply_env_filter(query, environment)
     runs = query.order_by(EvalRun.run_at.desc()).limit(50).all()
 
+    # Batch-load services in one query instead of N+1 lookups in the loop.
+    service_ids = {run.service_id for run in runs}
+    services_by_id = {
+        s.id: s for s in (
+            db.query(AIService).filter(AIService.id.in_(service_ids)).all()
+            if service_ids else []
+        )
+    }
+
     result = []
     for run in runs:
-        service = db.query(AIService).filter(AIService.id == run.service_id).first()
+        service = services_by_id.get(run.service_id)
         result.append(EvalRunResponse(
             id=run.id,
             service_id=run.service_id,
@@ -421,25 +430,47 @@ def drift_check(
         if score < prev_avg - 15:
             severity = "critical"
 
-    # Per-test-case breakdown (from EvalResult)
-    per_test = []
+    # Per-test-case breakdown (from EvalResult) — batched to avoid N+1.
     latest_results = (
         db.query(EvalResult)
         .filter(EvalResult.eval_run_id == current.id)
         .all()
     )
-    for er in latest_results:
-        tc = db.query(EvalTestCase).filter(EvalTestCase.id == er.test_case_id).first()
-        # Get historical scores for this test case
-        historical = (
-            db.query(EvalResult.score)
-            .filter(EvalResult.test_case_id == er.test_case_id)
+
+    # 1 query for all test cases referenced by the current run (replaces
+    # one-query-per-EvalResult inside the loop).
+    tc_ids = {er.test_case_id for er in latest_results}
+    test_cases_by_id = {
+        tc.id: tc for tc in (
+            db.query(EvalTestCase).filter(EvalTestCase.id.in_(tc_ids)).all()
+            if tc_ids else []
+        )
+    }
+
+    # 1 query for ALL historical scores covering those test_case_ids,
+    # ordered newest-first. Group by test_case_id in Python and truncate
+    # each group to `window` entries. Replaces N queries (one per
+    # EvalResult) with a single bulk join.
+    historical_by_tc: dict[int, list[float]] = {}
+    if tc_ids:
+        historical_rows = (
+            db.query(EvalResult.test_case_id, EvalResult.score)
+            .filter(EvalResult.test_case_id.in_(tc_ids))
             .join(EvalRun)
             .order_by(EvalRun.run_at.desc())
-            .limit(window)
             .all()
         )
-        hist_scores = [h[0] for h in reversed(historical)]
+        for tc_id, score in historical_rows:
+            bucket = historical_by_tc.setdefault(tc_id, [])
+            if len(bucket) < window:
+                bucket.append(score)
+
+    per_test = []
+    for er in latest_results:
+        tc = test_cases_by_id.get(er.test_case_id)
+        # Historical scores are stored newest-first above; reverse for
+        # chronological order so compute_quality_trend gets oldest→newest.
+        hist_scores = list(reversed(historical_by_tc.get(er.test_case_id, [])))
         per_test.append({
             "test_case_id": er.test_case_id,
             "prompt_snippet": (tc.prompt[:60] + "...") if tc and len(tc.prompt) > 60 else (tc.prompt if tc else ""),

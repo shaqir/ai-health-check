@@ -224,3 +224,76 @@ def test_acknowledge_missing_alert_returns_404(client, admin_token):
     )
     assert res.status_code == 404
     assert res.json()["detail"] == "Alert not found"
+
+
+# ── N+1 → batch-load regression guards ──────────────────────────────
+# Both /recent-evals and /drift-alerts used to fire one AIService query
+# per run inside the loop. After M2-4 they batch-load via a single
+# `in_(service_ids)` query and map by id. These tests create multiple
+# services with distinct names so a map-by-id mistake (e.g. wrong
+# key) would surface as a swapped or blank service_name.
+
+def test_recent_evals_service_name_correct_across_multiple_services(
+    client, db, admin_token,
+):
+    svc_a = AIService(
+        name="RecentAlpha", owner="T", environment=Environment.prod,
+        model_name="claude-sonnet-4-6", sensitivity_label=SensitivityLabel.internal,
+    )
+    svc_b = AIService(
+        name="RecentBeta", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5", sensitivity_label=SensitivityLabel.internal,
+    )
+    db.add_all([svc_a, svc_b])
+    db.commit()
+    db.refresh(svc_a); db.refresh(svc_b)
+
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        EvalRun(service_id=svc_a.id, quality_score=91.0, drift_flagged=False,
+                run_type="manual", run_at=now - timedelta(hours=1)),
+        EvalRun(service_id=svc_b.id, quality_score=81.0, drift_flagged=False,
+                run_type="manual", run_at=now - timedelta(hours=2)),
+    ])
+    db.commit()
+
+    res = client.get("/api/v1/dashboard/recent-evals", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    runs = res.json()
+
+    by_score = {r["score"]: r for r in runs}
+    assert by_score[91.0]["service_name"] == "RecentAlpha"
+    assert by_score[81.0]["service_name"] == "RecentBeta"
+
+
+def test_drift_alerts_service_name_correct_across_multiple_services(
+    client, db, admin_token,
+):
+    svc_a = AIService(
+        name="DriftAlpha", owner="T", environment=Environment.prod,
+        model_name="claude-sonnet-4-6", sensitivity_label=SensitivityLabel.internal,
+    )
+    svc_b = AIService(
+        name="DriftBeta", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5", sensitivity_label=SensitivityLabel.internal,
+    )
+    db.add_all([svc_a, svc_b])
+    db.commit()
+    db.refresh(svc_a); db.refresh(svc_b)
+
+    now = datetime.now(timezone.utc)
+    db.add_all([
+        EvalRun(service_id=svc_a.id, quality_score=42.0, drift_flagged=True,
+                run_type="manual", run_at=now - timedelta(hours=1)),
+        EvalRun(service_id=svc_b.id, quality_score=48.0, drift_flagged=True,
+                run_type="manual", run_at=now - timedelta(hours=2)),
+    ])
+    db.commit()
+
+    res = client.get("/api/v1/dashboard/drift-alerts", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    rows = res.json()
+
+    by_score = {r["score"]: r for r in rows}
+    assert by_score[42.0]["service_name"] == "DriftAlpha"
+    assert by_score[48.0]["service_name"] == "DriftBeta"

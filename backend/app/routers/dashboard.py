@@ -328,9 +328,18 @@ def get_recent_evals(
         .all()
     )
 
+    # Batch-load services in one query instead of one per run.
+    service_ids = {run.service_id for run in runs}
+    services_by_id = {
+        s.id: s for s in (
+            db.query(AIService).filter(AIService.id.in_(service_ids)).all()
+            if service_ids else []
+        )
+    }
+
     result = []
     for run in runs:
-        service = db.query(AIService).filter(AIService.id == run.service_id).first()
+        service = services_by_id.get(run.service_id)
         result.append({
             "id": run.id,
             # Emit ISO-8601 with explicit UTC so the client can render in the
@@ -362,9 +371,18 @@ def get_drift_alerts(
         .all()
     )
 
+    # Batch-load services in one query instead of one per run.
+    service_ids = {run.service_id for run in runs}
+    services_by_id = {
+        s.id: s for s in (
+            db.query(AIService).filter(AIService.id.in_(service_ids)).all()
+            if service_ids else []
+        )
+    }
+
     result = []
     for run in runs:
-        service = db.query(AIService).filter(AIService.id == run.service_id).first()
+        service = services_by_id.get(run.service_id)
         result.append({
             "service_name": service.name if service else "",
             "score": run.quality_score,

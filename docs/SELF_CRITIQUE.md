@@ -191,40 +191,36 @@ Documented as R17 residual."*
 
 ---
 
-## 6. Budget errors silently become approved-looking drafts
+## 6. Budget errors silently become approved-looking drafts — ✅ FIXED
 
-**What we claim.** HITL approval protects against AI mistakes; budget
+> **Resolved in commit `232d944` (Batch B).** The critique below is kept
+> as a worked example of audit-to-fix traceability. The "Recovery move"
+> is now the deployed behaviour.
+
+**What we claimed.** HITL approval protects against AI mistakes; budget
 enforcement returns structured HTTP errors (402 for budget, 429 for rate
 limit) that the UI can render as toasts or error cards.
 
-**What it actually is.** `generate_summary`, `generate_dashboard_insight`,
-and `generate_compliance_summary` (`llm_client.py:623`, `:753`, `:798`)
-all end with `except Exception as e:` that catches `CallLimitExceeded`,
-`PromptSafetyError`, and every Anthropic error, then returns the error
-string *inside the draft field* (`"Error generating summary: budget
-exceeded..."`, etc.). The HITL approver sees this as draft content, not
-as an error. Compare to `test_connection` which correctly re-raises
-`CallLimitExceeded` and `PromptSafetyError` so the global FastAPI
-exception handler maps them to the right status code.
+**What it was.** `generate_summary`, `generate_dashboard_insight`,
+and `generate_compliance_summary` all ended with `except Exception as e:`
+that caught `CallLimitExceeded`, `PromptSafetyError`, and every
+Anthropic error, then returned the error string *inside the draft
+field* (`"Error generating summary: budget exceeded..."`, etc.). The
+HITL approver saw this as draft content, not as an error.
 
-**What the professor will ask.**
-- What does the approver see if the daily budget runs out in the middle
-  of drafting an incident summary?
-- Can a malicious or noisy approver mechanically approve a draft whose
-  content is literally the text "Error generating summary"?
-- Why isn't the 402 surfaced to the UI?
+**What we ship now.** The three synthesis functions split the exception
+handler: `CallLimitExceeded` and `PromptSafetyError` re-raise so the
+global FastAPI handler in `main.py` maps them to HTTP 402/413/422/429.
+Only generic `Exception` (transient Anthropic 5xx after retries,
+network blips) falls back to the error-in-draft text, so a flaky
+upstream doesn't break the HITL flow entirely. Six tests in
+`test_synthesis_reraises.py` guard both contracts.
 
-**Honest answer.** The approver sees a draft that begins `"Error
-generating summary:"`. The Approve button is still live. The R17
-rubber-stamping residual is already documented; *this* extends the
-attack surface — now even a budget exhaustion can end up as an approved
-incident record if the approver isn't paying attention.
-
-**Recovery move for viva.** *"P0 fix for production — re-raise
-CallLimitExceeded and PromptSafetyError in the three synthesis functions
-so the global exception handler returns the correct status (402/413/
-422/429) and the UI shows an error toast instead of a fake draft.
-Tracked in Batch B."*
+**Viva framing if asked.** *"This was a self-identified audit finding.
+We re-raise the structured errors now — verified by three tests that
+fire CallLimitExceeded / PromptSafetyError into each synthesis function
+and assert they propagate. The transient-error fallback is separately
+guarded by three more tests so the fix didn't over-correct."*
 
 ---
 
@@ -314,7 +310,7 @@ Read the README's "Key Features" list and the demo walkthrough's
 | "Human-in-the-loop approval" | "forced-deliberation approval with mandatory reviewer note" |
 | "Drift detection with trend + variance + confidence" | "drift heuristics — threshold + split-half trend at low N" |
 | "LLM-as-judge evaluation" | "LLM judges another Claude output — with known circularity limitation" |
-| "Budget + safety errors return structured HTTP codes" | "structured HTTP codes from `test_connection`; synthesis functions silently return error text in the draft field" |
+| "Budget + safety errors return structured HTTP codes" | "structured HTTP codes from all LLM paths after commit `232d944` — budget / safety errors re-raise to the global handler; only transient Anthropic failures fall back to draft-with-error text" |
 | "PII detection in prompt safety scanner" | "PII *flagging* in the safety scanner; the raw text still lands in `APIUsageLog` unredacted" |
 | "LLM-as-judge on every factuality test case" | "LLM-as-judge on every *non-trivial* factuality case — exact matches short-circuit and skip the judge" |
 

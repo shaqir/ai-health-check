@@ -2,7 +2,17 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { InfoTip } from './Tooltip';
 
-export default function DataTable({ columns, data, searchPlaceholder = 'Search...', onRowClick }) {
+export default function DataTable({
+  columns,
+  data,
+  searchPlaceholder = 'Search...',
+  onRowClick,
+  // `flat` drops the outer card shell so the table can nest inside a parent
+  // card without the double-border look (used by the audit log).
+  flat = false,
+  // `maxHeight` constrains the body scroll area and enables a sticky header.
+  maxHeight,
+}) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
@@ -31,8 +41,17 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
       })
     : filtered;
 
+  const outerCls = flat
+    ? ''
+    : 'bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden';
+  const scrollStyle = maxHeight ? { maxHeight } : undefined;
+  // With a max height we enable both axes so long rows don't push content
+  // off-card; without it, preserve the original horizontal-only behavior.
+  const scrollCls = maxHeight ? 'overflow-auto' : 'overflow-x-auto';
+  const thStickyCls = maxHeight ? 'sticky top-0 z-10 bg-surface' : '';
+
   return (
-    <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
+    <div className={outerCls}>
       {/* Search */}
       <div className="px-4 py-3 border-b border-hairline">
         <div className="relative">
@@ -49,14 +68,14 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
+      <div className={scrollCls} style={scrollStyle}>
         <table className="w-full text-sm" role="table">
           <thead>
             <tr className="border-b border-hairline">
               {columns.map(col => (
                 <th
                   key={col.key}
-                  className="px-4 py-3 text-left text-[11px] font-medium text-text-muted tracking-tight cursor-pointer select-none hover:text-text transition-standard"
+                  className={`px-4 py-3 text-left text-[12px] font-semibold text-text-muted tracking-tight cursor-pointer select-none hover:text-text transition-standard whitespace-nowrap ${thStickyCls}`}
                   onClick={() => handleSort(col.key)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSort(col.key)}
                   tabIndex={0}
@@ -106,7 +125,7 @@ export default function DataTable({ columns, data, searchPlaceholder = 'Search..
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-2 border-t border-hairline text-[11px] text-text-subtle tabular-nums">
+      <div className="px-4 py-2.5 border-t border-hairline text-[12px] text-text-subtle tabular-nums">
         {sorted.length} of {data.length} {data.length === 1 ? 'record' : 'records'}
       </div>
     </div>

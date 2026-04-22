@@ -33,11 +33,6 @@ export default function EvaluationsPage() {
   // flag between the "Run" click and the confirm action. Null when closed.
   const [runConfirm, setRunConfirm] = useState(null);
 
-  // Live refresh indicator — tracks actual refresh moments so the dot
-  // pulses on fetch and "Updated Ns ago" reflects reality.
-  const [lastFetchAt, setLastFetchAt] = useState(Date.now());
-  const [nowTick, setNowTick] = useState(Date.now());
-
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
   const fetchData = async () => {
@@ -54,28 +49,15 @@ export default function EvaluationsPage() {
       setServices(srvRes.data);
       const svcWithCases = [...new Set(tcRes.data.map(tc => tc.service_id))];
       if (svcWithCases.length > 0 && !selectedDriftService) setSelectedDriftService(svcWithCases[0]);
-      setLastFetchAt(Date.now());
     } catch { setError('Failed to load evaluation data.'); } finally { setLoading(false); }
   };
 
+  // Auto-refresh intentionally disabled on this page to avoid reloads
+  // interrupting demos. Data refreshes on env change and after mutations.
   useEffect(() => {
     setLoading(true);
     fetchData();
-    // 30s matches the Dashboard cadence. Lets scheduled eval runs appear
-    // in the table without requiring a manual page reload.
-    const interval = setInterval(() => fetchData(), 30000);
-    return () => clearInterval(interval);
   }, [activeEnv]);
-
-  // 1-second ticker for the "Updated Ns ago" label. Decoupled from the
-  // fetch interval so the counter keeps moving between refreshes.
-  useEffect(() => {
-    const id = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
-  const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
   const handleCreateTestCase = async (e) => {
     e.preventDefault();
@@ -147,23 +129,6 @@ export default function EvaluationsPage() {
 
       <PageHeader title="Evaluations" description="Test cases, evaluation runs, and drift detection.">
         <div className="flex items-center gap-3">
-          {/* Live refresh indicator — static dot, one-shot pulse on actual
-              refresh (keyed by lastFetchAt), honest "Ns ago" counter. */}
-          <div
-            className="flex items-center gap-1.5"
-            aria-label={`Last refreshed ${updatedLabel}, auto-refreshing every 30 seconds`}
-            title={`Refreshes every 30 seconds. Last: ${updatedLabel}.`}
-          >
-            <span
-              key={lastFetchAt}
-              className="dash-pulse w-1.5 h-1.5 rounded-full bg-status-healthy"
-              aria-hidden="true"
-            />
-            <span className="text-[11px] font-medium text-text-subtle tracking-tight tabular-nums">
-              Updated {updatedLabel}
-            </span>
-          </div>
-
           {/* Env tabs */}
           <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Environment filter">
             {['all', 'dev', 'staging', 'production'].map((tab) => (
@@ -172,7 +137,7 @@ export default function EvaluationsPage() {
                 role="tab"
                 aria-selected={activeEnv === tab}
                 onClick={() => setActiveEnv(tab)}
-                className={`px-3 py-1 text-[12px] font-medium rounded-pill capitalize transition-standard ${
+                className={`px-3.5 py-1.5 text-[13px] font-medium rounded-pill capitalize transition-standard ${
                   activeEnv === tab
                     ? 'bg-surface-elevated text-text shadow-xs'
                     : 'text-text-muted hover:text-text'
@@ -184,8 +149,8 @@ export default function EvaluationsPage() {
           </div>
 
           {canEdit && (
-            <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-accent text-white rounded-pill text-[12px] font-medium hover:bg-accent-hover transition-standard">
-              <Plus size={14} strokeWidth={1.75} /> Add test case
+            <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-pill text-[13px] font-medium hover:bg-accent-hover transition-standard">
+              <Plus size={15} strokeWidth={1.75} /> Add test case
             </button>
           )}
         </div>
@@ -202,9 +167,9 @@ export default function EvaluationsPage() {
                 key={svcId}
                 onClick={() => handleRunEval(svcId)}
                 disabled={runningService !== null}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-status-healthy text-white rounded-pill text-[12px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
+                className="flex items-center gap-1.5 px-4 py-2 bg-status-healthy text-white rounded-pill text-[13px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
               >
-                {runningService === svcId ? <Loader2 size={12} strokeWidth={1.5} className="animate-spin" /> : <Play size={12} strokeWidth={1.75} />}
+                {runningService === svcId ? <Loader2 size={14} strokeWidth={1.5} className="animate-spin" /> : <Play size={14} strokeWidth={1.75} />}
                 {svc?.name || `#${svcId}`} ({count})
               </button>
             );

@@ -22,14 +22,19 @@ _INJECTION_PATTERNS = [
     r"ignore\s+(all\s+)?prior\s+instructions",
     r"disregard\s+(all\s+)?(previous|prior|above)",
     r"forget\s+(all\s+)?(previous|prior|above)\s+(instructions|context)",
+    r"forget\s+everything",
     r"you\s+are\s+now\s+(a|an|the)",
     r"new\s+instructions?\s*:",
+    r"new\s+persona\s*:",
+    r"updated\s+(system\s+)?(instructions|prompt)\s*:",
     r"system\s*prompt\s*:",
-    r"(reveal|show|output|print|display)\s+(your\s+)?(system\s+)?(prompt|instructions)",
+    r"(reveal|show|output|print|display|leak|expose)\s+(your\s+)?(system\s+)?(prompt|instructions)",
+    r"(reveal|show|leak|expose)\s+(the\s+)?(api[\s_-]?key|secret[\s_-]?key|access[\s_-]?token|password)",
     r"what\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions)",
     r"repeat\s+(all|your)\s+(system\s+)?(messages|prompts|instructions)",
     r"act\s+as\s+(if\s+)?(you\s+are|a|an)",
     r"pretend\s+(you\s+are|to\s+be)",
+    r"roleplay\s+as",
     r"jailbreak",
     r"DAN\s+mode",
     r"developer\s+mode\s+(enabled|on|activated)",
@@ -61,7 +66,9 @@ class PromptSafetyError(Exception):
 
 def scan_input(text: str) -> dict:
     """
-    Scan input text for safety risks before sending to Claude.
+    Single-layer regex tripwire for input safety. Checks length, known
+    injection patterns, and PII. Fast, deterministic, observable in logs.
+
     Returns: {safe: bool, flags: list[str], risk_score: int (0-100), details: dict}
     """
     flags = []
@@ -82,7 +89,7 @@ def scan_input(text: str) -> dict:
         details["length"] = {"actual": len(text), "max": max_len}
         risk_score += RISK_WEIGHT_LENGTH
 
-    # 2. Injection detection
+    # 2. Injection tripwire
     injection_matches = []
     for pattern in _INJECTION_COMPILED:
         match = pattern.search(text)

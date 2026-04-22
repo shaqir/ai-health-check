@@ -31,6 +31,18 @@ const STATUS_MAP = {
   public: { bg: 'bg-status-healthy-muted', text: 'text-status-healthy', dot: 'bg-status-healthy' },
   internal: { bg: 'bg-status-degraded-muted', text: 'text-status-degraded', dot: 'bg-status-degraded' },
   confidential: { bg: 'bg-status-failing-muted', text: 'text-status-failing', dot: 'bg-status-failing' },
+  // Safety flag values (surfaced in APIUsageLog.safety_flags and EvalRun UI)
+  injection_attempt: { bg: 'bg-status-failing-muted', text: 'text-status-failing', dot: 'bg-status-failing' },
+  llm_injection: { bg: 'bg-status-failing-muted', text: 'text-status-failing', dot: 'bg-status-failing' },
+  // Tri-state run completeness — incomplete means no measurable signal
+  // (every test errored or the judge refused). Visually muted so reviewers
+  // don't read "Healthy" or "Drift" into it.
+  incomplete: { bg: 'bg-status-unknown-muted', text: 'text-status-unknown', dot: 'bg-status-unknown' },
+  'no signal': { bg: 'bg-status-unknown-muted', text: 'text-status-unknown', dot: 'bg-status-unknown' },
+  pii_detected: { bg: 'bg-status-degraded-muted', text: 'text-status-degraded', dot: 'bg-status-degraded' },
+  length_exceeded: { bg: 'bg-status-failing-muted', text: 'text-status-failing', dot: 'bg-status-failing' },
+  length_warning: { bg: 'bg-status-degraded-muted', text: 'text-status-degraded', dot: 'bg-status-degraded' },
+  blocked_safety: { bg: 'bg-status-failing-muted', text: 'text-status-failing', dot: 'bg-status-failing' },
 };
 
 const DEFAULT = { bg: 'bg-status-unknown-muted', text: 'text-status-unknown', dot: 'bg-status-unknown' };
@@ -38,6 +50,9 @@ const DEFAULT = { bg: 'bg-status-unknown-muted', text: 'text-status-unknown', do
 export default function StatusBadge({ status }) {
   const key = (status || '').toLowerCase();
   const style = STATUS_MAP[key] || DEFAULT;
+  // snake_case safety flags like `llm_injection` render as "Llm injection" by default
+  // — keep it readable by converting underscores to spaces before capitalize runs.
+  const label = String(status || '').replace(/_/g, ' ');
 
   return (
     <span
@@ -45,7 +60,7 @@ export default function StatusBadge({ status }) {
       role="status"
     >
       <span className={`w-1 h-1 rounded-full ${style.dot}`} aria-hidden="true" />
-      <span className="capitalize">{status}</span>
+      <span className="capitalize">{label}</span>
     </span>
   );
 }

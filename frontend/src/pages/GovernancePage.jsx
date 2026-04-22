@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert, Filter } from 'lucide-react';
+import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCheck, ShieldAlert, Filter, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
@@ -67,8 +67,58 @@ function titleCase(raw) {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// Axios error-detail extractor. When `responseType: 'blob'` is set on a
+// request (we need this for PDF), axios returns *even error bodies* as a
+// Blob — so `err.response.data.detail` is undefined and the fallback shows
+// the raw "Request failed with status 403" instead of the server's message.
+// Read the blob as text + JSON.parse to get back to the normal shape.
+async function extractErrorDetail(err, fallback = 'Request failed') {
+  const data = err?.response?.data;
+  const status = err?.response?.status;
+
+  const formatDetail = (detail) => {
+    if (detail == null) return null;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      // Pydantic validation errors: [{loc:[...], msg:"...", type:"..."}, ...]
+      const lines = detail.slice(0, 4).map((d) => {
+        const field = Array.isArray(d?.loc) ? d.loc.slice(1).join('.') || d.loc.join('.') : 'input';
+        const msg = d?.msg || d?.type || 'invalid value';
+        return `${field}: ${msg}`;
+      });
+      const extra = detail.length > 4 ? ` (+${detail.length - 4} more)` : '';
+      return `Validation error — ${lines.join('; ')}${extra}`;
+    }
+    if (typeof detail === 'object') return detail.msg || detail.message || JSON.stringify(detail);
+    return String(detail);
+  };
+
+  const prefix = status ? `${status} · ` : '';
+
+  if (!data) {
+    return `${err?.code === 'ERR_NETWORK' ? 'Backend unreachable — ' : ''}${err?.message || fallback}`;
+  }
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      try {
+        const parsed = JSON.parse(text);
+        const detail = formatDetail(parsed.detail);
+        return detail ? `${prefix}${detail}` : text || err?.message || fallback;
+      } catch {
+        return text || err?.message || fallback;
+      }
+    } catch {
+      return err?.message || fallback;
+    }
+  }
+  if (typeof data === 'string') return `${prefix}${data}`;
+  const detail = formatDetail(data.detail);
+  return detail ? `${prefix}${detail}` : (err?.message || fallback);
+}
+
 export default function GovernancePage() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, canEdit, isViewer } = useAuth();
   const [auditLogs, setAuditLogs] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -207,15 +257,35 @@ export default function GovernancePage() {
         showToast(`Integrity FAILURE at id ${res.data.broken_at}: ${res.data.reason}`, 'error');
       }
     } catch (err) {
-      showToast('Integrity check failed: ' + (err.response?.data?.detail || err.message), 'error');
+      const detail = await extractErrorDetail(err, 'Integrity check failed');
+      showToast('Integrity check failed: ' + detail, 'error');
     }
   };
 
   const handleExport = async (format) => {
+    // Proactive guard — viewer can't export. Server will also 403, but showing
+    // the reason before the round-trip is clearer UX.
+    if (!canEdit) {
+      showToast("Export requires admin or maintainer role. Your role is 'viewer'.", 'error');
+      return;
+    }
+
+    // Client-side date validation so obvious typos don't waste a round-trip
+    // and return an opaque 400. Server still validates (authoritative).
+    const { from, to } = exportRange;
+    if (!from || !to) {
+      showToast('Please select both From and To dates.', 'error');
+      return;
+    }
+    if (from > to) {
+      showToast(`"From" date (${from}) must be before or equal to "To" date (${to}).`, 'error');
+      return;
+    }
+
     showToast(`Exporting ${format.toUpperCase()}...`, 'info');
     try {
       const res = await api.post('/compliance/export', {
-        format, from_date: exportRange.from, to_date: exportRange.to,
+        format, from_date: from, to_date: to,
       }, format === 'pdf' ? { responseType: 'blob' } : {});
 
       const blob = format === 'pdf'
@@ -228,9 +298,18 @@ export default function GovernancePage() {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
       showToast(`${format.toUpperCase()} exported`, 'success');
     } catch (err) {
-      showToast('Export failed: ' + (err.response?.data?.detail || err.message), 'error');
+      // Blob error body needs async decode — see extractErrorDetail.
+      const detail = await extractErrorDetail(err, 'Export failed');
+      const status = err?.response?.status;
+      const prefix = status === 403
+        ? 'Export blocked'
+        : status === 400
+          ? 'Invalid export request'
+          : 'Export failed';
+      showToast(`${prefix}: ${detail}`, 'error');
     }
   };
 
@@ -243,7 +322,8 @@ export default function GovernancePage() {
       showToast(`Role updated to ${newRole}`, 'success');
       setUsers(users.map(u => u.id === userId ? { ...u, role: newRole } : u));
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Failed to update role', 'error');
+      const detail = await extractErrorDetail(err, 'Failed to update role');
+      showToast(detail, 'error');
     } finally {
       setChangingRoleFor(null);
     }
@@ -257,22 +337,36 @@ export default function GovernancePage() {
         if (!v) return <span className="font-mono text-xs text-text-subtle">—</span>;
         const d = new Date(v);
         if (Number.isNaN(d.getTime())) {
-          return <span className="font-mono tabular-nums text-xs">{v}</span>;
+          return <span className="font-mono tabular-nums text-xs whitespace-nowrap">{v}</span>;
         }
-        const short = d.toLocaleString(undefined, {
-          month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-        });
+        // Two-line compact layout — date on top (subtle), time below (mono).
+        // Keeps the Time column narrow without wrapping mid-word like the
+        // single-string "Apr 20, 4:41:51 PM" did in the screenshot.
+        const date = d.toLocaleString(undefined, { month: 'short', day: '2-digit' });
+        const time = d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         return (
-          <span
-            className="font-mono tabular-nums text-xs"
+          <div
+            className="whitespace-nowrap leading-tight"
             title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
           >
-            {short}
-          </span>
+            <div className="text-[10px] text-text-subtle">{date}</div>
+            <div className="font-mono tabular-nums text-xs text-text">{time}</div>
+          </div>
         );
       },
     },
-    { key: 'user', label: 'Actor', render: (v) => <span className="font-medium text-text">{v}</span> },
+    {
+      key: 'user',
+      label: 'Actor',
+      render: (v) => (
+        <span
+          className="font-medium text-text text-xs whitespace-nowrap truncate max-w-[180px] block"
+          title={v}
+        >
+          {v}
+        </span>
+      ),
+    },
     {
       key: 'action',
       label: 'Action',
@@ -280,19 +374,23 @@ export default function GovernancePage() {
         const cat = categorize(row.rawAction);
         const cls = ACTION_TONE[cat] || ACTION_TONE.other;
         return (
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-pill text-[11px] font-medium ${cls}`}>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-pill text-[11px] font-medium whitespace-nowrap ${cls}`}>
             {v}
           </span>
         );
       },
     },
-    { key: 'target', label: 'Target', render: (v) => <span className="text-xs text-text">{v}</span> },
+    {
+      key: 'target',
+      label: 'Target',
+      render: (v) => <span className="text-xs text-text whitespace-nowrap">{v}</span>,
+    },
     {
       key: 'details',
       label: 'Changes',
       render: (v) => (
         <span
-          className="text-xs text-text-subtle font-mono truncate max-w-[260px] block"
+          className="text-xs text-text-subtle font-mono truncate max-w-[320px] block"
           title={v || ''}
         >
           {v || '—'}
@@ -352,7 +450,15 @@ export default function GovernancePage() {
               <h3 className="text-[13px] font-semibold text-text tracking-tight">Audit log</h3>
             </div>
 
-            {auditLogs.length > 0 ? (
+            {!isAdmin ? (
+              <div className="p-6">
+                <EmptyState
+                  icon={Lock}
+                  title="Audit log is admin-only"
+                  description={`Only administrators can read audit events. Your role is '${user?.role || 'unknown'}'.`}
+                />
+              </div>
+            ) : auditLogs.length > 0 ? (
               <>
                 {/* Volume stats — reacts to filter selections so tiles
                     reflect what's currently visible in the table below. */}
@@ -423,7 +529,13 @@ export default function GovernancePage() {
                 </div>
 
                 {filteredLogs.length > 0 ? (
-                  <DataTable columns={auditColumns} data={filteredLogs} searchPlaceholder="Search audit events..." />
+                  <DataTable
+                    columns={auditColumns}
+                    data={filteredLogs}
+                    searchPlaceholder="Search audit events..."
+                    flat
+                    maxHeight="520px"
+                  />
                 ) : (
                   <div className="p-6">
                     <EmptyState
@@ -502,21 +614,54 @@ export default function GovernancePage() {
               <p className="text-[12px] text-text-subtle leading-relaxed">
                 Export audit trail, incidents, and telemetry for compliance review.
               </p>
+              {isViewer && (
+                <div
+                  role="note"
+                  className="flex items-start gap-2 p-2.5 rounded-md text-[11px] bg-status-degraded-muted text-status-degraded"
+                >
+                  <Lock size={12} strokeWidth={1.75} className="shrink-0 mt-0.5" />
+                  <span>Viewer role cannot export. Requires admin or maintainer.</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[11px] font-medium text-text-subtle tracking-tight mb-1">From</label>
-                  <input type="date" className={INPUT_CLS} value={exportRange.from} onChange={e => setExportRange({ ...exportRange, from: e.target.value })} />
+                  <input
+                    type="date"
+                    className={`${INPUT_CLS} disabled:opacity-50 disabled:cursor-not-allowed`}
+                    value={exportRange.from}
+                    onChange={e => setExportRange({ ...exportRange, from: e.target.value })}
+                    disabled={!canEdit}
+                  />
                 </div>
                 <div>
                   <label className="block text-[11px] font-medium text-text-subtle tracking-tight mb-1">To</label>
-                  <input type="date" className={INPUT_CLS} value={exportRange.to} onChange={e => setExportRange({ ...exportRange, to: e.target.value })} />
+                  <input
+                    type="date"
+                    className={`${INPUT_CLS} disabled:opacity-50 disabled:cursor-not-allowed`}
+                    value={exportRange.to}
+                    onChange={e => setExportRange({ ...exportRange, to: e.target.value })}
+                    disabled={!canEdit}
+                  />
                 </div>
               </div>
               <div className="flex gap-2 pt-3 border-t border-hairline">
-                <button onClick={() => handleExport('pdf')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard">
+                <button
+                  onClick={() => handleExport('pdf')}
+                  disabled={!canEdit}
+                  title={canEdit ? 'Download PDF report' : 'Requires admin or maintainer role'}
+                  aria-disabled={!canEdit}
+                  className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-text-muted bg-surface-elevated rounded-pill hover:text-text transition-standard disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-muted"
+                >
                   <FileText size={12} strokeWidth={1.5} /> PDF
                 </button>
-                <button onClick={() => handleExport('json')} className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-white bg-accent rounded-pill hover:bg-accent-hover transition-standard">
+                <button
+                  onClick={() => handleExport('json')}
+                  disabled={!canEdit}
+                  title={canEdit ? 'Download JSON report' : 'Requires admin or maintainer role'}
+                  aria-disabled={!canEdit}
+                  className="flex-1 flex justify-center items-center gap-1.5 py-1.5 text-[12px] font-medium text-white bg-accent rounded-pill hover:bg-accent-hover transition-standard disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-accent"
+                >
                   <FileJson size={12} strokeWidth={1.5} /> JSON
                 </button>
               </div>

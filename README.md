@@ -41,12 +41,12 @@ AI Health Check is an **AI Operations Control Room** that answers all four quest
 
 Every time the app talks to the AI model, it goes through this pipeline:
 
-1. **Scan the input** -- Check for prompt injection attempts, personal information (emails, phone numbers, SSNs), toxicity (violence, bias, illegal content), and length limits
+1. **Scan the input (single-layer regex)** -- 15 injection patterns, PII detection (email, phone, SSN, credit card), and a length limit (hard cap 12 000 chars). Risk score ≥ 80 blocks the call with HTTP 422. An LLM classifier second layer was trialled and removed in commit `73e09b3` — the false-positive rate didn't justify the cost at demo scale.
 2. **Check the budget** -- Block the call if daily ($5) or monthly ($25) spend limits are reached
-3. **Check rate limits** -- Throttle if the user exceeds 5 calls/minute or the system exceeds 10/minute
-4. **Call the model** -- If all checks pass, send the request. If it fails, retry up to 2 times with backoff
+3. **Check rate limits** -- Throttle if the user exceeds 20 calls/minute or the system exceeds 30/minute (sized for demo eval batches — a 10-case factuality run fires ~20 Claude calls: 10 actor + 10 merged judge). Exceeding returns HTTP 429.
+4. **Call the model** -- Sonnet for actor + synthesis tasks; Haiku for the judges that score factuality and hallucination. If it fails, retry up to 2 times with backoff
 5. **Scan the output** -- Check the AI's response for personal information before showing it to the user
-6. **Log everything** -- Record tokens, cost, latency, and any safety flags
+6. **Log everything** -- Record tokens, cost, latency, model used, and any safety flags (per-model cost accounting keeps Haiku vs Sonnet rows priced correctly)
 
 ## Tech Stack
 
@@ -55,8 +55,9 @@ Every time the app talks to the AI model, it goes through this pipeline:
 | Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts |
 | Backend | FastAPI, Python 3.11+, SQLAlchemy |
 | Database | SQLite |
-| LLM | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) |
-| Testing | Pytest (123 tests, ~71% coverage) |
+| LLM (actor) | Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6-20250415`) — services under test + synthesis tasks |
+| LLM (judge) | Anthropic Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) — merged factuality + hallucination judge (one structured call per factuality test case) |
+| Testing | Pytest (188 tests across 22 files, ~71% coverage) |
 
 ## Quick Start
 
@@ -107,7 +108,7 @@ ai-health-check/
 │   │   │                        #             maintenance, dashboard, users, audit, export)
 │   │   ├── services/            # llm_client, safety, url_validator, sensitivity, draft_service
 │   │   └── middleware/          # auth, rbac (audits denials), audit (hash-chain)
-│   └── tests/                   # 123 tests across 13 files
+│   └── tests/                   # 188 tests across 22 files
 ├── frontend/src/
 │   ├── pages/                   # 9 pages
 │   ├── components/              # 13 shared + 3 eval components
@@ -164,7 +165,7 @@ reviewing compliance, or rehearsing a demo.
 | [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
-| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 123 tests across 13 files with coverage floor, what they cover, how to run |
+| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 188 tests across 22 files with coverage floor, what they cover, how to run |
 | [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm, judge-refused handling |
 | [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
 | [RISK_REGISTER](docs/RISK_REGISTER.md) | 17 risks with mitigations and residuals |

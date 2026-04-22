@@ -16,6 +16,9 @@ venv/
 # Database
 *.db
 *.sqlite3
+# DB snapshots from ad-hoc backups — the current *.db rule doesn't cover
+# `*.db.bak.<timestamp>` because glob matches to end-of-name.
+*.db.bak.*
 
 # Node
 node_modules/
@@ -34,6 +37,10 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# LibreOffice temp + lock files (leaked from editing docs)
+*.tmp
+.~lock.*
 
 # Testing
 .coverage

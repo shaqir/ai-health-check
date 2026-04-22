@@ -71,7 +71,7 @@ def seed():
             environment=Environment.prod,
             model_name="claude-sonnet-4-6-20250415",
             sensitivity_label=SensitivityLabel.confidential,
-            endpoint_url="https://api.anthropic.com/v1/messages",
+            endpoint_url="https://api.anthropic.com/v1/messages/batches",
         ),
         AIService(
             name="Dev Chatbot (Staging)",

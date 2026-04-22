@@ -292,7 +292,10 @@ def test_confidential_service_allows_admin_override(client, db, admin_token, mon
     from app.models import AuditLog
 
     # Stub the LLM call so we don't hit the real API
-    async def _fake_test_connection(model=None):
+    async def _fake_test_connection(model=None, **kwargs):
+        # **kwargs absorbs user_id + service_id, added when observability
+        # threading landed in commit e0940c5. Accepting them keeps the
+        # stub compatible with both old and new call-sites.
         return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
 
     monkeypatch.setattr(
@@ -397,7 +400,10 @@ def test_update_rejects_rebound_to_private_ip(client, db, admin_token, monkeypat
 
 def test_public_service_not_gated(client, db, admin_token, monkeypatch):
     """Public services bypass the sensitivity gate entirely."""
-    async def _fake_test_connection(model=None):
+    async def _fake_test_connection(model=None, **kwargs):
+        # **kwargs absorbs user_id + service_id, added when observability
+        # threading landed in commit e0940c5. Accepting them keeps the
+        # stub compatible with both old and new call-sites.
         return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
 
     monkeypatch.setattr(

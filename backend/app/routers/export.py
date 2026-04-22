@@ -288,6 +288,18 @@ def export_compliance_data(
                 status_code=500,
                 detail="PDF generation unavailable — reportlab not installed",
             )
+        except Exception as exc:
+            # Runtime failures inside reportlab (malformed table data,
+            # style errors, buffer I/O) previously bubbled up to FastAPI's
+            # default 500 handler as `{"detail": "Internal Server Error"}`,
+            # telling the operator nothing about where or why. Catch
+            # everything the happy path didn't re-raise and surface a
+            # clean message naming PDF generation as the source. Message
+            # truncated so a runaway exception repr doesn't spam the body.
+            raise HTTPException(
+                status_code=500,
+                detail=f"PDF generation failed: {str(exc)[:200]}",
+            )
 
     return JSONResponse(
         content={
@@ -344,7 +356,10 @@ async def generate_ai_compliance_report(
         for r in drift_runs
     ]
 
-    result = await generate_compliance_summary(audit_data, incidents_data, drift_data)
+    result = await generate_compliance_summary(
+        audit_data, incidents_data, drift_data,
+        user_id=current_user.id,
+    )
 
     surface_ref = f"{from_date or 'start'}_to_{to_date or 'now'}"
     draft = create_draft(

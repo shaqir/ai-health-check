@@ -101,10 +101,13 @@ def test_viewer_cannot_create_test_case(client, db, viewer_token):
 # ── Eval Runs ──
 
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock)
-def test_run_evaluation(mock_score, mock_eval, client, db, admin_token):
+@patch("app.services.eval_runner.judge_response", new_callable=AsyncMock)
+def test_run_evaluation(mock_judge, mock_eval, client, db, admin_token):
+    # judge_response now returns both rubrics in one call. `hallucination:
+    # None` means "no measurable signal" for that rubric — excluded from
+    # averaging, same contract as the old two-call path.
     mock_eval.return_value = {"response_text": "Paris is the capital of France.", "latency_ms": 150}
-    mock_score.return_value = 90.0
+    mock_judge.return_value = {"factuality": 90.0, "hallucination": None}
 
     svc = _create_service(db)
     db.add(EvalTestCase(service_id=svc.id, prompt="Capital of France?", expected_output="Paris", category="factuality"))
@@ -119,10 +122,10 @@ def test_run_evaluation(mock_score, mock_eval, client, db, admin_token):
 
 
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock)
-def test_run_evaluation_drift_detected(mock_score, mock_eval, client, db, admin_token):
+@patch("app.services.eval_runner.judge_response", new_callable=AsyncMock)
+def test_run_evaluation_drift_detected(mock_judge, mock_eval, client, db, admin_token):
     mock_eval.return_value = {"response_text": "Wrong answer", "latency_ms": 200}
-    mock_score.return_value = 40.0
+    mock_judge.return_value = {"factuality": 40.0, "hallucination": None}
 
     svc = _create_service(db)
     db.add(EvalTestCase(service_id=svc.id, prompt="test", expected_output="correct", category="factuality"))
@@ -197,10 +200,13 @@ def test_drift_check_with_runs_exercises_per_test_breakdown(client, db, admin_to
 
 # ── Drift alert auto-creation ──
 
-@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=30.0)
+@patch(
+    "app.services.eval_runner.judge_response",
+    new_callable=AsyncMock,
+    return_value={"factuality": 30.0, "hallucination": 50.0},
+)
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=50.0)
-def test_drift_critical_creates_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
+def test_drift_critical_creates_alert(mock_run, mock_judge, client, db, admin_token):
     """Quality far below threshold must auto-create a critical Alert row."""
     from app.models import Alert
 
@@ -222,10 +228,13 @@ def test_drift_critical_creates_alert(mock_halluc, mock_run, mock_score, client,
     assert alerts[0].service_id == svc.id
 
 
-@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=95.0)
+@patch(
+    "app.services.eval_runner.judge_response",
+    new_callable=AsyncMock,
+    return_value={"factuality": 95.0, "hallucination": 10.0},
+)
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=10.0)
-def test_healthy_score_creates_no_alert(mock_halluc, mock_run, mock_score, client, db, admin_token):
+def test_healthy_score_creates_no_alert(mock_run, mock_judge, client, db, admin_token):
     """No drift = no alert."""
     from app.models import Alert
 
@@ -245,10 +254,13 @@ def test_healthy_score_creates_no_alert(mock_halluc, mock_run, mock_score, clien
     assert len(alerts) == 0
 
 
-@patch("app.services.eval_runner.score_factuality", new_callable=AsyncMock, return_value=20.0)
+@patch(
+    "app.services.eval_runner.judge_response",
+    new_callable=AsyncMock,
+    return_value={"factuality": 20.0, "hallucination": 60.0},
+)
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)
-@patch("app.services.eval_runner.detect_hallucination", new_callable=AsyncMock, return_value=60.0)
-def test_drift_alert_creation_audited(mock_halluc, mock_run, mock_score, client, db, admin_token):
+def test_drift_alert_creation_audited(mock_run, mock_judge, client, db, admin_token):
     """Alert creation must itself leave an audit trail."""
     from app.models import AuditLog
 

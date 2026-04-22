@@ -13,6 +13,9 @@
 | 2026-03-18 | Initial: `claude-sonnet-4-20250514` (Sonnet 4), `anthropic>=0.39.0` | Project launch |
 | 2026-04-12 | Upgrade: `claude-sonnet-4-6-20250415` (Sonnet 4.6), `anthropic>=0.49.0` | Improved reasoning and instruction following; no prompt changes required |
 | 2026-04-18 | Judge parser strict mode: `score_factuality()` and `detect_hallucination()` now require `re.fullmatch` on a bare integer and return `None` on refusal | Hostile QA found the old `re.search(r"\d+", text)` misread refusals ("I cannot rate this. 404 Not Found" → 404 → clamp 100 → severe hallucination; "I can give you 7 reasons" → factuality 7% → false drift). No prompt text changed; parsing contract changed. |
+| 2026-04-20 | Dropped LLM injection classifier (`detect_injection`); safety is now single-layer regex only | Commit `73e09b3`. The Haiku classifier's false-positive rate on legitimate prompts (incident symptoms like "please investigate the failed auth") didn't justify its cost at demo scale. The 15-pattern regex tripwire remains. |
+| 2026-04-20 | Merged `score_factuality` + `detect_hallucination` into a single `judge_response` call returning structured JSON `{factuality, hallucination}` | Commit `0fbddac`. Halves judge traffic (one Haiku call per factuality test case instead of two reading the same inputs). New parser `_parse_judge_json` handles accidental code fences, clamps each rubric to `[0, 100]`, returns `None` per-rubric on refusal. Callers must distinguish `None` from `0` — a refusal is not a zero score. |
+| 2026-04-21 | Synthesis functions (`generate_summary`, `generate_dashboard_insight`, `generate_compliance_summary`) now re-raise `CallLimitExceeded` and `PromptSafetyError` instead of returning them as draft content | Commit `232d944`. Structured errors propagate to the global FastAPI handler (HTTP 402/413/422/429) so a budget exhaustion or safety block during LLM drafting surfaces as an HTTP error, not as approvable HITL text. Generic `Exception` (transient Anthropic 5xx after retries, network blips) still falls back to the error-in-draft UX so a flaky API doesn't break the HITL flow. |
 
 ---
 
@@ -46,7 +49,39 @@ Output: Returns `{response_text, latency_ms}`. On error, response_text is `"ERRO
 
 ---
 
+### judge_response
+
+Module 2 (Evaluation Scoring). Merged factuality + hallucination judge. Max tokens: 60. Current production call for every non-short-circuited factuality test case.
+
+```
+You are evaluating AI output quality on TWO independent rubrics.
+
+PROMPT (what was asked):
+{prompt}
+
+EXPECTED OUTPUT (ground truth):
+{expected}
+
+ACTUAL OUTPUT (model response):
+{actual}
+
+Score each rubric from 0 to 100:
+- factuality: how factually close is ACTUAL to EXPECTED? 100 = perfect match in meaning, 0 = completely different.
+- hallucination: how much does ACTUAL contain claims not supported by PROMPT? 0 = fully grounded, 100 = mostly fabricated.
+
+Respond with ONLY valid JSON on a single line, no prose, no code fences:
+{"factuality": <0-100>, "hallucination": <0-100>}
+```
+
+Output: Parsed via `_parse_judge_json()` which strips accidental code fences, parses the JSON, clamps each rubric to `[0, 100]`, and returns `{"factuality": float|None, "hallucination": float|None}`. `None` for a rubric means the judge refused, returned malformed JSON, or produced a non-numeric value for that key — callers treat refusal as `judge_refused` status and EXCLUDE the case from aggregate quality. Routed to `settings.judge_model` (Haiku 4.5 default), not the actor model.
+
+Replaces the separate `score_factuality` + `detect_hallucination` pair in commit `0fbddac` — one Claude call per test case instead of two reading the same inputs.
+
+---
+
 ### score_factuality
+
+> **REPLACED in commit `0fbddac`** — see `judge_response` above. Kept here for historical reference.
 
 Module 2 (Evaluation Scoring). Rates factual similarity 0-100. Max tokens: 10.
 
@@ -162,6 +197,8 @@ Output: Full response returned as `report_text`. Input serialized via `json.dump
 ---
 
 ### detect_hallucination
+
+> **REPLACED in commit `0fbddac`** — see `judge_response` above. Kept here for historical reference.
 
 Module 2 (Hallucination Detection). Judges whether a model response contains unsupported or fabricated claims. Inspired by Patronus AI / Braintrust. Max tokens: 10.
 

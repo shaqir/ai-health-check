@@ -443,7 +443,7 @@ don't ship that failure mode."*
 > → plan → audit → export. Four modules, one HITL contract, one audit
 > chain, one safety pipeline. The code is 9 routers and 14 models on
 > FastAPI; the UI is the Apple-design-inspired React app you just saw; we
-> ship with 123 tests, 71% coverage, and a full governance audit in
+> ship with 188 tests, 71% coverage, and a full governance audit in
 > `GOVERNANCE_AUDIT.md` that tells you exactly what it would take to run
 > this in a regulated industry. Questions?"*
 

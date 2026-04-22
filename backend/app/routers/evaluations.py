@@ -55,6 +55,8 @@ class EvalRunResponse(BaseModel):
     hallucination_score: float | None = None
     drift_flagged: bool
     run_type: str
+    run_status: str = "complete"
+    judge_model: str | None = None
     run_at: datetime | None = None
     created_at: datetime | None = None
 
@@ -205,7 +207,9 @@ async def run_evaluation(
 
     # Delegate to the shared runner — persists EvalRun + EvalResults +
     # Telemetry + (if drift) Alert in one committed unit.
-    eval_run, results, drift_flagged = await run_service_evaluation(db, service, run_type="manual")
+    eval_run, results, drift_flagged = await run_service_evaluation(
+        db, service, run_type="manual", user_id=current_user.id,
+    )
 
     log_action(
         db, current_user.id, "run_evaluation", "eval_runs",
@@ -236,6 +240,8 @@ async def run_evaluation(
         hallucination_score=eval_run.hallucination_score,
         drift_flagged=eval_run.drift_flagged,
         run_type=eval_run.run_type,
+        run_status=eval_run.run_status,
+        judge_model=eval_run.judge_model,
         run_at=eval_run.run_at,
         created_at=eval_run.created_at,
         results=results,
@@ -268,6 +274,8 @@ def list_eval_runs(
             hallucination_score=run.hallucination_score,
             drift_flagged=run.drift_flagged,
             run_type=run.run_type,
+            run_status=run.run_status,
+            judge_model=run.judge_model,
             run_at=run.run_at,
             created_at=run.created_at,
         ))
@@ -292,8 +300,10 @@ def get_eval_run(
         quality_score=run.quality_score,
         factuality_score=run.factuality_score,
         format_score=run.format_score,
+        hallucination_score=run.hallucination_score,
         drift_flagged=run.drift_flagged,
         run_type=run.run_type,
+        judge_model=run.judge_model,
         run_at=run.run_at,
         created_at=run.created_at,
     )

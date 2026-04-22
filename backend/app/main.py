@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware.correlation import CorrelationIdMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import text
 
@@ -30,7 +31,7 @@ from app.models import (  # noqa: F401
 )
 
 # Import routers
-from app.routers import auth, services, incidents, maintenance, evaluations, dashboard
+from app.routers import auth, services, incidents, maintenance, evaluations, dashboard, settings as settings_router
 from app.routers import users as compliance_users, audit as compliance_audit, export as compliance_export
 
 settings = get_settings()
@@ -117,8 +118,18 @@ def scheduled_health_check():
                 with httpx.Client(timeout=10.0, follow_redirects=True) as client:
                     response = client.get(service.endpoint_url)
                 latency_ms = round((time.perf_counter() - start) * 1000, 1)
-                status_str = "success" if response.is_success else "failure"
+                # Liveness semantics: treat 4xx as reachable — many registered
+                # AI endpoints are POST-only and return 405/401 to anonymous
+                # GETs. Only 5xx + network errors count as the endpoint being
+                # down. See routers/services._probe_service_endpoint.
+                code = response.status_code
+                if code < 500:
+                    status_str = "success"
+                else:
+                    status_str = "failure"
                 snippet = (response.text or "")[:200]
+                if code >= 400:
+                    snippet = f"HTTP {code} (reachable). {snippet[:150]}"
             except Exception as exc:
                 latency_ms = round((time.perf_counter() - start) * 1000, 1)
                 status_str = "failure"
@@ -227,7 +238,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Echo the correlation id in responses so the browser devtools network
+    # tab can link a UI action to the trace row in Settings → Call Trace.
+    expose_headers=["X-Correlation-Id"],
 )
+
+# Per-request correlation id (ASGI middleware, runs on every HTTP request).
+# Must be added AFTER CORS so the CORS middleware wraps it — FastAPI
+# applies middleware in reverse-add order, so the last-added runs first.
+app.add_middleware(CorrelationIdMiddleware)
 
 # ── Register Routers ──
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
@@ -236,6 +255,7 @@ app.include_router(incidents.router, prefix="/api/v1/incidents", tags=["Incident
 app.include_router(maintenance.router, prefix="/api/v1/maintenance", tags=["Maintenance"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["Evaluations"])
 app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
 # Compliance surface — split into three routers, all mounted under
 # /api/v1/compliance so the frontend paths are unchanged.
 app.include_router(compliance_users.router, prefix="/api/v1/compliance", tags=["Compliance · Users"])
@@ -247,10 +267,29 @@ app.include_router(compliance_export.router, prefix="/api/v1/compliance", tags=[
 
 @app.exception_handler(BudgetExceededError)
 async def budget_exceeded_handler(request, exc: BudgetExceededError):
-    status_code = 429 if exc.exceeded_type == "rate_limit" else 402
+    # HTTP status mapping by limit type:
+    #   rate_limit / user_rate_limit  → 429 Too Many Requests
+    #   daily / monthly               → 402 Payment Required (budget)
+    #   prompt_chars                  → 413 Payload Too Large
+    #   max_tokens / per_call_cost    → 422 Unprocessable Entity (bad request shape)
+    limit_type = exc.limit_type
+    if limit_type in ("rate_limit", "user_rate_limit"):
+        status_code = 429
+    elif limit_type in ("daily", "monthly"):
+        status_code = 402
+    elif limit_type == "prompt_chars":
+        status_code = 413
+    else:
+        status_code = 422
     return JSONResponse(
         status_code=status_code,
-        content={"detail": str(exc), "exceeded_type": exc.exceeded_type},
+        content={
+            "detail": str(exc),
+            "limit_type": limit_type,
+            "exceeded_type": limit_type,  # kept for backward-compat clients
+            "current": exc.current,
+            "cap": exc.cap,
+        },
     )
 
 

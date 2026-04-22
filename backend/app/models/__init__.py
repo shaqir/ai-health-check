@@ -137,6 +137,16 @@ class EvalRun(Base):
     hallucination_score = Column(Float, nullable=True)
     drift_flagged = Column(Boolean, default=False)
     run_type = Column(String(20), default="manual")  # "manual" or "scheduled"
+    # Tri-state honest status:
+    #   "complete"   — valid_scores was non-empty; quality_score is meaningful.
+    #   "incomplete" — every test errored or the judge refused, so quality_score
+    #                  is 0 by math but NOT meaningful. UI should render it as
+    #                  "no measurable signal" rather than "0% but Healthy".
+    run_status = Column(String(20), default="complete", nullable=False)
+    # Which model produced the judge scores above. NULL for legacy rows
+    # created before the two-tier architecture landed. Lets auditors
+    # trace a score back to the exact judge model at run time.
+    judge_model = Column(String(100), nullable=True)
     run_at = Column(DateTime, default=utcnow)
     created_at = Column(DateTime, default=utcnow)
 
@@ -260,6 +270,11 @@ class APIUsageLog(Base):
     risk_score = Column(Integer, default=0)               # 0-100 input risk score
     prompt_text = Column(Text, default="")               # actual prompt sent (truncated to 2000 chars)
     response_text = Column(Text, default="")             # actual response received (truncated to 2000 chars)
+    # Per-HTTP-request UUID that groups every Claude call fired inside one
+    # user action together. Populated by CorrelationIdMiddleware via a
+    # contextvar — no caller needs to know it exists. NULL for background
+    # scheduler calls and legacy rows.
+    correlation_id = Column(String(36), index=True, nullable=True)
     timestamp = Column(DateTime, default=utcnow)
 
 

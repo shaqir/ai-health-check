@@ -12,15 +12,43 @@ calling site when there's a user to attribute to.
 """
 
 import json
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import AIService, Alert, EvalRun, EvalResult, EvalTestCase, Telemetry
-from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
+from app.services.llm_client import run_eval_prompt, judge_response
 
 settings = get_settings()
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
+_JSON_OBJECT_RE = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
+
+
+def _score_json_payload(text: str) -> float:
+    """Return 100 if `text` contains a well-formed JSON object/array, else 0.
+
+    Tries, in order: raw parse, fenced ```json``` block, first {...}/[...] span.
+    """
+    if not text:
+        return 0.0
+    candidates = [text]
+    fence = _JSON_FENCE_RE.search(text)
+    if fence:
+        candidates.append(fence.group(1))
+    span = _JSON_OBJECT_RE.search(text)
+    if span:
+        candidates.append(span.group(1))
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+            return 100.0
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return 0.0
 
 
 def _compute_trend(scores: list[float]) -> str:
@@ -41,10 +69,16 @@ async def run_service_evaluation(
     db: Session,
     service: AIService,
     run_type: str = "manual",
+    user_id: int | None = None,
 ) -> tuple[EvalRun, list[dict], bool]:
     """
     Run every test case for `service`, persist the EvalRun + children, and
     return (eval_run, per_test_results, drift_flagged).
+
+    `user_id` is the authenticated user who triggered the run (manual)
+    or None when the background scheduler is the origin. Forwarded to
+    every Claude call so the usage log attributes spend correctly and
+    per-user rate limits can fire.
 
     Raises ValueError if the service has no test cases.
     """
@@ -62,7 +96,11 @@ async def run_service_evaluation(
     hallucination_scores: list[float] = []
 
     for tc in test_cases:
-        llm_result = await run_eval_prompt(prompt=tc.prompt)
+        llm_result = await run_eval_prompt(
+            prompt=tc.prompt,
+            user_id=user_id,
+            service_id=service.id,
+        )
         response_text = llm_result.get("response_text", "")
         latency_ms = llm_result.get("latency_ms", 0)
 
@@ -71,21 +109,49 @@ async def run_service_evaluation(
         score = 0.0
 
         if tc.category == "factuality":
-            fact_score = await score_factuality(tc.expected_output, response_text)
-            if fact_score is None:
-                judge_refused = True
-            else:
-                score = fact_score
-                factuality_scores.append(fact_score)
-            halluc_score = await detect_hallucination(tc.prompt, response_text)
-            if halluc_score is not None:
-                hallucination_scores.append(halluc_score)
-        elif tc.category == "format_json":
-            try:
-                json.loads(response_text)
+            if response_text.startswith("ERROR:"):
+                # Short-circuit 1 — actor errored. Skip the judge entirely:
+                # score=0.0 default stands, halluc_score stays None, and
+                # the status transition below marks this row "error",
+                # which is excluded from valid_scores aggregation. The
+                # `pass` is load-bearing — without it the elif collapses
+                # into an if and ERROR: responses would waste a Claude
+                # round-trip on the judge.
+                pass
+            elif response_text.strip() == (tc.expected_output or "").strip():
+                # Short-circuit 2 — exact match. A judge call here would
+                # just confirm 100 and waste a Claude round-trip. Compare
+                # on stripped text so trailing whitespace doesn't demote
+                # a perfect answer.
                 score = 100.0
-            except (json.JSONDecodeError, TypeError):
-                score = 0.0
+                factuality_scores.append(100.0)
+                halluc_score = 0.0
+                hallucination_scores.append(0.0)
+
+            # Normal path: one merged judge call returns both scores.
+            else:
+                judged = await judge_response(
+                    tc.prompt,
+                    tc.expected_output,
+                    response_text,
+                    user_id=user_id,
+                    service_id=service.id,
+                )
+                fact = judged["factuality"]
+                halluc = judged["hallucination"]
+                if fact is None:
+                    judge_refused = True
+                else:
+                    score = fact
+                    factuality_scores.append(fact)
+                if halluc is not None:
+                    halluc_score = halluc
+                    hallucination_scores.append(halluc)
+        elif tc.category == "format_json":
+            # Claude often wraps JSON in ```json fences or adds prose around it.
+            # Extract the JSON payload before validating so a well-formed object
+            # inside markdown still scores 100.
+            score = _score_json_payload(response_text)
             format_scores.append(score)
 
         if judge_refused:
@@ -144,6 +210,12 @@ async def run_service_evaluation(
     else:
         drift_flagged = False
 
+    # Explicit completeness state so the UI doesn't have to infer "0% but
+    # Healthy" from the shape of the data. An incomplete run means every test
+    # either errored or the judge refused — quality_score=0 is math, not
+    # signal.
+    run_status = "complete" if valid_scores else "incomplete"
+
     eval_run = EvalRun(
         service_id=service.id,
         quality_score=quality_score,
@@ -152,6 +224,8 @@ async def run_service_evaluation(
         format_score=format_score,
         drift_flagged=drift_flagged,
         run_type=run_type,
+        run_status=run_status,
+        judge_model=settings.judge_model,
     )
     db.add(eval_run)
     db.flush()  # get eval_run.id for child FKs

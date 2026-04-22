@@ -130,12 +130,31 @@ async def _probe_service_endpoint(endpoint_url: str) -> dict:
             response = await client.get(endpoint_url)
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
         snippet = (response.text or "")[:200]
+        # Liveness semantics: the probe is a network reachability check, not a
+        # functional auth/method check. Many registered endpoints (Anthropic,
+        # OpenAI, etc.) are POST-only and respond 405 to GET, or 401 without
+        # credentials — both mean "the server is up and answered us," which
+        # is what a ping should test. Only 5xx and network errors count as
+        # the endpoint being down.
+        code = response.status_code
+        if code < 400:
+            probe_status = "success"
+            snippet_msg = snippet or f"HTTP {code} from service endpoint"
+        elif code < 500:
+            probe_status = "success"
+            snippet_msg = (
+                f"HTTP {code} (reachable — endpoint is up but rejected our "
+                f"anonymous GET; most AI APIs are POST-only + auth-required). "
+                f"{snippet[:120]}"
+            )
+        else:
+            probe_status = "failure"
+            snippet_msg = f"HTTP {code} (server error). {snippet[:120]}"
         return {
-            "status": "success" if response.is_success else "failure",
+            "status": probe_status,
             "latency_ms": latency_ms,
-            "response_snippet": (
-                snippet or f"HTTP {response.status_code} from service endpoint"
-            ),
+            "response_snippet": snippet_msg,
+            "http_status": code,
         }
     except httpx.HTTPError as exc:
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
@@ -277,11 +296,44 @@ def delete_service(
     # Cache before delete expires the ORM attributes.
     service_name = service.name
 
+    # Snapshot cascaded children BEFORE the delete. AIService has
+    # cascade="all, delete-orphan" on incidents, and Incident has the
+    # same on maintenance_plans — the ORM will silently sweep both on
+    # `db.delete(service)`. Without this snapshot a compliance reviewer
+    # asking "who deleted this plan?" gets nothing. Plans are captured
+    # before incidents so the emitted audit rows read in tree order
+    # (plans -> incidents -> service) which matches the delete order.
+    cascaded_plans: list[tuple[int, int]] = []  # (plan_id, incident_id)
+    cascaded_incidents: list[int] = []
+    for incident in service.incidents:
+        cascaded_incidents.append(incident.id)
+        for plan in incident.maintenance_plans:
+            cascaded_plans.append((plan.id, incident.id))
+
     db.delete(service)
     db.commit()
 
-    # Log after the commit so a failed delete doesn't leave an orphan audit row
-    # pointing at a service that still exists.
+    # Emit cascade audit rows first so they carry the original ids of
+    # rows that no longer exist. Then the service's own delete_service
+    # row caps the tree.
+    for plan_id, incident_id in cascaded_plans:
+        log_action(
+            db,
+            current_user.id,
+            "cascade_delete_maintenance_plan",
+            "maintenance_plans",
+            plan_id,
+            old_value=f"incident_id={incident_id}",
+        )
+    for incident_id in cascaded_incidents:
+        log_action(
+            db,
+            current_user.id,
+            "cascade_delete_incident",
+            "incidents",
+            incident_id,
+            old_value=f"service_id={service_id}",
+        )
     log_action(
         db,
         current_user.id,
@@ -312,7 +364,11 @@ async def test_service_connection(
 
     if mode == "llm":
         enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
-        result = await llm_test_connection(model=service.model_name)
+        result = await llm_test_connection(
+            model=service.model_name,
+            user_id=current_user.id,
+            service_id=service.id,
+        )
     else:
         if not service.endpoint_url:
             raise HTTPException(
@@ -331,13 +387,17 @@ async def test_service_connection(
     db.commit()
     db.refresh(log)
 
+    audit_detail = f"{result['status']} ({result['latency_ms']}ms)"
+    if result["status"] == "failure" and result.get("response_snippet"):
+        audit_detail = f"{audit_detail} — {result['response_snippet'][:160]}"
+
     log_action(
         db,
         current_user.id,
         "test_connection",
         "connection_logs",
         log.id,
-        new_value=f"{result['status']} ({result['latency_ms']}ms)",
+        new_value=audit_detail,
     )
 
     return ServiceConnectionResponse(

@@ -4,7 +4,7 @@ Dashboard router for Module 2: metrics aggregation, trends, and AI-powered insig
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -119,13 +119,22 @@ def get_metrics(
     # "Error rate" here is the DRIFT RATE — percentage of eval runs in the last
     # 7 days flagged for drift. This is quality error (bad model output), NOT
     # infra error (HTTP failures, timeouts). Infra failures live in ConnectionLog.
+    #
+    # Incomplete runs are EXCLUDED from both the numerator and denominator.
+    # An "incomplete" run produced no measurable score (every test errored or
+    # the judge refused), so counting it as either clean or drift would skew
+    # the metric in a way the Panel would rightly call out.
     recent_run_total = _env_filter(
-        db.query(EvalRun).filter(EvalRun.run_at >= week_ago),
+        db.query(EvalRun).filter(
+            EvalRun.run_at >= week_ago,
+            EvalRun.run_status == "complete",
+        ),
         environment,
     ).count()
     recent_run_flagged = _env_filter(
         db.query(EvalRun).filter(
             EvalRun.run_at >= week_ago,
+            EvalRun.run_status == "complete",
             EvalRun.drift_flagged == True,
         ),
         environment,
@@ -137,6 +146,7 @@ def get_metrics(
         db.query(EvalRun).filter(
             EvalRun.run_at >= two_weeks_ago,
             EvalRun.run_at < week_ago,
+            EvalRun.run_status == "complete",
         ),
         environment,
     ).count()
@@ -144,15 +154,19 @@ def get_metrics(
         db.query(EvalRun).filter(
             EvalRun.run_at >= two_weeks_ago,
             EvalRun.run_at < week_ago,
+            EvalRun.run_status == "complete",
             EvalRun.drift_flagged == True,
         ),
         environment,
     ).count()
     prev_error_rate = (prev_run_flagged / prev_run_total * 100) if prev_run_total > 0 else 0
 
-    # Avg quality score (last 10 env-filtered runs).
+    # Avg quality score (last 10 env-filtered runs). Exclude incomplete runs
+    # — their quality_score=0 is math, not signal, and would drag the average
+    # to a value that doesn't reflect actual model health.
     recent_runs = (
         _env_filter(db.query(EvalRun), environment)
+        .filter(EvalRun.run_status == "complete")
         .order_by(EvalRun.run_at.desc())
         .limit(10)
         .all()
@@ -165,6 +179,7 @@ def get_metrics(
     # Previous 10 runs for quality trend.
     older_runs = (
         _env_filter(db.query(EvalRun), environment)
+        .filter(EvalRun.run_status == "complete")
         .order_by(EvalRun.run_at.desc())
         .offset(10)
         .limit(10)
@@ -313,6 +328,7 @@ def get_recent_evals(
             "timestamp": run.run_at.replace(tzinfo=timezone.utc).isoformat() if run.run_at else "",
             "score": run.quality_score,
             "drift": run.drift_flagged,
+            "run_status": run.run_status,
             "type": run.run_type.capitalize(),
             "service_name": service.name if service else "",
         })
@@ -391,7 +407,7 @@ async def get_ai_summary(
         "drift_alert_count": drift_count,
     }
 
-    result = await generate_dashboard_insight(metrics)
+    result = await generate_dashboard_insight(metrics, user_id=current_user.id)
 
     # HITL: persist as unapproved draft. Caller must explicitly approve
     # before the insight counts as an official published update.
@@ -472,11 +488,57 @@ async def claude_api_health(
 def get_platform_settings(
     _: User = Depends(get_current_user),
 ):
-    """Return non-sensitive platform configuration for the settings page."""
-    return {
-        "ai_model": {
+    """
+    Return non-sensitive platform configuration for the settings page.
+
+    Dual-model shape: the system runs an actor (Sonnet-family, handles the
+    service under test + synthesis tasks) and a judge (Haiku-family, scores
+    factuality + hallucination via one merged-rubric call). Pricing differs
+    per model, so the UI needs both rows, not a flat single model.
+
+    The source of truth for pricing lives in app.services.model_catalog —
+    we read it here (via pricing_for, which normalizes date-suffixed ids)
+    so the page can never drift from what the cost estimator is actually
+    charging against the budget, even if the env sets a dated model id.
+    """
+    from app.services.model_catalog import pricing_for
+
+    def _model_entry(role: str, model_id: str, purpose: str) -> dict:
+        input_rate, output_rate = pricing_for(model_id)
+        return {
+            "role": role,
             "provider": "Anthropic",
-            "model": settings.llm_model,
+            "id": model_id,
+            "purpose": purpose,
+            "pricing": {
+                "input_per_million_usd": input_rate,
+                "output_per_million_usd": output_rate,
+                "currency": "USD",
+            },
+        }
+
+    return {
+        "models": {
+            "actor": _model_entry(
+                role="actor",
+                model_id=settings.llm_model,
+                purpose=(
+                    "Generates the responses being evaluated plus synthesis "
+                    "work: incident triage, dashboard insights, compliance "
+                    "reports."
+                ),
+            ),
+            "judge": _model_entry(
+                role="judge",
+                model_id=settings.judge_model,
+                purpose=(
+                    "Scores factuality + hallucination via one merged-rubric "
+                    "JSON call. Different family from the actor — reduces "
+                    "self-scoring correlation."
+                ),
+            ),
+        },
+        "runtime": {
             "max_tokens": settings.llm_max_tokens,
             "timeout_seconds": settings.llm_timeout_seconds,
         },
@@ -489,11 +551,6 @@ def get_platform_settings(
             "drift_threshold_pct": settings.drift_threshold,
             "health_check_schedule_minutes": settings.health_check_schedule_minutes,
             "eval_schedule_minutes": settings.eval_schedule_minutes,
-        },
-        "pricing": {
-            "input_per_million_usd": 3.0,
-            "output_per_million_usd": 15.0,
-            "currency": "USD",
         },
     }
 
@@ -539,6 +596,24 @@ def get_api_usage(
         {"function": row[0], "calls": row[1], "tokens": row[2], "cost_usd": round(row[3], 6)}
         for row in breakdown_rows
     ]
+
+    # Per-model breakdown (today). Lets the Models section show each model's
+    # share of today's activity next to its price card — makes it visible
+    # at a glance that both actor + judge are actually being used.
+    model_rows = db.query(
+        APIUsageLog.model,
+        func.count(APIUsageLog.id),
+        func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+    ).filter(
+        APIUsageLog.timestamp >= day_start,
+        APIUsageLog.status != "reserved",  # don't double-count in-flight rows
+    ).group_by(APIUsageLog.model).all()
+
+    breakdown_by_model = {
+        row[0]: {"calls": row[1], "cost_usd": round(float(row[2]), 6)}
+        for row in model_rows
+        if row[0]
+    }
 
     # Recent calls (last 10)
     recent = db.query(APIUsageLog).order_by(APIUsageLog.timestamp.desc()).limit(10).all()
@@ -586,6 +661,7 @@ def get_api_usage(
             ),
         },
         "breakdown": breakdown,
+        "breakdown_by_model": breakdown_by_model,
         "recent_calls": recent_calls,
     }
 
@@ -757,7 +833,7 @@ def get_call_detail(
     """Get full trace of an LLM call including prompt and response text."""
     call = db.query(APIUsageLog).filter(APIUsageLog.id == call_id).first()
     if not call:
-        return {"detail": "Call not found"}
+        raise HTTPException(status_code=404, detail="Call not found")
 
     service = db.query(AIService).filter(AIService.id == call.service_id).first() if call.service_id else None
 
@@ -851,7 +927,7 @@ def acknowledge_alert(
     """Acknowledge an alert (dismiss it)."""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
-        return {"detail": "Alert not found"}
+        raise HTTPException(status_code=404, detail="Alert not found")
 
     alert.acknowledged = True
     alert.acknowledged_by = current_user.id

@@ -15,6 +15,7 @@ from app.middleware.audit import log_action
 from app.middleware.auth import get_current_user
 from app.middleware.rbac import require_role
 from app.models import AIService, Alert, EvalTestCase, EvalRun, EvalResult, User
+from app.services.drift_trend import compute_quality_trend
 from app.services.env_filter import apply_env_filter
 from app.services.eval_runner import run_service_evaluation
 from app.services.sensitivity import enforce_sensitivity
@@ -66,20 +67,12 @@ class EvalRunDetailResponse(EvalRunResponse):
 
 
 # ── Drift Analysis Helpers ──
-
-def _compute_trend(scores: list[float]) -> str:
-    """Determine trend from a list of scores (oldest first)."""
-    if len(scores) < 2:
-        return "stable"
-    mid = len(scores) // 2
-    first_half = sum(scores[:mid]) / mid
-    second_half = sum(scores[mid:]) / len(scores[mid:])
-    diff = second_half - first_half
-    if diff > 3.0:
-        return "improving"
-    elif diff < -3.0:
-        return "declining"
-    return "stable"
+#
+# The quality-scores trend classifier (improving / declining / stable)
+# now lives in `app.services.drift_trend.compute_quality_trend` so
+# eval_runner and this router share one implementation. The
+# `_compute_variance` helper below stays local — it's only used by
+# the drift-check endpoint.
 
 
 def _compute_variance(scores: list[float]) -> float:
@@ -408,7 +401,7 @@ def drift_check(
 
     avg = sum(scores) / len(scores)
     variance = _compute_variance(scores)
-    trend = _compute_trend(scores)
+    trend = compute_quality_trend(scores)
 
     # Confidence based on number of runs
     confidence = "low" if len(runs) <= 2 else ("medium" if len(runs) <= 4 else "high")
@@ -453,7 +446,7 @@ def drift_check(
             "category": tc.category if tc else "",
             "current_score": er.score,
             "avg_score": round(sum(hist_scores) / len(hist_scores), 1) if hist_scores else er.score,
-            "trend": _compute_trend(hist_scores) if len(hist_scores) >= 2 else "stable",
+            "trend": compute_quality_trend(hist_scores) if len(hist_scores) >= 2 else "stable",
         })
 
     return {

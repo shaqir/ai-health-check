@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import AIService, Alert, EvalRun, EvalResult, EvalTestCase, Telemetry
+from app.services.drift_trend import compute_quality_trend
 from app.services.llm_client import run_eval_prompt, judge_response
 
 settings = get_settings()
@@ -49,20 +50,6 @@ def _score_json_payload(text: str) -> float:
         except (json.JSONDecodeError, TypeError):
             continue
     return 0.0
-
-
-def _compute_trend(scores: list[float]) -> str:
-    if len(scores) < 2:
-        return "stable"
-    mid = len(scores) // 2
-    first_half = sum(scores[:mid]) / mid
-    second_half = sum(scores[mid:]) / len(scores[mid:])
-    diff = second_half - first_half
-    if diff > 3.0:
-        return "improving"
-    if diff < -3.0:
-        return "declining"
-    return "stable"
 
 
 async def run_service_evaluation(
@@ -204,7 +191,7 @@ async def run_service_evaluation(
         )
         if len(recent) >= 3:
             prev_scores = [r.quality_score for r in reversed(recent)]
-            trend = _compute_trend(prev_scores + [quality_score])
+            trend = compute_quality_trend(prev_scores + [quality_score])
             if trend == "declining" and quality_score < settings.drift_threshold + 10:
                 drift_flagged = True
     else:

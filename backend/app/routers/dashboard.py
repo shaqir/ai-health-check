@@ -39,13 +39,24 @@ class DashboardMetrics(BaseModel):
 
 # ── Helpers ──
 
-def _compute_trend(
+def _compute_pct_change_trend(
     current: float,
     previous: float,
     n_current: int | None = None,
     n_previous: int | None = None,
     min_samples: int = 3,
 ) -> str:
+    """Classify a current-vs-previous scalar as "up"/"down"/"neutral"
+    from percentage change. Returns "neutral" when either side has
+    fewer than `min_samples` observations to avoid drawing a trend
+    arrow from noise.
+
+    Distinct from `app.services.drift_trend.compute_quality_trend`,
+    which takes a chronological list of scores and returns
+    "improving"/"declining"/"stable". Names were different functions
+    with the same name before the M2 polish pass — renamed for
+    unambiguous grep.
+    """
     # Fall back to neutral when either side has too few samples. A 2-vs-2
     # comparison is noisy enough that one outlier flips the verdict, so
     # we refuse to draw an arrow until each window has at least min_samples.
@@ -198,15 +209,15 @@ def get_metrics(
         p99_latency_ms=round(p99, 1),
         error_rate_pct=round(error_rate, 1),
         avg_quality_score=round(avg_quality, 1),
-        latency_trend=_compute_trend(
+        latency_trend=_compute_pct_change_trend(
             avg_latency, prev_latency,
             n_current=len(latencies), n_previous=len(prev_latencies),
         ),
-        error_trend=_compute_trend(
+        error_trend=_compute_pct_change_trend(
             error_rate, prev_error_rate,
             n_current=recent_run_total, n_previous=prev_run_total,
         ),
-        quality_trend=_compute_trend(
+        quality_trend=_compute_pct_change_trend(
             avg_quality, prev_quality,
             n_current=len(recent_runs), n_previous=len(older_runs),
         ),

@@ -26,6 +26,8 @@ from app.services.llm_client import (
     generate_compliance_summary,
     generate_dashboard_insight,
     generate_summary,
+    judge_response,
+    run_eval_prompt,
 )
 from app.services.safety import PromptSafetyError
 
@@ -107,3 +109,78 @@ def test_generate_compliance_summary_still_returns_error_draft_on_transient_fail
     assert isinstance(result, dict)
     assert "report_text" in result
     assert "Error generating compliance report" in result["report_text"]
+
+
+# ── Eval-path contract ──────────────────────────────────────────────
+# Same two-clause split as the three synthesis functions. Mid-eval
+# budget/safety must abort the run (propagate to 429/422) instead of
+# silently filling EvalResults with all-ERROR rows and a fake 0 score;
+# transient failures keep the ERROR-branch + judge_refused fallbacks
+# so a single flaky call doesn't tank the whole run.
+
+def test_run_eval_prompt_reraises_call_limit_exceeded():
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=CallLimitExceeded("daily", 5.01, 5.0),
+    ):
+        with pytest.raises(CallLimitExceeded):
+            asyncio.run(run_eval_prompt("any prompt"))
+
+
+def test_run_eval_prompt_reraises_prompt_safety_error():
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=PromptSafetyError(
+            "blocked", flags=["injection_attempt"], risk_score=90,
+        ),
+    ):
+        with pytest.raises(PromptSafetyError):
+            asyncio.run(run_eval_prompt("any prompt"))
+
+
+def test_run_eval_prompt_still_returns_error_text_on_transient_failure():
+    """Network/5xx must keep the 'ERROR: ...' fallback so eval_runner's
+    ERROR-branch short-circuit (09920a3) skips the judge for this case
+    without aborting the whole run."""
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=RuntimeError("simulated transient upstream failure"),
+    ):
+        result = asyncio.run(run_eval_prompt("any prompt"))
+
+    assert result["response_text"].startswith("ERROR:")
+    assert result["latency_ms"] == 0
+
+
+def test_judge_response_reraises_call_limit_exceeded():
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=CallLimitExceeded("daily", 5.01, 5.0),
+    ):
+        with pytest.raises(CallLimitExceeded):
+            asyncio.run(judge_response("prompt", "expected", "actual"))
+
+
+def test_judge_response_reraises_prompt_safety_error():
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=PromptSafetyError(
+            "blocked", flags=["injection_attempt"], risk_score=90,
+        ),
+    ):
+        with pytest.raises(PromptSafetyError):
+            asyncio.run(judge_response("prompt", "expected", "actual"))
+
+
+def test_judge_response_still_returns_none_on_transient_failure():
+    """A judge timeout / malformed response must keep returning
+    {factuality: None, hallucination: None} so eval_runner tags the row
+    'judge_refused' and excludes it from aggregation — the run survives
+    one bad judge call."""
+    with patch(
+        "app.services.llm_client._make_api_call",
+        side_effect=RuntimeError("simulated transient upstream failure"),
+    ):
+        result = asyncio.run(judge_response("prompt", "expected", "actual"))
+
+    assert result == {"factuality": None, "hallucination": None}

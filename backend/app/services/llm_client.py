@@ -546,6 +546,8 @@ async def run_eval_prompt(
     Sends an eval test case prompt and returns the raw response.
     Returns: { response_text, latency_ms }
     """
+    from app.services.safety import PromptSafetyError
+
     try:
         kwargs = {}
         if system_context:
@@ -562,7 +564,18 @@ async def run_eval_prompt(
         )
         text = response.content[0].text if response.content else ""
         return {"response_text": text, "latency_ms": latency_ms}
+    except (CallLimitExceeded, PromptSafetyError):
+        # Same contract as the synthesis functions (commit 232d944):
+        # structured errors surface as HTTP 402/413/422/429 via the global
+        # handlers — never folded into a fake "ERROR:" response the judge
+        # would then score. Mid-eval budget exhaustion aborts the run
+        # loudly instead of silently filling the EvalRun with zero rows.
+        raise
     except Exception as e:
+        # Transient Anthropic failures (post-retry 5xx, network, timeout)
+        # keep the "ERROR:" fallback so the eval_runner ERROR-branch
+        # short-circuit (09920a3) can still skip the judge call for this
+        # test case without aborting the whole run.
         return {"response_text": f"ERROR: {str(e)}", "latency_ms": 0}
 
 
@@ -695,6 +708,8 @@ async def judge_response(
     which previously fired two Claude calls per factuality test case
     reading the same inputs.
     """
+    from app.services.safety import PromptSafetyError
+
     judge_prompt = f"""You are evaluating AI output quality on TWO independent rubrics.
 
 PROMPT (what was asked):
@@ -725,7 +740,18 @@ Respond with ONLY valid JSON on a single line, no prose, no code fences:
         )
         text = response.content[0].text.strip() if response.content else ""
         return _parse_judge_json(text)
+    except (CallLimitExceeded, PromptSafetyError):
+        # Same contract as the synthesis functions (commit 232d944):
+        # structured budget/safety errors must surface as HTTP 402/413/
+        # 422/429 instead of being folded into {None, None}, which
+        # eval_runner would misread as "judge refused" and silently
+        # degrade quality_score.
+        raise
     except Exception:
+        # Transient judge failures (malformed JSON, 5xx, timeout) keep
+        # the {None, None} fallback so eval_runner marks the row
+        # "judge_refused" and excludes it from aggregation rather than
+        # aborting the whole run.
         return {"factuality": None, "hallucination": None}
 
 

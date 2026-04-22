@@ -5,6 +5,7 @@ Start with: uvicorn app.main:app --reload --port 8000
 API docs:   http://localhost:8000/docs
 """
 
+import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,8 @@ from app.routers import auth, services, incidents, maintenance, evaluations, das
 from app.routers import users as compliance_users, audit as compliance_audit, export as compliance_export
 
 settings = get_settings()
+
+_health_check_log = logging.getLogger(__name__)
 
 # Background scheduler for health checks / eval runs
 scheduler = BackgroundScheduler()
@@ -86,7 +89,14 @@ def scheduled_eval_run():
 
 
 def scheduled_health_check():
-    """Runs periodic health checks on all active services with an endpoint URL."""
+    """Runs periodic health checks on all active services with an endpoint URL.
+
+    Resilience contract: each service's probe result commits
+    independently. A failure writing one service's ConnectionLog cannot
+    retroactively wipe another service's already-committed row. Errors
+    are logged with stack traces via `logging.exception` so ops can
+    find them; previously they leaked to stdout via `print`.
+    """
     db = SessionLocal()
     try:
         active_services = db.query(AIService).filter(
@@ -96,62 +106,79 @@ def scheduled_health_check():
         ).all()
 
         for service in active_services:
-            start = time.perf_counter()
-            # SSRF guard also on the scheduled path — stale data from before
-            # the validator shipped, or a rebinding DNS record, shouldn't
-            # be able to hit an internal address during the 5-minute tick.
             try:
-                validate_outbound_url(service.endpoint_url)
-            except UnsafeUrlError as exc:
-                latency_ms = 0.0
-                status_str = "failure"
-                snippet = f"blocked: {exc}"
-                db.add(ConnectionLog(
-                    service_id=service.id,
-                    latency_ms=latency_ms,
-                    status=status_str,
-                    response_snippet=snippet[:200],
-                ))
-                continue
-
-            try:
-                with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-                    response = client.get(service.endpoint_url)
-                latency_ms = round((time.perf_counter() - start) * 1000, 1)
-                # 4xx-reachable / 5xx-failure classification lives in
-                # routers/services.classify_probe_response so this path
-                # and the manual probe endpoint stay in sync.
-                from app.routers.services import classify_probe_response
-                raw_snippet = (response.text or "")[:200]
-                status_str, snippet = classify_probe_response(
-                    response.status_code, raw_snippet,
+                _run_single_health_check(db, service)
+                db.commit()
+            except Exception:
+                # Any failure touching this service — SSRF validator
+                # raising an unexpected error, DB constraint, bug in
+                # probe classification, etc. — gets logged with a
+                # stack trace and the loop moves on. Rollback only
+                # affects this service's partial work; earlier
+                # services' commits survive because we commit per
+                # iteration.
+                _health_check_log.exception(
+                    "scheduled probe failed for service_id=%s", service.id,
                 )
-            except Exception as exc:
-                latency_ms = round((time.perf_counter() - start) * 1000, 1)
-                status_str = "failure"
-                snippet = str(exc)[:200]
-
-            log = ConnectionLog(
-                service_id=service.id,
-                latency_ms=latency_ms,
-                status=status_str,
-                response_snippet=snippet,
-            )
-            db.add(log)
-
-            telemetry = Telemetry(
-                service_id=service.id,
-                metric_name="latency",
-                metric_value=latency_ms,
-            )
-            db.add(telemetry)
-
-        db.commit()
-    except Exception as e:
-        print(f"[HealthCheck] Error: {e}")
-        db.rollback()
+                db.rollback()
+                continue
     finally:
         db.close()
+
+
+def _run_single_health_check(db, service):
+    """One service's probe step. Stages ConnectionLog (+ Telemetry on
+    non-SSRF-blocked paths) into the session. Caller is responsible
+    for commit / rollback. Raises on unrecoverable errors; the caller
+    turns those into per-service `logging.exception` entries."""
+    start = time.perf_counter()
+
+    # SSRF guard also on the scheduled path — stale data from before
+    # the validator shipped, or a rebinding DNS record, shouldn't
+    # be able to hit an internal address during the 5-minute tick.
+    try:
+        validate_outbound_url(service.endpoint_url)
+    except UnsafeUrlError as exc:
+        db.add(ConnectionLog(
+            service_id=service.id,
+            latency_ms=0.0,
+            status="failure",
+            response_snippet=f"blocked: {exc}"[:200],
+        ))
+        return  # No Telemetry — no latency to record on a blocked probe.
+
+    try:
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            response = client.get(service.endpoint_url)
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        # 4xx-reachable / 5xx-failure classification lives in
+        # routers/services.classify_probe_response so this path and
+        # the manual probe endpoint stay in sync.
+        from app.routers.services import classify_probe_response
+        raw_snippet = (response.text or "")[:200]
+        status_str, snippet = classify_probe_response(
+            response.status_code, raw_snippet,
+        )
+    except Exception as exc:
+        # Network / httpx / timeout errors — expected failure modes for
+        # a reachability probe. Record and move on; don't let it escape
+        # to the per-service outer handler (that's reserved for
+        # unexpected failures like DB / ORM issues).
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        status_str = "failure"
+        snippet = str(exc)[:200]
+
+    db.add(ConnectionLog(
+        service_id=service.id,
+        latency_ms=latency_ms,
+        status=status_str,
+        response_snippet=snippet,
+    ))
+    db.add(Telemetry(
+        service_id=service.id,
+        metric_name="latency",
+        metric_value=latency_ms,
+    ))
 
 
 def _install_audit_log_triggers():

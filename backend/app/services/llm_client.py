@@ -117,6 +117,7 @@ def _log_usage(
 ):
     """Write an API usage record to the database with full trace."""
     from app.models import APIUsageLog
+    from app.middleware.correlation import get_correlation_id
 
     total = input_tokens + output_tokens
     cost = _estimate_cost(model, input_tokens, output_tokens)
@@ -138,6 +139,7 @@ def _log_usage(
             risk_score=risk_score,
             prompt_text=prompt_text[:2000],
             response_text=response_text[:2000],
+            correlation_id=get_correlation_id(),
         ))
         db.commit()
     except Exception:
@@ -301,6 +303,7 @@ def _reserve_slot(
     estimate so budget checks converge. Returns the row id.
     """
     from app.models import APIUsageLog
+    from app.middleware.correlation import get_correlation_id
 
     # Worst-case cost: assume full max_tokens, all output (more expensive)
     worst_cost = _estimate_cost(model, 0, max_tokens)
@@ -318,6 +321,7 @@ def _reserve_slot(
             estimated_cost_usd=worst_cost,
             latency_ms=0.0,
             status="reserved",
+            correlation_id=get_correlation_id(),
         )
         db.add(row)
         db.commit()

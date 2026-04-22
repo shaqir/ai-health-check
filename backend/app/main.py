@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware.correlation import CorrelationIdMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import text
 
@@ -237,7 +238,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Echo the correlation id in responses so the browser devtools network
+    # tab can link a UI action to the trace row in Settings → Call Trace.
+    expose_headers=["X-Correlation-Id"],
 )
+
+# Per-request correlation id (ASGI middleware, runs on every HTTP request).
+# Must be added AFTER CORS so the CORS middleware wraps it — FastAPI
+# applies middleware in reverse-add order, so the last-added runs first.
+app.add_middleware(CorrelationIdMiddleware)
 
 # ── Register Routers ──
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])

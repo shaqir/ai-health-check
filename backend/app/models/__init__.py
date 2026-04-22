@@ -270,6 +270,11 @@ class APIUsageLog(Base):
     risk_score = Column(Integer, default=0)               # 0-100 input risk score
     prompt_text = Column(Text, default="")               # actual prompt sent (truncated to 2000 chars)
     response_text = Column(Text, default="")             # actual response received (truncated to 2000 chars)
+    # Per-HTTP-request UUID that groups every Claude call fired inside one
+    # user action together. Populated by CorrelationIdMiddleware via a
+    # contextvar — no caller needs to know it exists. NULL for background
+    # scheduler calls and legacy rows.
+    correlation_id = Column(String(36), index=True, nullable=True)
     timestamp = Column(DateTime, default=utcnow)
 
 

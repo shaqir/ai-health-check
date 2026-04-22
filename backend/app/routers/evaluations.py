@@ -303,6 +303,7 @@ def get_eval_run(
         hallucination_score=run.hallucination_score,
         drift_flagged=run.drift_flagged,
         run_type=run.run_type,
+        run_status=run.run_status,
         judge_model=run.judge_model,
         run_at=run.run_at,
         created_at=run.created_at,

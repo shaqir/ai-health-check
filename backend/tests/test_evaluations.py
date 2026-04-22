@@ -152,6 +152,53 @@ def test_list_eval_runs(client, db, admin_token):
     assert len(res.json()) >= 1
 
 
+def test_get_eval_run_preserves_run_status(client, db, admin_token):
+    """GET /runs/{id} must echo the persisted run_status.
+
+    Before this was guarded, the endpoint constructed EvalRunResponse
+    without passing run_status, so Pydantic's schema default ("complete")
+    was returned for every row — an "incomplete" run (all cases errored
+    or the judge refused every one) silently looked complete.
+    """
+    svc = _create_service(db)
+    # Persist a run with the honest-tri-state INCOMPLETE value.
+    run = EvalRun(
+        service_id=svc.id, quality_score=0.0, drift_flagged=False,
+        run_type="manual", run_status="incomplete",
+        judge_model="claude-haiku-4-5-20251001",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    res = client.get(f"/api/v1/evaluations/runs/{run.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    body = res.json()
+    assert body["run_status"] == "incomplete", (
+        f"GET /runs/{{id}} must echo DB run_status; got {body['run_status']!r}"
+    )
+    # Regression guard on the other fields too — we don't want to
+    # accidentally drop anything else from the response.
+    assert body["quality_score"] == 0.0
+    assert body["judge_model"] == "claude-haiku-4-5-20251001"
+
+
+def test_get_eval_run_round_trips_complete_status(client, db, admin_token):
+    """Regression guard the happy path stays unchanged."""
+    svc = _create_service(db)
+    run = EvalRun(
+        service_id=svc.id, quality_score=87.5, drift_flagged=False,
+        run_type="scheduled", run_status="complete",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    res = client.get(f"/api/v1/evaluations/runs/{run.id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert res.json()["run_status"] == "complete"
+
+
 def test_drift_check(client, db, admin_token):
     svc = _create_service(db)
     res = client.get(f"/api/v1/evaluations/drift-check/{svc.id}", headers=auth_header(admin_token))

@@ -279,9 +279,10 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
     exceed the budget/rate limit. The actual API call happens OUTSIDE
     the lock so slow calls don't block other evaluators.
     """
-    from app.services.safety import scan_input, scan_output, PromptSafetyError
+    from app.services.safety import scan_input, scan_output, scrub_messages, PromptSafetyError
 
-    # 1. Safety scan on input (cheap, pre-reservation)
+    # 1. Safety scan on input (cheap, pre-reservation). Scanned on the RAW
+    # text so injection patterns can't be hidden behind PHI tokens.
     input_text = " ".join(
         m.get("content", "") for m in messages if isinstance(m, dict)
     )
@@ -299,6 +300,26 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             flags=safety_result["flags"],
             risk_score=safety_result["risk_score"],
         )
+
+    # 1b. PHI redaction — MVP requirement: "Detect and redact PHI before
+    # sending to cloud APIs." Must run AFTER scan_input (so injection
+    # detection sees the original) and BEFORE the Anthropic call (so no
+    # raw PHI crosses the network boundary). The original `input_text`
+    # is kept only for local risk-scoring; everything downstream — the
+    # network request AND the audit log — uses the scrubbed form.
+    scrub_result = scrub_messages(messages)
+    messages = scrub_result["messages"]
+    scrubbed_input_text = " ".join(
+        m.get("content", "") for m in messages if isinstance(m, dict)
+    )
+    if scrub_result["scrubbed"]:
+        # Record counts (never raw values) so audit trail shows the scrub
+        # happened — plan §5.2 step 3 ("Log that PHI was found and
+        # scrubbed (not the actual PHI)").
+        phi_summary = ",".join(
+            f"phi_scrubbed_{k}={v}" for k, v in scrub_result["counts"].items()
+        )
+        safety_flags_str += ("," if safety_flags_str else "") + phi_summary
 
     # 2. Atomic budget check + reservation. The lock prevents the race
     # where N concurrent callers all pass the check before any write.
@@ -347,7 +368,9 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             _finalize_reservation(
                 reservation_id, input_tokens, output_tokens, latency_ms, "success",
                 safety_flags=safety_flags_str, risk_score=safety_result["risk_score"],
-                prompt_text=input_text, response_text=output_text,
+                # Use the SCRUBBED text for audit storage — logging the raw
+                # input_text here would defeat the redaction we just did.
+                prompt_text=scrubbed_input_text, response_text=output_text,
             )
             return response, latency_ms
 

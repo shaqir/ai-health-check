@@ -37,12 +37,52 @@ _INJECTION_PATTERNS = [
 
 _INJECTION_COMPILED = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 
-# ── PII Patterns ──
+# ── PII / PHI Patterns ──
+# Covers the MVP "Detect and redact PHI before sending to cloud APIs"
+# requirement. Entries map 1:1 to the PHI types listed in the project
+# plan §5.1 / Table 7 that can be matched with pure regex. Patient
+# names and free-form addresses need NER (spaCy) — deferred to a
+# future iteration; the rest of the table is covered here.
 _PII_PATTERNS = {
     "email": re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
-    "phone": re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
+    # Lookarounds instead of \b so the pattern can consume the enclosing
+    # parentheses in "(403) 555-1234" while still refusing to match the
+    # middle of longer digit runs (e.g. a 16-digit account number).
+    "phone": re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"),
     "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     "credit_card": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),
+    # Medical Record Number — "MRN: 48291" / "MRN 48291" / "MRN#48291"
+    "mrn": re.compile(r"\bMRN\s*[:#]?\s*\d{4,10}\b", re.IGNORECASE),
+    # Date of birth — matches "March 15, 1985", "15 March 1985", "03/15/1985",
+    # "1985-03-15". Conservative: requires a 4-digit year so we don't scrub
+    # short numeric strings that happen to look datelike.
+    "dob": re.compile(
+        r"\b("
+        r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}"
+        r"|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
+        r"|\d{1,2}/\d{1,2}/\d{4}"
+        r"|\d{4}-\d{2}-\d{2}"
+        r")\b",
+        re.IGNORECASE,
+    ),
+    # ICD-10 diagnosis codes — "A09", "E11.9", "ICD-10: A09". Letter + 2 digits
+    # with optional decimal sub-code. Anchored to uppercase to avoid scrubbing
+    # ordinary words that start with a capital letter followed by digits.
+    "icd10": re.compile(r"\b(?:ICD-?10\s*[:#]?\s*)?[A-TV-Z][0-9]{2}(?:\.[0-9]{1,4})?\b"),
+}
+
+# Placeholder tokens used by scrub_text() when redacting. Kept visible and
+# uppercase so a reviewer reading a scrubbed prompt in the audit log can
+# immediately see where redaction happened. Must match what downstream
+# consumers (Claude) can still reason about — "[EMAIL]" is clearer than "***".
+_SCRUB_LABELS = {
+    "email": "[EMAIL]",
+    "phone": "[PHONE]",
+    "ssn": "[SSN]",
+    "credit_card": "[CREDIT_CARD]",
+    "mrn": "[MRN]",
+    "dob": "[DOB]",
+    "icd10": "[ICD]",
 }
 
 # ── Safety Constants ──
@@ -164,6 +204,90 @@ def scan_output(text: str) -> dict:
         "safe": "output_pii_ssn" not in flags and "output_pii_credit_card" not in flags and "toxicity_detected" not in flags,
         "flags": flags,
         "pii_detected": pii_found,
+    }
+
+
+def scrub_text(text: str) -> dict:
+    """
+    Redact PII/PHI from a string before it leaves our backend.
+
+    Replaces every match from _PII_PATTERNS with its placeholder label
+    (e.g. "john@x.com" → "[EMAIL]"). Returns:
+      {
+        "text": scrubbed string,
+        "counts": {pii_type: n, ...},  # non-zero entries only
+        "scrubbed": bool,              # True if any replacement happened
+      }
+
+    The MVP scope table row 6 says "Detect and redact PHI **before
+    sending to cloud APIs**" — this is the redact half. Callers in
+    llm_client.py use this to sanitize prompts before forwarding to
+    Anthropic so raw PHI never crosses the network boundary.
+
+    Never log the original PHI. Log counts only (plan §5.2 step 3).
+    """
+    if not text:
+        return {"text": text, "counts": {}, "scrubbed": False}
+
+    counts: dict[str, int] = {}
+    scrubbed = text
+    for pii_type, pattern in _PII_PATTERNS.items():
+        matches = pattern.findall(scrubbed)
+        if not matches:
+            continue
+        counts[pii_type] = len(matches)
+        scrubbed = pattern.sub(_SCRUB_LABELS[pii_type], scrubbed)
+
+    return {
+        "text": scrubbed,
+        "counts": counts,
+        "scrubbed": bool(counts),
+    }
+
+
+def scrub_messages(messages: list) -> dict:
+    """
+    Apply scrub_text to every 'content' field in a Claude messages list.
+
+    Returns:
+      {
+        "messages": new list with redacted content,
+        "counts": aggregated pii_type → n across all messages,
+        "scrubbed": bool,
+      }
+
+    Preserves the original message structure (role, any extra keys) so
+    the caller can drop the returned list straight into client.messages.create.
+    """
+    if not messages:
+        return {"messages": messages, "counts": {}, "scrubbed": False}
+
+    new_messages = []
+    agg_counts: dict[str, int] = {}
+    any_scrubbed = False
+
+    for msg in messages:
+        if not isinstance(msg, dict) or "content" not in msg:
+            new_messages.append(msg)
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            # Multimodal content (list of blocks) — out of scope for the
+            # text-only MVP scrubber. Pass through untouched rather than
+            # silently corrupting structure.
+            new_messages.append(msg)
+            continue
+        result = scrub_text(content)
+        if result["scrubbed"]:
+            any_scrubbed = True
+            for k, v in result["counts"].items():
+                agg_counts[k] = agg_counts.get(k, 0) + v
+        new_messages.append({**msg, "content": result["text"]})
+
+    return {
+        "messages": new_messages,
+        "counts": agg_counts,
+        "scrubbed": any_scrubbed,
     }
 
 

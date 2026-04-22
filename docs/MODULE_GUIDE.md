@@ -289,7 +289,7 @@ These features span multiple modules and are not owned by a single team member.
 
 - Daily cap: $5.00, monthly cap: $25.00 (tracked via `APIUsageLog`)
 - Per-call cost tracking with token usage logging (input + output)
-- Global rate limit: 10 calls/min, per-user: 5 calls/min
+- Global rate limit: 30 calls/min, per-user: 20 calls/min
 - Raises `BudgetExceededError` (HTTP 402 for budget, HTTP 429 for rate limits)
 - Lock + reservation pattern prevents N concurrent callers from all racing past the limit. Reservation INSERT happens under the lock; actual API call runs outside so slow requests don't block the pool
 

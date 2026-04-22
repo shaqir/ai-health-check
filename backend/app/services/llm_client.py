@@ -486,12 +486,23 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
 # ── Public API Functions ──
 
 
-async def test_connection(prompt: str = "Say hello in exactly 5 words.", model: str = None) -> dict:
+async def test_connection(
+    prompt: str = "Say hello in exactly 5 words.",
+    model: str = None,
+    user_id: int | None = None,
+    service_id: int | None = None,
+) -> dict:
     """
     Module 1: Test Connection
     Sends a small prompt to Claude and measures latency.
     Returns: { status, latency_ms, response_snippet }
+
+    `user_id` and `service_id` are forwarded to _make_api_call so the
+    usage log attributes the call correctly (and per-user rate limiting
+    can actually fire).
     """
+    from app.services.safety import PromptSafetyError
+
     use_model = model or settings.llm_model
     try:
         response, latency_ms = _make_api_call(
@@ -499,14 +510,26 @@ async def test_connection(prompt: str = "Say hello in exactly 5 words.", model: 
             model=use_model,
             max_tokens=50,
             messages=[{"role": "user", "content": prompt}],
+            user_id=user_id,
+            service_id=service_id,
         )
         snippet = response.content[0].text[:200] if response.content else ""
         return {"status": "success", "latency_ms": latency_ms, "response_snippet": snippet}
-    except Exception as e:
+    except (CallLimitExceeded, PromptSafetyError):
+        # Let the global FastAPI handler map these to the right HTTP
+        # status (402/413/422/429) instead of flattening them into a
+        # generic "Connection failed" card.
+        raise
+    except (anthropic.APIError, TimeoutError, ConnectionError) as e:
         return {"status": "failure", "latency_ms": 0, "response_snippet": str(e)[:200]}
 
 
-async def run_eval_prompt(prompt: str, system_context: str = "") -> dict:
+async def run_eval_prompt(
+    prompt: str,
+    system_context: str = "",
+    user_id: int | None = None,
+    service_id: int | None = None,
+) -> dict:
     """
     Module 2: Evaluation Harness
     Sends an eval test case prompt and returns the raw response.
@@ -522,6 +545,8 @@ async def run_eval_prompt(prompt: str, system_context: str = "") -> dict:
             model=settings.llm_model,
             max_tokens=settings.llm_max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            user_id=user_id,
+            service_id=service_id,
             **kwargs,
         )
         text = response.content[0].text if response.content else ""
@@ -535,6 +560,8 @@ async def generate_summary(
     severity: str,
     symptoms: str,
     checklist: dict,
+    user_id: int | None = None,
+    service_id: int | None = None,
 ) -> dict:
     """
     Module 3: Incident Triage — LLM-assisted summary
@@ -572,6 +599,8 @@ ROOT CAUSES:
             model=settings.llm_model,
             max_tokens=settings.llm_max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            user_id=user_id,
+            service_id=service_id,
         )
         text = response.content[0].text if response.content else ""
 
@@ -621,7 +650,13 @@ def _parse_judge_json(text: str) -> dict:
     }
 
 
-async def judge_response(prompt: str, expected: str, actual: str) -> dict:
+async def judge_response(
+    prompt: str,
+    expected: str,
+    actual: str,
+    user_id: int | None = None,
+    service_id: int | None = None,
+) -> dict:
     """
     Merged-rubric judge call. Single Haiku call scores both factuality
     (match to expected output) and hallucination (groundedness in the
@@ -663,6 +698,8 @@ Respond with ONLY valid JSON on a single line, no prose, no code fences:
             model=settings.judge_model,
             max_tokens=60,
             messages=[{"role": "user", "content": judge_prompt}],
+            user_id=user_id,
+            service_id=service_id,
         )
         text = response.content[0].text.strip() if response.content else ""
         return _parse_judge_json(text)
@@ -670,7 +707,7 @@ Respond with ONLY valid JSON on a single line, no prose, no code fences:
         return {"factuality": None, "hallucination": None}
 
 
-async def generate_dashboard_insight(metrics: dict) -> dict:
+async def generate_dashboard_insight(metrics: dict, user_id: int | None = None) -> dict:
     """
     Module 2: Dashboard AI Summary
     Returns: { insight_text }
@@ -701,6 +738,7 @@ ACTION ITEMS:
             model=settings.llm_model,
             max_tokens=settings.llm_max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            user_id=user_id,
         )
         text = response.content[0].text if response.content else ""
         return {"insight_text": text}
@@ -709,7 +747,8 @@ ACTION ITEMS:
 
 
 async def generate_compliance_summary(
-    audit_data: list, incidents_data: list, drift_data: list
+    audit_data: list, incidents_data: list, drift_data: list,
+    user_id: int | None = None,
 ) -> dict:
     """
     Module 4: Compliance AI Report
@@ -744,6 +783,7 @@ Keep the report under 500 words."""
             model=settings.llm_model,
             max_tokens=settings.llm_max_tokens,
             messages=[{"role": "user", "content": prompt}],
+            user_id=user_id,
         )
         text = response.content[0].text if response.content else ""
         return {"report_text": text}

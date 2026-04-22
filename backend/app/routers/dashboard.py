@@ -407,7 +407,7 @@ async def get_ai_summary(
         "drift_alert_count": drift_count,
     }
 
-    result = await generate_dashboard_insight(metrics)
+    result = await generate_dashboard_insight(metrics, user_id=current_user.id)
 
     # HITL: persist as unapproved draft. Caller must explicitly approve
     # before the insight counts as an official published update.

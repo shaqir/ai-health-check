@@ -201,6 +201,8 @@ async def generate_incident_summary(
         severity=incident.severity.value,
         symptoms=incident.symptoms,
         checklist=checklist,
+        user_id=current_user.id,
+        service_id=service.id if service else None,
     )
     
     incident.summary_draft = result["summary_draft"]

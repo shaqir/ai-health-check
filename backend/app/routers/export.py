@@ -344,7 +344,10 @@ async def generate_ai_compliance_report(
         for r in drift_runs
     ]
 
-    result = await generate_compliance_summary(audit_data, incidents_data, drift_data)
+    result = await generate_compliance_summary(
+        audit_data, incidents_data, drift_data,
+        user_id=current_user.id,
+    )
 
     surface_ref = f"{from_date or 'start'}_to_{to_date or 'now'}"
     draft = create_draft(

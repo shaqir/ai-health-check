@@ -207,7 +207,9 @@ async def run_evaluation(
 
     # Delegate to the shared runner — persists EvalRun + EvalResults +
     # Telemetry + (if drift) Alert in one committed unit.
-    eval_run, results, drift_flagged = await run_service_evaluation(db, service, run_type="manual")
+    eval_run, results, drift_flagged = await run_service_evaluation(
+        db, service, run_type="manual", user_id=current_user.id,
+    )
 
     log_action(
         db, current_user.id, "run_evaluation", "eval_runs",

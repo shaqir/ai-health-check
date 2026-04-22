@@ -69,10 +69,16 @@ async def run_service_evaluation(
     db: Session,
     service: AIService,
     run_type: str = "manual",
+    user_id: int | None = None,
 ) -> tuple[EvalRun, list[dict], bool]:
     """
     Run every test case for `service`, persist the EvalRun + children, and
     return (eval_run, per_test_results, drift_flagged).
+
+    `user_id` is the authenticated user who triggered the run (manual)
+    or None when the background scheduler is the origin. Forwarded to
+    every Claude call so the usage log attributes spend correctly and
+    per-user rate limits can fire.
 
     Raises ValueError if the service has no test cases.
     """
@@ -90,7 +96,11 @@ async def run_service_evaluation(
     hallucination_scores: list[float] = []
 
     for tc in test_cases:
-        llm_result = await run_eval_prompt(prompt=tc.prompt)
+        llm_result = await run_eval_prompt(
+            prompt=tc.prompt,
+            user_id=user_id,
+            service_id=service.id,
+        )
         response_text = llm_result.get("response_text", "")
         latency_ms = llm_result.get("latency_ms", 0)
 
@@ -116,7 +126,13 @@ async def run_service_evaluation(
 
             # Normal path: one merged judge call returns both scores.
             else:
-                judged = await judge_response(tc.prompt, tc.expected_output, response_text)
+                judged = await judge_response(
+                    tc.prompt,
+                    tc.expected_output,
+                    response_text,
+                    user_id=user_id,
+                    service_id=service.id,
+                )
                 fact = judged["factuality"]
                 halluc = judged["hallucination"]
                 if fact is None:

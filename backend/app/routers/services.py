@@ -331,7 +331,11 @@ async def test_service_connection(
 
     if mode == "llm":
         enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
-        result = await llm_test_connection(model=service.model_name)
+        result = await llm_test_connection(
+            model=service.model_name,
+            user_id=current_user.id,
+            service_id=service.id,
+        )
     else:
         if not service.endpoint_url:
             raise HTTPException(

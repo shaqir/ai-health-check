@@ -12,9 +12,9 @@ Read in this order:
 1. [TECHNICAL_REFERENCE](TECHNICAL_REFERENCE.md) — single consolidated reference manual covering all 14 documentation sections + presentation defence guide.
 2. [ARCHITECTURE](ARCHITECTURE.md) — system design, 14 models, 9 routers, configuration reference.
 3. [MODULE_GUIDE](MODULE_GUIDE.md) — M1-M4 module breakdown with owners, endpoints, demo flow.
-4. [TESTING_STRATEGY](TESTING_STRATEGY.md) — 123 tests across 13 files with coverage policy.
-5. [RISK_REGISTER](RISK_REGISTER.md) — 17 risks formally tracked with mitigations and residuals.
-6. [SELF_CRITIQUE](SELF_CRITIQUE.md) — 5 methodological weaknesses the team identified in its own work.
+4. [TESTING_STRATEGY](TESTING_STRATEGY.md) — 188 tests across 22 files with coverage policy.
+5. [RISK_REGISTER](RISK_REGISTER.md) — 18 risks formally tracked with mitigations and residuals.
+6. [SELF_CRITIQUE](SELF_CRITIQUE.md) — 8 methodological weaknesses the team identified in its own work.
 
 Time budget: 45–60 minutes for a thorough pass. If you only have 20 min, read TECHNICAL_REFERENCE alone.
 
@@ -65,12 +65,12 @@ Time budget: 30 minutes the night before, 10 minutes the morning of.
 | [ARCHITECTURE](ARCHITECTURE.md) | System design, models, routers, configuration reference |
 | [MODULE_GUIDE](MODULE_GUIDE.md) | M1-M4 owners, files, endpoints, cross-cutting features, end-to-end demo flow |
 | [ONBOARDING](ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
-| [TESTING_STRATEGY](TESTING_STRATEGY.md) | 123 tests, coverage floor, what's exercised |
+| [TESTING_STRATEGY](TESTING_STRATEGY.md) | 188 tests across 22 files, coverage floor, what's exercised |
 | [EVAL_DATASET_CARD](EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift algorithm |
 | [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
 | [MAINTENANCE_RUNBOOK](MAINTENANCE_RUNBOOK.md) | 15 operational scenarios with trigger / check / fix / prevent |
-| [RISK_REGISTER](RISK_REGISTER.md) | 17 risks with mitigations and residual risk notes |
-| [SELF_CRITIQUE](SELF_CRITIQUE.md) | 5 methodological weaknesses surfaced honestly |
+| [RISK_REGISTER](RISK_REGISTER.md) | 18 risks with mitigations and residual risk notes |
+| [SELF_CRITIQUE](SELF_CRITIQUE.md) | 8 methodological weaknesses surfaced honestly |
 | [GOVERNANCE_AUDIT](GOVERNANCE_AUDIT.md) | Enterprise compliance audit (HIPAA/SOX/EU AI Act) |
 | [DOVER_MAPPING](DOVER_MAPPING.md) | Implementation mapping against the DOVER framework (Data / Oversight / Validation / Ethics / Risk) |
 | [LIVE_DEMO_WALKTHROUGH](LIVE_DEMO_WALKTHROUGH.md) | Consolidated demo guide: prep, 9-step script, killshots, recovery, one-page checklist |

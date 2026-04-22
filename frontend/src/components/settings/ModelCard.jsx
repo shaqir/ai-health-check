@@ -63,8 +63,8 @@ export default function ModelCard({ role, model, todayUsage }) {
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <PriceTile label="Input" usd={model.pricing.input_per_million_usd} />
-            <PriceTile label="Output" usd={model.pricing.output_per_million_usd} />
+            <PriceTile label="Input" usd={model.pricing?.input_per_million_usd} />
+            <PriceTile label="Output" usd={model.pricing?.output_per_million_usd} />
           </div>
         </div>
 
@@ -104,11 +104,16 @@ export default function ModelCard({ role, model, todayUsage }) {
 }
 
 function PriceTile({ label, usd }) {
+  const hasPrice = Number.isFinite(usd);
   return (
     <div className="bg-surface-elevated rounded-lg px-3 py-2">
       <p className="text-[10px] font-medium text-text-subtle uppercase tracking-tight">{label}</p>
       <p className="text-[14px] font-semibold font-mono tabular-nums text-text mt-0.5">
-        ${usd.toFixed(2)}<span className="text-[10px] text-text-subtle font-normal"> / 1M tok</span>
+        {hasPrice ? (
+          <>${usd.toFixed(2)}<span className="text-[10px] text-text-subtle font-normal"> / 1M tok</span></>
+        ) : (
+          <span className="text-text-subtle font-normal">— not listed</span>
+        )}
       </p>
     </div>
   );

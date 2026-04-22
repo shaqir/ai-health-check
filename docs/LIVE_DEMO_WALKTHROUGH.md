@@ -91,7 +91,7 @@ cd backend && source venv/bin/activate && uvicorn app.main:app --port 8000
 cd frontend && npm run dev
 ```
 
-Browser: http://localhost:5173 → login `admin@aiops.local / admin123` → Dashboard should show:
+Browser: http://localhost:5173 → login as `admin@aiops.local` (password is whatever you set in `SEED_ADMIN_PASSWORD` in `backend/.env`, or the demo fallback if unset) → Dashboard should show:
 
 - 3 active services
 - **Red "Active Alerts" banner** ("Internal Report Generator quality dropped to 42.0%")
@@ -614,7 +614,7 @@ Print this. Keep it on the desk. Cross items off in the 15 min before demo:
 - [ ] Backend running on :8000 — terminal shows "scheduler DISABLED"
 - [ ] Frontend running on :5173 — no Vite errors in terminal
 - [ ] Browser at http://localhost:5173 on the Login page
-- [ ] Login works with `admin@aiops.local / admin123`
+- [ ] Login works with `admin@aiops.local` and your `SEED_ADMIN_PASSWORD`
 - [ ] Dashboard shows the red Active Alerts banner
 - [ ] ⌘K command palette opens
 - [ ] Notifications muted (Do Not Disturb on)

@@ -36,9 +36,24 @@ UI runs at `http://localhost:5173`.
 
 ## Default Credentials
 
-| Username | Password | Role |
-|----------|----------|------|
-| admin@test.local | admin123 | admin |
+The seed script creates three users:
+
+| Email | Role |
+|-------|------|
+| admin@aiops.local | admin |
+| maintainer@aiops.local | maintainer |
+| viewer@aiops.local | viewer |
+
+Set their passwords in `backend/.env` via `SEED_ADMIN_PASSWORD`,
+`SEED_MAINTAINER_PASSWORD`, and `SEED_VIEWER_PASSWORD` **before** running
+`python -m app.seed`. If those env vars are unset, seed falls back to
+demo-weak defaults (printed as a warning) so the initial run still
+works — override them for anything non-local.
+
+(The previous `admin@test.local` credential documented here was the
+in-memory test-fixture email, which never existed in the running app
+— doc drift from an earlier version. The seed's real email domain is
+`@aiops.local`.)
 
 ## Platform Lifecycle
 

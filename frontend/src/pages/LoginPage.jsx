@@ -3,10 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Server, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
-const DEMO_CREDS = [
-  { role: 'Admin', email: 'admin@aiops.local', pwd: 'admin123', desc: 'Full access' },
-  { role: 'Maintainer', email: 'maintainer@aiops.local', pwd: 'maintain123', desc: 'Services + incidents' },
-  { role: 'Viewer', email: 'viewer@aiops.local', pwd: 'viewer123', desc: 'Read-only' },
+// Demo-role convenience panel. Emails only — passwords are set by the
+// operator via SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD /
+// SEED_VIEWER_PASSWORD in backend/.env and never shipped with the
+// frontend bundle. Clicking a row pre-fills the email field; the user
+// types the password they configured themselves.
+const DEMO_ROLES = [
+  { role: 'Admin', email: 'admin@aiops.local', desc: 'Full access' },
+  { role: 'Maintainer', email: 'maintainer@aiops.local', desc: 'Services + incidents' },
+  { role: 'Viewer', email: 'viewer@aiops.local', desc: 'Read-only' },
 ];
 
 const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
@@ -34,9 +39,11 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemoClick = (demoEmail, demoPwd) => {
+  const handleDemoClick = (demoEmail) => {
     setEmail(demoEmail);
-    setPassword(demoPwd);
+    // Password intentionally not pre-filled — the user enters the
+    // password they set via SEED_*_PASSWORD in backend/.env. See
+    // .env.example for the override documentation.
   };
 
   return (
@@ -107,14 +114,14 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Demo credentials */}
+        {/* Demo role emails — click to pre-fill */}
         <div className="mt-4 rounded-2xl bg-surface border border-hairline shadow-xs overflow-hidden">
           <button
             onClick={() => setShowDemo(!showDemo)}
             className="w-full flex items-center justify-between px-5 py-3 text-[12px] font-medium text-text-muted hover:text-text transition-standard"
             aria-expanded={showDemo}
           >
-            <span>Demo credentials</span>
+            <span>Seed role emails (click to pre-fill)</span>
             {showDemo
               ? <ChevronUp size={14} strokeWidth={1.5} />
               : <ChevronDown size={14} strokeWidth={1.5} />
@@ -123,11 +130,11 @@ export default function LoginPage() {
 
           {showDemo && (
             <div className="border-t border-hairline">
-              {DEMO_CREDS.map((cred, i) => (
+              {DEMO_ROLES.map((cred, i) => (
                 <button
                   key={i}
                   type="button"
-                  onClick={() => handleDemoClick(cred.email, cred.pwd)}
+                  onClick={() => handleDemoClick(cred.email)}
                   className="w-full flex items-center justify-between px-5 py-2.5 text-left hover:bg-accent-weak transition-standard border-b border-hairline last:border-b-0"
                 >
                   <div>
@@ -137,6 +144,9 @@ export default function LoginPage() {
                   <span className="text-[10px] font-medium text-accent">{cred.desc}</span>
                 </button>
               ))}
+              <p className="px-5 py-2.5 text-[10px] text-text-subtle border-t border-hairline bg-[var(--material-thick)]">
+                Passwords are set via <code className="font-mono">SEED_*_PASSWORD</code> in <code className="font-mono">backend/.env</code>.
+              </p>
             </div>
           )}
         </div>

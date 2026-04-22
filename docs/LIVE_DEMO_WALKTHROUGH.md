@@ -30,6 +30,31 @@
 
 ### Code + data
 
+> **Why rebuild the DB before the demo?** The running instance has
+> hundreds of real api_usage_log rows, a stretched audit hash-chain,
+> incidents + maintenance plans you created while exploring, and a 4th
+> "Demo service" that isn't in the seed. None of that is broken — but a
+> grader clicking around might wander into half-finished test data, see
+> a cost total that reflects your debugging rather than the demo flow,
+> or notice audit entries from three days of exploration. A fresh seed
+> gets you to the **exact narrated starting state** used below: 3
+> services, 1 pre-flagged drift alert, clean audit chain, no stray
+> incidents, every action from now onward is attributable to the demo
+> itself.
+>
+> **What survives a reset:** nothing database-side. Your code, docs,
+> `backend/.env` (including your real `ANTHROPIC_API_KEY`), and git
+> history are untouched — only `aiops.db` is removed.
+>
+> **What gets lost:** all connection logs, api_usage_log rows,
+> incidents, maintenance plans, alerts beyond the seeded one, and the
+> audit hash chain (it restarts at GENESIS_HASH). Any custom services
+> you registered manually are gone.
+>
+> **Seed is idempotent-guarded**: running `python -m app.seed` against
+> a populated DB prints "already has data — skipping" and does
+> nothing. To actually reset you MUST `rm aiops.db` first.
+
 ```bash
 # Pull latest
 git checkout main && git pull
@@ -66,7 +91,7 @@ cd backend && source venv/bin/activate && uvicorn app.main:app --port 8000
 cd frontend && npm run dev
 ```
 
-Browser: http://localhost:5173 → login `admin@aiops.local / admin123` → Dashboard should show:
+Browser: http://localhost:5173 → login as `admin@aiops.local` (password is whatever you set in `SEED_ADMIN_PASSWORD` in `backend/.env`, or the demo fallback if unset) → Dashboard should show:
 
 - 3 active services
 - **Red "Active Alerts" banner** ("Internal Report Generator quality dropped to 42.0%")
@@ -589,7 +614,7 @@ Print this. Keep it on the desk. Cross items off in the 15 min before demo:
 - [ ] Backend running on :8000 — terminal shows "scheduler DISABLED"
 - [ ] Frontend running on :5173 — no Vite errors in terminal
 - [ ] Browser at http://localhost:5173 on the Login page
-- [ ] Login works with `admin@aiops.local / admin123`
+- [ ] Login works with `admin@aiops.local` and your `SEED_ADMIN_PASSWORD`
 - [ ] Dashboard shows the red Active Alerts banner
 - [ ] ⌘K command palette opens
 - [ ] Notifications muted (Do Not Disturb on)

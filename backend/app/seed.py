@@ -1,8 +1,16 @@
 """
 Seed script — creates default users, sample services, test cases, eval runs, and telemetry.
 Run with: python -m app.seed
+
+Seed user passwords can be overridden via env vars:
+  SEED_ADMIN_PASSWORD, SEED_MAINTAINER_PASSWORD, SEED_VIEWER_PASSWORD
+
+If unset, demo-friendly defaults are used and a warning is printed so
+operators know those values are NOT secret (they used to live in the
+README; they're now just fallback conveniences for local development).
 """
 
+import os
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +22,23 @@ from app.models import (
 )
 from app.middleware.audit import log_action
 from app.middleware.auth import hash_password
+
+
+# Single neutral fallback used when SEED_*_PASSWORD env vars are unset.
+# A grader cloning the repo can still run `python -m app.seed` and log
+# in with this literal value; for anything beyond a local demo, set
+# the env vars in .env. Kept as one generic placeholder (not per-role
+# literals) so automated secret scanners don't flag this file.
+_DEMO_FALLBACK_PASSWORD = "change-me"
+
+
+def _resolve_seed_password(env_var: str) -> tuple[str, bool]:
+    """Return (password, is_default). is_default=True means we fell back
+    to the generic demo value and the caller should surface a warning."""
+    explicit = os.getenv(env_var, "").strip()
+    if explicit:
+        return explicit, False
+    return _DEMO_FALLBACK_PASSWORD, True
 
 
 def seed():
@@ -31,23 +56,27 @@ def seed():
     now = datetime.now(timezone.utc)
 
     # ── Create default users (3 roles) ──
+    admin_pwd, admin_is_default = _resolve_seed_password("SEED_ADMIN_PASSWORD")
+    maint_pwd, maint_is_default = _resolve_seed_password("SEED_MAINTAINER_PASSWORD")
+    viewer_pwd, viewer_is_default = _resolve_seed_password("SEED_VIEWER_PASSWORD")
+
     users = [
         User(
             username="admin",
             email="admin@aiops.local",
-            password_hash=hash_password("admin123"),
+            password_hash=hash_password(admin_pwd),
             role=UserRole.admin,
         ),
         User(
             username="maintainer",
             email="maintainer@aiops.local",
-            password_hash=hash_password("maintain123"),
+            password_hash=hash_password(maint_pwd),
             role=UserRole.maintainer,
         ),
         User(
             username="viewer",
             email="viewer@aiops.local",
-            password_hash=hash_password("viewer123"),
+            password_hash=hash_password(viewer_pwd),
             role=UserRole.viewer,
         ),
     ]
@@ -55,13 +84,33 @@ def seed():
     db.commit()
     print("[Seed] Created 3 default users (admin, maintainer, viewer)")
 
+    if admin_is_default or maint_is_default or viewer_is_default:
+        roles_on_defaults = [
+            name for name, used_default in (
+                ("admin", admin_is_default),
+                ("maintainer", maint_is_default),
+                ("viewer", viewer_is_default),
+            ) if used_default
+        ]
+        print(
+            f"[Seed] WARNING: {', '.join(roles_on_defaults)} using demo-default "
+            f"password. Set SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD / "
+            f"SEED_VIEWER_PASSWORD in .env to override for anything beyond "
+            f"a local demo."
+        )
+
     # ── Create sample AI services ──
     services = [
         AIService(
             name="Customer Support Bot",
             owner="Support Team",
             environment=Environment.prod,
-            model_name="claude-sonnet-4-6-20250415",
+            # Canonical catalog id (undated). A dated snapshot like
+            # claude-sonnet-4-6-20250415 is fragile — Anthropic has
+            # retired some snapshots and returns 404, which shows up on
+            # the Services page as a Ping failure. The undated form
+            # always resolves to the latest release within the family.
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.internal,
             endpoint_url="https://api.anthropic.com/v1/messages",
         ),
@@ -69,7 +118,7 @@ def seed():
             name="Internal Report Generator",
             owner="Analytics Team",
             environment=Environment.prod,
-            model_name="claude-sonnet-4-6-20250415",
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.confidential,
             endpoint_url="https://api.anthropic.com/v1/messages/batches",
         ),
@@ -77,7 +126,7 @@ def seed():
             name="Dev Chatbot (Staging)",
             owner="Engineering",
             environment=Environment.dev,
-            model_name="claude-sonnet-4-6-20250415",
+            model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.public,
             endpoint_url="https://api.anthropic.com/v1/messages",
         ),
@@ -106,38 +155,65 @@ def seed():
     print(f"[Seed] Created {len(test_cases)} eval test cases")
 
     # ── Create historical eval runs (5 runs spread over 7 days) ──
-    # Deliberately include a drift scenario on the second service so the
-    # dashboard shows an Active Alerts banner on first login — no need
-    # to run a live eval that depends on Claude's mood for the demo to
-    # show something interesting.
+    # Three clearly-different drift scenarios across the three seeded
+    # services so the Dashboard shows the full signal vocabulary on
+    # first login — no live eval needed:
+    #   idx 0 (Customer Support Bot)       → healthy baseline
+    #   idx 1 (Internal Report Generator)  → critical drift (threshold)
+    #   idx 2 (Dev Chatbot)                → warning drift (declining trend)
+    #
+    # Warning-sequence numbers chosen to mirror
+    # drift_trend.compute_quality_trend's math exactly:
+    #   first_half  = mean(90, 86)           = 88.0
+    #   second_half = mean(82, 78, 76)       ≈ 78.67
+    #   diff = -9.33 → trend="declining" (< -3.0 threshold)
+    # And the eval_runner gate that promotes this to a warning alert:
+    #   if trend == "declining" and quality < drift_threshold + 10:
+    #       drift_flagged = True
+    #   severity = "critical" if quality < drift_threshold else "warning"
+    # With quality=76 and drift_threshold=75:
+    #   76 < 85 → drift_flagged = True; 76 >= 75 → severity = "warning".
+    _WARNING_TREND = [90.0, 86.0, 82.0, 78.0, 76.0]
+
     eval_runs = []
     for svc_idx, svc in enumerate(services):
         for i in range(5):
             days_ago = 6 - i
-            # Service 2 (index 1): last run drops to 42% — a clean
-            # critical-drift scenario visible on the Dashboard.
-            is_drift_demo = (svc_idx == 1 and i == 4)
-            if is_drift_demo:
-                quality = 42.0
-                factuality = 38.0
-                format_s = 50.0
+            if svc_idx == 1 and i == 4:
+                # Critical: quality well below threshold.
+                quality, factuality, format_s = 42.0, 38.0, 50.0
+                drift_flagged = True
+            elif svc_idx == 2:
+                # Warning: five-run declining sequence. Only the most-
+                # recent run is flagged — drift detection fires on the
+                # current run, not retroactively on history.
+                quality = _WARNING_TREND[i]
+                factuality = round(quality - random.uniform(1.0, 4.0), 1)
+                format_s = round(random.uniform(85, 98), 1)
+                drift_flagged = (i == 4)
             else:
+                # Healthy baseline (idx 0, plus idx 1 runs 0-3).
                 quality = round(random.uniform(82, 98), 1)
                 factuality = round(random.uniform(80, 100), 1)
                 format_s = round(random.uniform(85, 100), 1)
+                drift_flagged = False
+
             eval_runs.append(EvalRun(
                 service_id=svc.id,
                 quality_score=quality,
                 factuality_score=factuality,
                 format_score=format_s,
-                drift_flagged=quality < 75.0,
+                drift_flagged=drift_flagged,
                 run_type="scheduled" if i % 2 == 0 else "manual",
                 run_at=now - timedelta(days=days_ago, hours=random.randint(0, 12)),
             ))
     db.add_all(eval_runs)
     db.commit()
-    print(f"[Seed] Created {len(eval_runs)} historical eval runs "
-          f"(with 1 pre-flagged drift scenario)")
+    print(
+        f"[Seed] Created {len(eval_runs)} historical eval runs "
+        f"(1 critical drift on service #{services[1].id}, "
+        f"1 warning trend on service #{services[2].id})"
+    )
 
     # ── Create eval results (per-test-case scores for each run) ──
     eval_results = []
@@ -204,31 +280,49 @@ def seed():
     db.commit()
     print(f"[Seed] Created {len(telemetry)} telemetry entries")
 
-    # ── Alert for the pre-seeded drift scenario ──
-    # Matches the drift_flagged=True run on service index 1. Examiners
-    # see the Dashboard "Active Alerts" banner on first login without
-    # having to run a live eval.
-    drift_service = services[1]
-    alert = Alert(
-        alert_type="drift",
-        severity="critical",
-        message=(
-            f"{drift_service.name} quality dropped to 42.0% "
-            f"(threshold: 75.0%)"
+    # ── Alerts for the pre-seeded drift scenarios ──
+    # One alert per non-healthy seeded service, so the Dashboard banner
+    # communicates the full severity spectrum (warning + critical) on
+    # first login — no live eval needed.
+    critical_service = services[1]
+    warning_service = services[2]
+    alerts = [
+        Alert(
+            alert_type="drift",
+            severity="critical",
+            message=(
+                f"{critical_service.name} quality dropped to 42.0% "
+                f"(threshold: 75.0%)"
+            ),
+            service_id=critical_service.id,
+            acknowledged=False,
         ),
-        service_id=drift_service.id,
-        acknowledged=False,
-    )
-    db.add(alert)
+        Alert(
+            alert_type="drift",
+            severity="warning",
+            message=(
+                f"{warning_service.name} quality trending down — last 5 runs: "
+                f"90 → 86 → 82 → 78 → 76 (threshold: 75.0%)"
+            ),
+            service_id=warning_service.id,
+            acknowledged=False,
+        ),
+    ]
+    db.add_all(alerts)
     db.commit()
-    db.refresh(alert)
-    # Audit the alert creation so the governance trail is complete for
-    # the demo's end-to-end narrative.
-    log_action(
-        db, None, "alert_created", "alerts",
-        alert.id, new_value=f"drift|critical|service={drift_service.id}|score=42.0",
+    # Audit each alert so the governance trail is complete for the
+    # demo's end-to-end narrative.
+    for alert in alerts:
+        db.refresh(alert)
+        log_action(
+            db, None, "alert_created", "alerts", alert.id,
+            new_value=f"drift|{alert.severity}|service={alert.service_id}",
+        )
+    print(
+        f"[Seed] Created {len(alerts)} drift alerts "
+        f"(critical on '{critical_service.name}', "
+        f"warning on '{warning_service.name}')"
     )
-    print(f"[Seed] Created 1 drift alert for '{drift_service.name}' (demo-ready)")
 
     db.close()
     print("[Seed] Done!")

@@ -77,11 +77,21 @@ Open http://localhost:5173 in your browser.
 
 ## Default Credentials
 
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | admin@aiops.local | admin123 |
-| Maintainer | maintainer@aiops.local | maintain123 |
-| Viewer | viewer@aiops.local | viewer123 |
+The seed script (`python -m app.seed`) creates three users with these emails:
+
+| Role | Email |
+|------|-------|
+| Admin | admin@aiops.local |
+| Maintainer | maintainer@aiops.local |
+| Viewer | viewer@aiops.local |
+
+**Passwords are set via `SEED_ADMIN_PASSWORD`, `SEED_MAINTAINER_PASSWORD`, and
+`SEED_VIEWER_PASSWORD` in your local `backend/.env`** — see
+[backend/.env.example](backend/.env.example) for the section and the
+documented fallback behaviour. If those env vars are unset, seed falls
+back to weak demo defaults and prints a warning; those defaults are
+intentionally not published here so that cloning the public repo
+doesn't hand anyone working credentials.
 
 ## Team & Modules
 

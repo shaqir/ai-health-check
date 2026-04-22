@@ -165,7 +165,7 @@ reviewing compliance, or rehearsing a demo.
 | [MODULE_GUIDE](docs/MODULE_GUIDE.md) | Module-by-module breakdown with files, endpoints, and end-to-end demo flow |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, database models, API endpoints, configuration reference |
 | [ONBOARDING](docs/ONBOARDING.md) | Setup steps and platform lifecycle walkthrough |
-| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 123 tests across 13 files with coverage floor, what they cover, how to run |
+| [TESTING_STRATEGY](docs/TESTING_STRATEGY.md) | 188 tests across 22 files with coverage floor, what they cover, how to run |
 | [EVAL_DATASET_CARD](docs/EVAL_DATASET_CARD.md) | Test cases, scoring methodology, drift detection algorithm, judge-refused handling |
 | [PROMPT_CHANGE_LOG](docs/PROMPT_CHANGE_LOG.md) | All 7 LLM prompt templates, model history, parser changes |
 | [RISK_REGISTER](docs/RISK_REGISTER.md) | 17 risks with mitigations and residuals |

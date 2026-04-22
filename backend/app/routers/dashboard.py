@@ -488,11 +488,56 @@ async def claude_api_health(
 def get_platform_settings(
     _: User = Depends(get_current_user),
 ):
-    """Return non-sensitive platform configuration for the settings page."""
-    return {
-        "ai_model": {
+    """
+    Return non-sensitive platform configuration for the settings page.
+
+    Dual-model shape: the system runs an actor (Sonnet-family, handles the
+    service under test + synthesis tasks) and a judge (Haiku-family, scores
+    factuality + hallucination via one merged-rubric call). Pricing differs
+    per model, so the UI needs both rows, not a flat single model.
+
+    The source of truth for pricing lives in llm_client._PRICING — we
+    read it here so the page can never drift from what the cost estimator
+    is actually charging against the budget.
+    """
+    from app.services.llm_client import _PRICING, _PRICING_FALLBACK
+
+    def _model_entry(role: str, model_id: str, purpose: str) -> dict:
+        rates = _PRICING.get(model_id, _PRICING_FALLBACK)
+        return {
+            "role": role,
             "provider": "Anthropic",
-            "model": settings.llm_model,
+            "id": model_id,
+            "purpose": purpose,
+            "pricing": {
+                "input_per_million_usd": rates["input_per_million"],
+                "output_per_million_usd": rates["output_per_million"],
+                "currency": "USD",
+            },
+        }
+
+    return {
+        "models": {
+            "actor": _model_entry(
+                role="actor",
+                model_id=settings.llm_model,
+                purpose=(
+                    "Generates the responses being evaluated plus synthesis "
+                    "work: incident triage, dashboard insights, compliance "
+                    "reports."
+                ),
+            ),
+            "judge": _model_entry(
+                role="judge",
+                model_id=settings.judge_model,
+                purpose=(
+                    "Scores factuality + hallucination via one merged-rubric "
+                    "JSON call. Different family from the actor — reduces "
+                    "self-scoring correlation."
+                ),
+            ),
+        },
+        "runtime": {
             "max_tokens": settings.llm_max_tokens,
             "timeout_seconds": settings.llm_timeout_seconds,
         },
@@ -505,11 +550,6 @@ def get_platform_settings(
             "drift_threshold_pct": settings.drift_threshold,
             "health_check_schedule_minutes": settings.health_check_schedule_minutes,
             "eval_schedule_minutes": settings.eval_schedule_minutes,
-        },
-        "pricing": {
-            "input_per_million_usd": 3.0,
-            "output_per_million_usd": 15.0,
-            "currency": "USD",
         },
     }
 
@@ -555,6 +595,24 @@ def get_api_usage(
         {"function": row[0], "calls": row[1], "tokens": row[2], "cost_usd": round(row[3], 6)}
         for row in breakdown_rows
     ]
+
+    # Per-model breakdown (today). Lets the Models section show each model's
+    # share of today's activity next to its price card — makes it visible
+    # at a glance that both actor + judge are actually being used.
+    model_rows = db.query(
+        APIUsageLog.model,
+        func.count(APIUsageLog.id),
+        func.coalesce(func.sum(APIUsageLog.estimated_cost_usd), 0),
+    ).filter(
+        APIUsageLog.timestamp >= day_start,
+        APIUsageLog.status != "reserved",  # don't double-count in-flight rows
+    ).group_by(APIUsageLog.model).all()
+
+    breakdown_by_model = {
+        row[0]: {"calls": row[1], "cost_usd": round(float(row[2]), 6)}
+        for row in model_rows
+        if row[0]
+    }
 
     # Recent calls (last 10)
     recent = db.query(APIUsageLog).order_by(APIUsageLog.timestamp.desc()).limit(10).all()
@@ -602,6 +660,7 @@ def get_api_usage(
             ),
         },
         "breakdown": breakdown,
+        "breakdown_by_model": breakdown_by_model,
         "recent_calls": recent_calls,
     }
 

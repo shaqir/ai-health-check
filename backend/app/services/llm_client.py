@@ -10,8 +10,7 @@ touches the Anthropic SDK directly. This makes it easy to:
 Functions:
   - test_connection()               → Used by Module 1 (Service Registry)
   - run_eval_prompt()               → Used by Module 2 (Evaluation Harness)
-  - score_factuality()              → Used by Module 2 (Evaluation Scoring)
-  - detect_hallucination()          → Used by Module 2 (Hallucination Detection)
+  - judge_response()                → Used by Module 2 (factuality + hallucination, merged)
   - generate_summary()              → Used by Module 3 (Incident Triage)
   - generate_dashboard_insight()    → Used by Module 2 (Dashboard AI Summary)
   - generate_compliance_summary()   → Used by Module 4 (Compliance AI Report)
@@ -500,55 +499,87 @@ ROOT CAUSES:
         return {"summary_draft": f"Error generating summary: {str(e)}", "root_causes_draft": ""}
 
 
-def _parse_judge_score(text: str) -> float | None:
+def _parse_judge_json(text: str) -> dict:
     """
-    Parse an LLM judge's numeric score response.
+    Parse the merged judge's JSON response. Returns a dict with
+    `factuality` and `hallucination` keys, each a float 0-100 or None.
 
-    Requires the response to be ONLY a number (0-100), optionally with
-    whitespace. Any extra prose — including common refusals like
-    "I cannot rate this" or "I can give you 7 reasons..." — is
-    rejected so we never interpret a refusal as a real score.
-
-    Returns the clamped float score, or None if the judge didn't comply.
+    None for a rubric means "no measurable signal" — either the judge
+    refused, returned malformed JSON, or gave a non-numeric value for
+    that key. Callers must distinguish None from 0 (a refusal is NOT
+    "scored zero", and a hallucination refusal is NOT "no hallucination").
     """
     if not text:
-        return None
-    m = re.fullmatch(r"\s*(\d{1,3})\.?\d*\s*", text)
-    if not m:
-        return None
-    score = int(m.group(1))
-    # Clamp defensively — Claude might reply with 101 or -5.
-    return float(min(max(score, 0), 100))
+        return {"factuality": None, "hallucination": None}
+
+    # Strip accidental code fences Haiku sometimes adds.
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip()).strip()
+
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {"factuality": None, "hallucination": None}
+
+    def _clamp(key: str) -> float | None:
+        v = obj.get(key)
+        if not isinstance(v, (int, float)):
+            return None
+        # Clamp defensively — Claude might reply with 101 or -5.
+        return float(min(max(int(v), 0), 100))
+
+    return {
+        "factuality": _clamp("factuality"),
+        "hallucination": _clamp("hallucination"),
+    }
 
 
-async def score_factuality(expected: str, actual: str) -> float | None:
+async def judge_response(prompt: str, expected: str, actual: str) -> dict:
     """
-    Module 2: Evaluation Scoring
-    Asks Claude to rate factual similarity 0-100.
-    Returns None if Claude refused or returned non-numeric content,
-    so callers can distinguish "refused" from "scored 0".
-    """
-    prompt = f"""You are evaluating AI output quality. Compare the expected output with the actual output and rate their factual similarity on a scale of 0-100.
+    Merged-rubric judge call. Single Haiku call scores both factuality
+    (match to expected output) and hallucination (groundedness in the
+    prompt) and returns them as structured JSON.
 
-Expected output:
+    Returns:
+        {"factuality": float | None, "hallucination": float | None}
+
+    Either value is None if the judge refused or returned malformed data
+    for that rubric. Callers must distinguish None from 0: a refusal is
+    NOT a zero score.
+
+    Replaces the separate score_factuality + detect_hallucination pair,
+    which previously fired two Claude calls per factuality test case
+    reading the same inputs.
+    """
+    judge_prompt = f"""You are evaluating AI output quality on TWO independent rubrics.
+
+PROMPT (what was asked):
+{prompt}
+
+EXPECTED OUTPUT (ground truth):
 {expected}
 
-Actual output:
+ACTUAL OUTPUT (model response):
 {actual}
 
-Respond with ONLY a single integer from 0 to 100. No other text."""
+Score each rubric from 0 to 100:
+- factuality: how factually close is ACTUAL to EXPECTED? 100 = perfect match in meaning, 0 = completely different.
+- hallucination: how much does ACTUAL contain claims not supported by PROMPT? 0 = fully grounded, 100 = mostly fabricated.
+
+Respond with ONLY valid JSON on a single line, no prose, no code fences:
+{{"factuality": <0-100>, "hallucination": <0-100>}}
+"""
 
     try:
         response, _ = _make_api_call(
-            caller="score_factuality",
+            caller="judge_response",
             model=settings.judge_model,
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
+            max_tokens=60,
+            messages=[{"role": "user", "content": judge_prompt}],
         )
         text = response.content[0].text.strip() if response.content else ""
-        return _parse_judge_score(text)
+        return _parse_judge_json(text)
     except Exception:
-        return None
+        return {"factuality": None, "hallucination": None}
 
 
 async def generate_dashboard_insight(metrics: dict) -> dict:
@@ -631,40 +662,5 @@ Keep the report under 500 words."""
     except Exception as e:
         return {"report_text": f"Error generating compliance report: {str(e)}"}
 
-
-async def detect_hallucination(prompt: str, response_text: str) -> float | None:
-    """
-    Hallucination Detection (inspired by Patronus AI / Braintrust).
-    Asks Claude to judge whether the response contains claims not supported by the prompt.
-    Returns a hallucination score from 0 (no hallucination) to 100 (severe hallucination),
-    or None if the judge refused — callers must distinguish refusals from scores, because
-    a refusal is not "severe hallucination" (that interpretation inverts the signal).
-    """
-    judge_prompt = f"""You are a hallucination detector. Given a prompt and a model's response, rate how much the response contains unsupported or fabricated claims.
-
-PROMPT:
-{prompt}
-
-RESPONSE:
-{response_text}
-
-Score from 0 to 100:
-- 0 = fully grounded, no hallucination
-- 50 = some claims not directly supported by the prompt
-- 100 = mostly fabricated or contradicts the prompt
-
-Respond with ONLY a single integer from 0 to 100. No other text."""
-
-    try:
-        response, _ = _make_api_call(
-            caller="detect_hallucination",
-            model=settings.judge_model,
-            max_tokens=10,
-            messages=[{"role": "user", "content": judge_prompt}],
-        )
-        text = response.content[0].text.strip() if response.content else ""
-        return _parse_judge_score(text)
-    except Exception:
-        return None
 
 

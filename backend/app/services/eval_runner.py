@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import AIService, Alert, EvalRun, EvalResult, EvalTestCase, Telemetry
-from app.services.llm_client import run_eval_prompt, score_factuality, detect_hallucination
+from app.services.llm_client import run_eval_prompt, judge_response
 
 settings = get_settings()
 
@@ -99,15 +99,34 @@ async def run_service_evaluation(
         score = 0.0
 
         if tc.category == "factuality":
-            fact_score = await score_factuality(tc.expected_output, response_text)
-            if fact_score is None:
-                judge_refused = True
+            # Short-circuit 1: actor errored — no point asking the judge to
+            # score an error string. The status transition below marks this
+            # as "error", which is excluded from valid_scores aggregation.
+            if response_text.startswith("ERROR:"):
+                pass
+
+            # Short-circuit 2: exact match — a judge call here would just
+            # confirm 100 and waste a Claude round-trip. Compare on stripped
+            # text so trailing whitespace doesn't demote a perfect answer.
+            elif response_text.strip() == (tc.expected_output or "").strip():
+                score = 100.0
+                factuality_scores.append(100.0)
+                halluc_score = 0.0
+                hallucination_scores.append(0.0)
+
+            # Normal path: one merged judge call returns both scores.
             else:
-                score = fact_score
-                factuality_scores.append(fact_score)
-            halluc_score = await detect_hallucination(tc.prompt, response_text)
-            if halluc_score is not None:
-                hallucination_scores.append(halluc_score)
+                judged = await judge_response(tc.prompt, tc.expected_output, response_text)
+                fact = judged["factuality"]
+                halluc = judged["hallucination"]
+                if fact is None:
+                    judge_refused = True
+                else:
+                    score = fact
+                    factuality_scores.append(fact)
+                if halluc is not None:
+                    halluc_score = halluc
+                    hallucination_scores.append(halluc)
         elif tc.category == "format_json":
             # Claude often wraps JSON in ```json fences or adds prose around it.
             # Extract the JSON payload before validating so a well-formed object

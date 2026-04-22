@@ -111,6 +111,36 @@ def _parse_sensitivity_label(value: str) -> SensitivityLabel:
         ) from exc
 
 
+def classify_probe_response(code: int, snippet: str) -> tuple[str, str]:
+    """
+    Map an HTTP response code + body snippet to a (status, snippet_msg)
+    pair for ConnectionLog. Pure function — no IO, no side effects —
+    shared between the router probe (`_probe_service_endpoint`) and the
+    scheduled health check (`main.scheduled_health_check`) so both paths
+    stay in sync on the 4xx-reachable semantics below.
+
+    Liveness semantics: the probe is a *network reachability* check,
+    not a functional auth/method check. Many registered AI endpoints
+    (Anthropic, OpenAI, etc.) are POST-only and respond 405 to GET, or
+    401 without credentials — both mean "the server is up and answered
+    us," which is what a ping should test. Only 5xx + network errors
+    count as the endpoint being down.
+
+    Returns:
+        status     ∈ {"success", "failure"}
+        snippet_msg — length-bounded human-readable text for the UI
+    """
+    if code < 400:
+        return "success", (snippet or f"HTTP {code} from service endpoint")
+    if code < 500:
+        return "success", (
+            f"HTTP {code} (reachable — endpoint is up but rejected our "
+            f"anonymous GET; most AI APIs are POST-only + auth-required). "
+            f"{snippet[:120]}"
+        )
+    return "failure", f"HTTP {code} (server error). {snippet[:120]}"
+
+
 async def _probe_service_endpoint(endpoint_url: str) -> dict:
     # Re-validate at probe time too. Closes the DNS-rebinding window where
     # an endpoint passed validation at registration but now resolves to a
@@ -130,31 +160,12 @@ async def _probe_service_endpoint(endpoint_url: str) -> dict:
             response = await client.get(endpoint_url)
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
         snippet = (response.text or "")[:200]
-        # Liveness semantics: the probe is a network reachability check, not a
-        # functional auth/method check. Many registered endpoints (Anthropic,
-        # OpenAI, etc.) are POST-only and respond 405 to GET, or 401 without
-        # credentials — both mean "the server is up and answered us," which
-        # is what a ping should test. Only 5xx and network errors count as
-        # the endpoint being down.
-        code = response.status_code
-        if code < 400:
-            probe_status = "success"
-            snippet_msg = snippet or f"HTTP {code} from service endpoint"
-        elif code < 500:
-            probe_status = "success"
-            snippet_msg = (
-                f"HTTP {code} (reachable — endpoint is up but rejected our "
-                f"anonymous GET; most AI APIs are POST-only + auth-required). "
-                f"{snippet[:120]}"
-            )
-        else:
-            probe_status = "failure"
-            snippet_msg = f"HTTP {code} (server error). {snippet[:120]}"
+        probe_status, snippet_msg = classify_probe_response(response.status_code, snippet)
         return {
             "status": probe_status,
             "latency_ms": latency_ms,
             "response_snippet": snippet_msg,
-            "http_status": code,
+            "http_status": response.status_code,
         }
     except httpx.HTTPError as exc:
         latency_ms = round((time.perf_counter() - start) * 1000, 1)

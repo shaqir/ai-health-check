@@ -23,7 +23,7 @@ FastAPI Backend (7 routers, 47 endpoints)
     |
     |--- Anthropic API — two-tier:
     |       Sonnet 4.6  (actor: services under test + synthesis tasks)
-    |       Haiku 4.5   (judges + injection detector)
+    |       Haiku 4.5   (merged judge: factuality + hallucination in one call)
     |        ^
     |        |-- [1] Input safety scan
     |        |-- [2] Budget check
@@ -93,19 +93,15 @@ Compliance was split into three cohesive files mounted under the same
 All Anthropic API calls are centralized in `llm_client.py`. Two-tier model architecture:
 
 - **Actor — `settings.llm_model` (Sonnet 4.6 default):** the service under test and every synthesis task (incident summaries, dashboard insights, compliance reports).
-- **Judge — `settings.judge_model` (Haiku 4.5 default):** `score_factuality`, `detect_hallucination`. Different size/training emphasis from the actor narrows the "model scoring itself" correlation.
-- **Injection detector — `settings.injection_model` (Haiku 4.5 default):** `detect_injection`, an LLM-based prompt-injection classifier run on every input as a second layer over the regex tripwire in `safety.py`. Fail-open on classifier outage — regex stays authoritative.
+- **Judge — `settings.judge_model` (Haiku 4.5 default):** merged `judge_response` — one structured Haiku call per factuality test case returns `{factuality, hallucination}`. Different size/training emphasis from the actor narrows the "model scoring itself" correlation. The earlier split `score_factuality` + `detect_hallucination` pair was merged in commit `0fbddac` to halve judge traffic.
+- **Safety:** single-layer regex only (`safety.py::scan_input`). An LLM classifier second layer existed briefly and was removed in commit `73e09b3` — false-positive rate on legitimate prompts didn't justify the cost.
 
-### `_make_api_call` vs `_make_api_call_core`
-
-The wrapper runs the input safety scan (which itself calls `detect_injection`); the core skips it. `detect_injection` uses `_make_api_call_core` directly because its own prompt is system-controlled — recursing back through `scan_input` would loop forever.
-
-### Flow through `_make_api_call` (6 stages)
+### Flow through `_make_api_call` (5 stages)
 
 ```
-[1] Input Safety Scan        -> scan_input() from safety.py: regex tripwire + Haiku LLM classifier
-                                (detect_injection). Fail-open on classifier errors. Raises
-                                PromptSafetyError (422) if combined risk >= 80.
+[1] Input Safety Scan        -> scan_input() from safety.py: 15-pattern regex tripwire + PII
+                                detection (email/phone/SSN/credit-card) + length cap. Raises
+                                PromptSafetyError (422) if risk_score >= 80.
 [2] Atomic check + reserve   -> _check_budget() AND a reservation INSERT into APIUsageLog (status='reserved',
                                 worst-case cost per-model) happen under _BUDGET_LOCK so concurrent callers
                                 cannot race past the limit. Raises BudgetExceededError (402/429).
@@ -124,7 +120,7 @@ The wrapper runs the input safety scan (which itself calls `detect_injection`); 
 | Model | Input ($/M tokens) | Output ($/M tokens) | Used for |
 |-------|-------------------|---------------------|----------|
 | `claude-sonnet-4-6-20250415` | 3.00 | 15.00 | Actor, synthesis |
-| `claude-haiku-4-5-20251001`  | 1.00 |  5.00 | Judges, injection detector |
+| `claude-haiku-4-5-20251001`  | 1.00 |  5.00 | Merged judge (factuality + hallucination) |
 | unknown model | 3.00 (Sonnet fallback, warns once) | 15.00 | Future model additions |
 
 ### LLM Function Signatures
@@ -133,12 +129,10 @@ The wrapper runs the input safety scan (which itself calls `detect_injection`); 
 |----------|--------------|--------|------------|---------|
 | `test_connection(prompt, model)` | `test_connection` | M1 | 50 | Verify API connectivity and latency |
 | `run_eval_prompt(prompt, system_context)` | `run_eval_prompt` | M2 | 1024 | Execute eval test case, return raw response |
-| `score_factuality(expected, actual)` | `score_factuality` | M2 | 10 | Rate factual similarity 0-100 (LLM-as-judge). Returns `None` if Claude refuses or returns non-numeric content so callers distinguish "judge refused" from "scored 0" |
+| `judge_response(prompt, expected, actual)` | `judge_response` | M2 | 60 | Merged factuality + hallucination judge. Single Haiku call returns structured JSON `{factuality: float\|None, hallucination: float\|None}`. `None` for a rubric means the judge refused or returned malformed content — callers treat it as `judge_refused` and EXCLUDE from aggregates so a flaky judge cannot spuriously trip drift. Replaces the separate `score_factuality` + `detect_hallucination` pair (commit `0fbddac`) |
 | `generate_summary(service_name, severity, symptoms, checklist)` | `generate_summary` | M3 | 1024 | Draft stakeholder update + root causes |
 | `generate_dashboard_insight(metrics)` | `generate_dashboard_insight` | M2 | 1024 | Summarize platform health + action items |
 | `generate_compliance_summary(audit_data, incidents_data, drift_data)` | `generate_compliance_summary` | M4 | 1024 | Generate governance compliance report |
-| `detect_hallucination(expected, actual)` | `detect_hallucination` | M2 | 10 | LLM-as-judge hallucination score 0-100, runs on factuality eval cases. Returns `None` on judge refusal — never misread as 100 (severe hallucination) |
-| `detect_injection(prompt_text)` | `detect_injection` | safety | 120 | Haiku-based prompt-injection classifier. Runs on **every** input as a second layer over the regex tripwire in `safety.py::scan_input`. Uses `_make_api_call_core` (not the wrapper) to avoid recursing through `scan_input`. Fail-open — classifier outage returns `{injection: False, confidence: 0, reason: "classifier_unavailable"}` so the regex layer stays authoritative |
 
 Full prompt templates are documented in [PROMPT_CHANGE_LOG](PROMPT_CHANGE_LOG.md).
 
@@ -152,7 +146,7 @@ This is the canonical model inventory. All models are defined in `backend/app/mo
 | `AIService` | `ai_services` | Service registry: endpoint URLs (SSRF-validated), owner, model tags, environment, sensitivity label |
 | `ConnectionLog` | `connection_logs` | Health check history per service: latency, status, response snippet |
 | `EvalTestCase` | `eval_test_cases` | Evaluation dataset: input prompts, expected outputs, categories |
-| `EvalRun` | `eval_runs` | Evaluation execution records: aggregate scores, drift status, run type, `judge_model` (which model produced the scores — traces each run back to its judge for audit) |
+| `EvalRun` | `eval_runs` | Evaluation execution records: aggregate scores, drift status, run type, `judge_model` (which model produced the scores — traces each run back to its judge for audit), `run_status` (`complete` \| `incomplete` — UI distinguishes "no measurable signal" from "0% quality" when every case errored or the judge refused) |
 | `EvalResult` | `eval_results` | Per-test-case results: individual scores, variance, latency, drift tracking |
 | `Incident` | `incidents` | Incident records: severity, status, symptoms, checklist, LLM summary draft/approved, `reviewer_note` (required on approve), `approved_at` timestamp |
 | `MaintenancePlan` | `maintenance_plans` | Maintenance actions: rollback plan, validation steps, approval status |
@@ -289,7 +283,7 @@ Every 403 denial is itself written to `audit_log` as a `role_denied` event with 
 - Backoff formula: `2^attempt + random(0, 0.5)` seconds.
 - Non-retryable errors (AuthenticationError, BadRequestError) fail immediately.
 
-## 8. Configuration Reference (22 settings)
+## 8. Configuration Reference (27 settings)
 
 This is the canonical settings table. All settings are in `backend/app/config.py`, loaded from `.env` via Pydantic `BaseSettings`.
 
@@ -297,8 +291,7 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 |---------|---------|----------|
 | `anthropic_api_key` | (required) | LLM |
 | `llm_model` | `claude-sonnet-4-6-20250415` | LLM — actor / synthesis |
-| `judge_model` | `claude-haiku-4-5-20251001` | LLM — factuality + hallucination judge |
-| `injection_model` | `claude-haiku-4-5-20251001` | LLM — prompt-injection classifier |
+| `judge_model` | `claude-haiku-4-5-20251001` | LLM — merged factuality + hallucination judge |
 | `llm_max_tokens` | 1024 | LLM |
 | `llm_timeout_seconds` | 30 | LLM |
 | `database_url` | `sqlite:///./aiops.db` | Database |
@@ -313,8 +306,11 @@ This is the canonical settings table. All settings are in `backend/app/config.py
 | `health_check_schedule_minutes` | 5 | Scheduling |
 | `api_daily_budget` | 5.0 | Budget |
 | `api_monthly_budget` | 25.0 | Budget |
-| `api_max_calls_per_minute` | 60 | Rate Limiting (bumped from 30 when two-tier landed — 4 calls/request instead of 3) |
-| `api_max_calls_per_user_per_minute` | 40 | Rate Limiting (bumped from 20 for the same reason) |
+| `api_max_calls_per_minute` | 30 | Rate Limiting — sized for demo eval batches (a 10-case factuality run fires ~20 Claude calls: 10 actor + 10 merged judge, plus headroom for concurrent UI activity) |
+| `api_max_calls_per_user_per_minute` | 20 | Rate Limiting — per-user portion of the global budget; enforced inside `_BUDGET_LOCK` with atomic reservation (see `llm_client.py::_make_api_call`) |
+| `hard_max_cost_per_call_usd` | 0.05 | Hard cap — rejects a Claude call BEFORE the network if its worst-case cost exceeds this ceiling |
+| `hard_max_tokens_per_call` | 2000 | Hard cap — ceiling on `max_tokens` regardless of caller; blocks a bug asking for 100 k tokens |
+| `hard_max_prompt_chars` | 12000 | Hard cap — ceiling on input length, checked before tokenisation |
 | `app_name` | `AI Health Check` | Application |
 | `debug` | `true` | Application |
 | `cors_origins` | `http://localhost:5173,http://localhost:3000` | Application |

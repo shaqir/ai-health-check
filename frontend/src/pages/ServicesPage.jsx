@@ -643,14 +643,33 @@ export default function ServicesPage() {
                     </option>
                   )}
                   {catalog.map((m) => (
+                    // Keep the option label clean — just "Sonnet 4.6",
+                    // "Haiku 4.5". Pricing + role hint used to be jammed
+                    // into the option text, which made the dropdown line
+                    // hard to scan; the detail is still one click away on
+                    // Settings → Models and in the pricing tooltip below.
                     <option key={m.id} value={m.id}>
-                      {m.label} — ${m.pricing.input_per_million_usd}/${m.pricing.output_per_million_usd} per 1M tok · recommended for {m.recommended_for}
+                      {m.label}
                     </option>
                   ))}
                 </select>
-                <p className="mt-1.5 text-[11px] text-text-subtle">
-                  Supported Anthropic models only. Adding a new model is a one-line backend change (<code className="font-mono">model_catalog.py</code>).
-                </p>
+                {/* Live hint below the select — reflects the currently
+                    selected model's pricing + role. Gives context without
+                    cluttering the option list. */}
+                {(() => {
+                  const selected = catalog.find((m) => m.id === form.model_name);
+                  if (!selected) return null;
+                  return (
+                    <p className="mt-1.5 text-[11px] text-text-subtle">
+                      <span className="font-mono">${selected.pricing.input_per_million_usd}</span>/
+                      <span className="font-mono">${selected.pricing.output_per_million_usd}</span> per 1M tokens
+                      {' · recommended for '}
+                      <span className="font-medium text-text-muted">{selected.recommended_for}</span>.
+                      {' Supported Anthropic models only (see '}
+                      <code className="font-mono">model_catalog.py</code>).
+                    </p>
+                  );
+                })()}
               </>
             )}
           </div>

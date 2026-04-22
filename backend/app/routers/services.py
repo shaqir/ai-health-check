@@ -130,12 +130,31 @@ async def _probe_service_endpoint(endpoint_url: str) -> dict:
             response = await client.get(endpoint_url)
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
         snippet = (response.text or "")[:200]
+        # Liveness semantics: the probe is a network reachability check, not a
+        # functional auth/method check. Many registered endpoints (Anthropic,
+        # OpenAI, etc.) are POST-only and respond 405 to GET, or 401 without
+        # credentials — both mean "the server is up and answered us," which
+        # is what a ping should test. Only 5xx and network errors count as
+        # the endpoint being down.
+        code = response.status_code
+        if code < 400:
+            probe_status = "success"
+            snippet_msg = snippet or f"HTTP {code} from service endpoint"
+        elif code < 500:
+            probe_status = "success"
+            snippet_msg = (
+                f"HTTP {code} (reachable — endpoint is up but rejected our "
+                f"anonymous GET; most AI APIs are POST-only + auth-required). "
+                f"{snippet[:120]}"
+            )
+        else:
+            probe_status = "failure"
+            snippet_msg = f"HTTP {code} (server error). {snippet[:120]}"
         return {
-            "status": "success" if response.is_success else "failure",
+            "status": probe_status,
             "latency_ms": latency_ms,
-            "response_snippet": (
-                snippet or f"HTTP {response.status_code} from service endpoint"
-            ),
+            "response_snippet": snippet_msg,
+            "http_status": code,
         }
     except httpx.HTTPError as exc:
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
@@ -331,13 +350,17 @@ async def test_service_connection(
     db.commit()
     db.refresh(log)
 
+    audit_detail = f"{result['status']} ({result['latency_ms']}ms)"
+    if result["status"] == "failure" and result.get("response_snippet"):
+        audit_detail = f"{audit_detail} — {result['response_snippet'][:160]}"
+
     log_action(
         db,
         current_user.id,
         "test_connection",
         "connection_logs",
         log.id,
-        new_value=f"{result['status']} ({result['latency_ms']}ms)",
+        new_value=audit_detail,
     )
 
     return ServiceConnectionResponse(

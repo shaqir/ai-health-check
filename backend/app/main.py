@@ -117,8 +117,18 @@ def scheduled_health_check():
                 with httpx.Client(timeout=10.0, follow_redirects=True) as client:
                     response = client.get(service.endpoint_url)
                 latency_ms = round((time.perf_counter() - start) * 1000, 1)
-                status_str = "success" if response.is_success else "failure"
+                # Liveness semantics: treat 4xx as reachable — many registered
+                # AI endpoints are POST-only and return 405/401 to anonymous
+                # GETs. Only 5xx + network errors count as the endpoint being
+                # down. See routers/services._probe_service_endpoint.
+                code = response.status_code
+                if code < 500:
+                    status_str = "success"
+                else:
+                    status_str = "failure"
                 snippet = (response.text or "")[:200]
+                if code >= 400:
+                    snippet = f"HTTP {code} (reachable). {snippet[:150]}"
             except Exception as exc:
                 latency_ms = round((time.perf_counter() - start) * 1000, 1)
                 status_str = "failure"

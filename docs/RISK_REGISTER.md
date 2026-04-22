@@ -24,6 +24,7 @@
 | R16 | LLM Judge Refusal Misread as Score | Medium | Medium | Implemented |
 | R17 | Rubber-Stamp Approval of LLM Drafts | Medium | High | Implemented |
 | R18 | Unredacted prompt/response text in APIUsageLog | Medium | High | Partial |
+| R19 | Default / placeholder SECRET_KEY accepted silently at startup | High | Critical | Deferred |
 
 ---
 
@@ -252,3 +253,24 @@ Residual: A determined admin who writes "looks fine lgtm approved moving on" pas
 - Mitigated partially by `scan_input`'s pre-call PII detection, which surfaces the flag but does not redact the persisted text.
 
 Residual: Redaction before DB write is a P1 item (Batch B). For demo scope, the local SQLite DB is single-tenant and not shared; in production compliance this is a GDPR blocker and must be redacted at log time using the same regex patterns as `safety.py`. Same patterns could truncate / mask the text before the `_finalize_reservation` write, preserving the flag + risk score without keeping the raw PII.
+
+---
+
+### R19: Default / placeholder SECRET_KEY accepted silently at startup
+
+`backend/app/config.py` defaults `secret_key` to the string `"change-me-in-production"`. `backend/.env.example` ships a placeholder (`change-this-to-a-random-string-at-least-32-chars`) that new developers copy verbatim to `backend/.env`. FastAPI's lifespan does not validate either value — so a forgotten `.env` rotation ships the app with a JWT signing key anyone who read the public repo can forge tokens against. An attacker crafts a JWT with `sub=<admin_id>, role="admin"`, signs it with the known key, and authenticates as admin against every endpoint that trusts `require_role`.
+
+- `create_access_token()` in `middleware/auth.py` uses `settings.secret_key` without inspection.
+- No startup assertion refuses empty / known-default / under-32-char values.
+- Default credentials in `seed.py` compound the issue on a fresh install — but even rotating those doesn't help if the signing key is still `"change-me-in-production"`.
+
+**Status: Deferred to a later phase.** The planned mitigation was implemented briefly (commit `05c134e` added `_validate_secret_key()` in `main.py` which refused boot on the two known placeholders + any value shorter than 32 chars, with 5 unit tests in `test_startup_secret_key.py` and a test-suite-only `os.environ.setdefault` in `conftest.py` so tests didn't depend on local `.env`). It was reverted in commit `31529c0` to keep the demo boot sequence simple — the validator was strict-by-design and would refuse to start until every developer machine rotated `.env`, which was judged too disruptive for the capstone window.
+
+Residual: **Unmitigated in the shipped build.** The public repo + `.env.example` together hand a working signing key to any reader. For the next phase, restore the validator approach (cherry-pick `05c134e` or re-implement). Additional hardening ideas worth considering at that time:
+
+1. Replace the repo-wide default in `config.py` with a Pydantic field that raises at import if missing (i.e. remove the fallback string entirely — `secret_key: str = Field(...)` — so the app can't start without a real value).
+2. Add a `scripts/generate_secret.py` one-liner so onboarding is `python scripts/generate_secret.py >> backend/.env`.
+3. In non-debug mode, require a second check: `len(secret_key) >= 43` (the output length of `secrets.token_urlsafe(32)`).
+4. Document the rotation step as a required pre-flight in `ONBOARDING.md` and `LIVE_DEMO_WALKTHROUGH.md` so no one finds it mid-demo.
+
+The viva risk is real: a hostile examiner could demonstrate token forgery live if they've inspected the repo. Mitigation before any public / graded deployment should be considered P0.

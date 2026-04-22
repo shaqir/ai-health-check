@@ -191,6 +191,117 @@ Documented as R17 residual."*
 
 ---
 
+## 6. Budget errors silently become approved-looking drafts
+
+**What we claim.** HITL approval protects against AI mistakes; budget
+enforcement returns structured HTTP errors (402 for budget, 429 for rate
+limit) that the UI can render as toasts or error cards.
+
+**What it actually is.** `generate_summary`, `generate_dashboard_insight`,
+and `generate_compliance_summary` (`llm_client.py:623`, `:753`, `:798`)
+all end with `except Exception as e:` that catches `CallLimitExceeded`,
+`PromptSafetyError`, and every Anthropic error, then returns the error
+string *inside the draft field* (`"Error generating summary: budget
+exceeded..."`, etc.). The HITL approver sees this as draft content, not
+as an error. Compare to `test_connection` which correctly re-raises
+`CallLimitExceeded` and `PromptSafetyError` so the global FastAPI
+exception handler maps them to the right status code.
+
+**What the professor will ask.**
+- What does the approver see if the daily budget runs out in the middle
+  of drafting an incident summary?
+- Can a malicious or noisy approver mechanically approve a draft whose
+  content is literally the text "Error generating summary"?
+- Why isn't the 402 surfaced to the UI?
+
+**Honest answer.** The approver sees a draft that begins `"Error
+generating summary:"`. The Approve button is still live. The R17
+rubber-stamping residual is already documented; *this* extends the
+attack surface — now even a budget exhaustion can end up as an approved
+incident record if the approver isn't paying attention.
+
+**Recovery move for viva.** *"P0 fix for production — re-raise
+CallLimitExceeded and PromptSafetyError in the three synthesis functions
+so the global exception handler returns the correct status (402/413/
+422/429) and the UI shows an error toast instead of a fake draft.
+Tracked in Batch B."*
+
+---
+
+## 7. The API usage log is a PII leak by design
+
+**What we claim.** Prompt safety scanner detects PII; `safety.py` has
+regex for email, phone, SSN, credit card. R1 (PII Leakage) in the risk
+register is listed as "Implemented."
+
+**What it actually is.** `scan_input` *flags* PII via the `pii_detected`
+safety flag but does not *redact* anything. `_finalize_reservation()` in
+`llm_client.py` then writes the full `prompt_text[:2000]` and
+`response_text[:2000]` to `APIUsageLog` regardless of the flag. The PII
+ends up in the SQLite DB, in the `aiops.db.bak.*` snapshots, in the
+Settings → Call Trace UI, and in any compliance export or DB dump. The
+flag records *that* PII was detected but not *where* in the text, so
+even an operator who notices can't redact after the fact without
+re-reading the raw prompt.
+
+**What the professor will ask.**
+- Show me where you redact PII before logging.
+- If I send "my SSN is 123-45-6789" as a test case, where does that
+  string live afterwards?
+- Does your compliance export include `APIUsageLog`? If yes, does that
+  make the export itself a PII record you then hand to auditors?
+
+**Honest answer.** We don't redact. R1 addressed PII reaching the LLM;
+we didn't address PII reaching our *own* audit log. That's the GDPR
+breach path and it's tracked as R18 in the risk register, Partial
+status. The compliance export currently does not pull `APIUsageLog`
+rows, but the Call Trace UI does — which is enough to fail a
+data-minimisation review.
+
+**Recovery move for viva.** *"Redaction at log time using the same
+`safety.py` patterns, writing `[EMAIL_REDACTED]`/`[PHONE_REDACTED]` in
+place of the captured groups. Preserves the flag + risk score without
+keeping raw PII. One-commit fix, scheduled for Batch B."*
+
+---
+
+## 8. The judge never sees the easy cases
+
+**What we claim.** `judge_response` provides LLM-as-judge rigour on
+every factuality test case; we test each service's responses against
+ground truth and score them 0-100.
+
+**What it actually is.** `eval_runner.py:121-125` short-circuits: if the
+actor's response exactly matches `expected_output` (after `.strip()`),
+the case is scored 100 *without calling the judge*. This is an
+intentional cost optimisation — a judge call on a perfect response
+would just confirm 100 and waste a Claude round-trip. But it means the
+judge's observed distribution is systematically biased away from easy
+wins. Haiku only ever sees the *hard* cases (where actor disagreed
+with ground truth). If the judge misclassifies easy cases (e.g. giving
+a perfect answer a 60), we would never notice, because we never ask.
+
+**What the professor will ask.**
+- If your judge were silently wrong on the easy cases, would your drift
+  detector catch it?
+- What fraction of your test cases actually go through the judge?
+- How is the judge's reliability validated if you only test its hard
+  cases?
+
+**Honest answer.** No, we wouldn't catch it. We assume the judge is
+calibrated on the hard cases and extrapolate that to easy ones — but we
+never measured. At demo scale this is acceptable because we have 2 test
+cases per service and most hit the short-circuit in seed data. At
+production scale, judge validation would need a held-out "golden" set
+that *always* hits the judge, regardless of actor output. This compounds
+the circularity issue from critique #1.
+
+**Recovery move for viva.** *"Documented as future work. A small held-out
+eval set that deliberately bypasses the short-circuit and always calls
+the judge would expose this. Not in scope for the capstone."*
+
+---
+
 ## Highest-leverage move before the viva
 
 Read the README's "Key Features" list and the demo walkthrough's
@@ -203,6 +314,9 @@ Read the README's "Key Features" list and the demo walkthrough's
 | "Human-in-the-loop approval" | "forced-deliberation approval with mandatory reviewer note" |
 | "Drift detection with trend + variance + confidence" | "drift heuristics — threshold + split-half trend at low N" |
 | "LLM-as-judge evaluation" | "LLM judges another Claude output — with known circularity limitation" |
+| "Budget + safety errors return structured HTTP codes" | "structured HTTP codes from `test_connection`; synthesis functions silently return error text in the draft field" |
+| "PII detection in prompt safety scanner" | "PII *flagging* in the safety scanner; the raw text still lands in `APIUsageLog` unredacted" |
+| "LLM-as-judge on every factuality test case" | "LLM-as-judge on every *non-trivial* factuality case — exact matches short-circuit and skip the judge" |
 
 Less bombast, more precision. Examiners reward accuracy over enthusiasm —
 and they reward *teams who self-critiqued their own work* even more.
@@ -211,6 +325,6 @@ and they reward *teams who self-critiqued their own work* even more.
 
 ## Cross-references
 
-- [RISK_REGISTER.md](RISK_REGISTER.md) R8, R9, R16, R17 — formal risk register with mitigations and residuals.
+- [RISK_REGISTER.md](RISK_REGISTER.md) R8, R9, R16, R17, R18 — formal risk register with mitigations and residuals (R18 cross-references critique #7 on unredacted usage log).
 - [EVAL_DATASET_CARD.md](EVAL_DATASET_CARD.md) §5 Limitations — acknowledges small dataset + LLM-as-judge circularity.
 - [LIVE_DEMO_WALKTHROUGH.md](LIVE_DEMO_WALKTHROUGH.md) Q&A section — prepared answers use this document's honest-answer phrasing.

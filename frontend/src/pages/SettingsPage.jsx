@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import api from '../utils/api';
 import { parseBackendDate } from '../utils/dates';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import ErrorState from '../components/common/ErrorState';
 import EmptyState from '../components/common/EmptyState';
@@ -560,7 +561,7 @@ export default function SettingsPage() {
       render: v => {
         if (!v) return <span className="font-mono text-xs text-text-subtle">—</span>;
         const d = parseBackendDate(v);
-        if (Number.isNaN(d.getTime())) return <span className="font-mono tabular-nums text-xs">{v}</span>;
+        if (!d) return <span className="font-mono tabular-nums text-xs">{v}</span>;
         const short = d.toLocaleString(undefined, {
           month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
         });

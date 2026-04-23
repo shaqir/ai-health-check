@@ -36,6 +36,9 @@ export default function NotificationsBell() {
   const [activeTab, setActiveTab] = useState('active');
   const [busyId, setBusyId] = useState(null);
   const [clearingAll, setClearingAll] = useState(false);
+  // Surfaced in the drawer when an acknowledge/clearAll call fails, so the
+  // user isn't silently told "it worked" when the DB wasn't updated.
+  const [actionError, setActionError] = useState(null);
   const bellRef = useRef(null);
 
   const fetchAlerts = async () => {
@@ -71,9 +74,12 @@ export default function NotificationsBell() {
 
   const acknowledge = async (id) => {
     setBusyId(id);
+    setActionError(null);
     try {
       await api.post(`/dashboard/alerts/${id}/acknowledge`);
       await fetchAlerts();
+    } catch {
+      setActionError('Could not acknowledge — the alert may still be active.');
     } finally {
       setBusyId(null);
     }
@@ -82,8 +88,12 @@ export default function NotificationsBell() {
   const clearAll = async () => {
     if (activeAlerts.length === 0) return;
     setClearingAll(true);
+    setActionError(null);
     try {
       await Promise.all(activeAlerts.map(a => api.post(`/dashboard/alerts/${a.id}/acknowledge`)));
+      await fetchAlerts();
+    } catch {
+      setActionError('Could not clear all alerts — some may still be active.');
       await fetchAlerts();
     } finally {
       setClearingAll(false);
@@ -219,6 +229,21 @@ export default function NotificationsBell() {
                 </button>
               )}
             </div>
+
+            {/* Action error banner (acknowledge / clearAll failures) */}
+            {actionError && (
+              <div className="mx-5 mt-3 flex items-start gap-2 px-3 py-2 bg-status-failing-muted border border-status-failing/20 rounded-md text-[11px] text-status-failing">
+                <AlertTriangle size={11} strokeWidth={1.75} className="shrink-0 mt-0.5" />
+                <span className="flex-1">{actionError}</span>
+                <button
+                  onClick={() => setActionError(null)}
+                  className="text-status-failing/60 hover:text-status-failing"
+                  aria-label="Dismiss error"
+                >
+                  <X size={11} strokeWidth={2} />
+                </button>
+              </div>
+            )}
 
             {/* List */}
             <div className="flex-1 overflow-y-auto">

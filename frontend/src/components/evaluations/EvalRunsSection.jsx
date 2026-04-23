@@ -113,11 +113,13 @@ function formatRelative(d) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-// Short absolute in 24-hour so there's no "PM" to wrap. Same output
-// regardless of locale for predictable column width ("Apr 23, 14:23").
+// Short absolute in 12-hour with AM/PM. Wrap is now prevented at the
+// cell level (`whitespace-nowrap` on the flex column) so we can keep
+// the human-friendly format without it breaking across two lines.
+// Example output: "Apr 23, 02:23 PM".
 function formatShortAbsolute(d) {
   const date = d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
   return `${date}, ${time}`;
 }
 

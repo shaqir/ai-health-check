@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Shield, Database, Globe, Lock, ArrowRight, Server, ArrowUpRight } from 'lucide-react';
+import { Shield, Database, Globe, Lock, ArrowRight, Server, ArrowUpRight, Loader2, AlertTriangle } from 'lucide-react';
 import api from '../utils/api';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
@@ -18,6 +18,8 @@ export default function DataPolicyPage() {
   const [model, setModel] = useState(null);
   const [sensitivityCounts, setSensitivityCounts] = useState(null);
   const [blockedToday, setBlockedToday] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +33,11 @@ export default function DataPolicyPage() {
         ]);
 
         if (cancelled) return;
+
+        const allFailed = [settingsRes, servicesRes, safetyRes].every(r => r.status === 'rejected');
+        if (allFailed) {
+          setError('Could not load live data — showing static policy content.');
+        }
 
         if (settingsRes.status === 'fulfilled') {
           setModel(settingsRes.value.data?.ai_model?.model ?? null);
@@ -48,7 +55,9 @@ export default function DataPolicyPage() {
           setBlockedToday(safetyRes.value.data?.blocked_today ?? 0);
         }
       } catch {
-        // swallow — every panel has a neutral fallback
+        if (!cancelled) setError('Could not load live data — showing static policy content.');
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
 
@@ -57,7 +66,20 @@ export default function DataPolicyPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <PageHeader title="Data Policy" description="How AI Health Check handles data and interacts with external LLM providers." />
+      <PageHeader
+        title="Data Policy"
+        description="How AI Health Check handles data and interacts with external LLM providers."
+        actions={loading ? (
+          <Loader2 size={14} strokeWidth={1.5} className="animate-spin text-text-subtle" aria-label="Loading live data" />
+        ) : null}
+      />
+
+      {error && (
+        <div className="flex items-start gap-2.5 px-4 py-3 bg-status-warning-muted border border-status-warning/20 rounded-xl text-[12px] text-text-muted">
+          <AlertTriangle size={13} strokeWidth={1.75} className="text-status-warning shrink-0 mt-0.5" />
+          {error}
+        </div>
+      )}
 
       {/* Architecture diagram */}
       <div className="bg-surface rounded-xl border border-hairline p-6 shadow-xs">

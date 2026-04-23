@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlaskConical, Filter, FileCheck, Braces } from 'lucide-react';
+import { FlaskConical, Filter, FileCheck, Braces, ChevronDown, ChevronUp } from 'lucide-react';
 import DataTable from '../common/DataTable';
 import EmptyState from '../common/EmptyState';
 
@@ -21,6 +21,11 @@ function categoryMeta(key) {
 export default function TestCasesSection({ testCases, services }) {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [serviceFilter, setServiceFilter] = useState('all');
+  // Collapsed by default — the filter chip row stays visible as the
+  // always-on summary + expand affordance; stats tiles + the table
+  // reveal on click. Clicking a category chip also expands so users
+  // never end up selecting a filter and seeing no change.
+  const [expanded, setExpanded] = useState(false);
 
   // Only list services that actually have test cases — no dead entries in the
   // dropdown. Preserves service order as returned by the /services endpoint.
@@ -49,6 +54,24 @@ export default function TestCasesSection({ testCases, services }) {
     }
     return { total: filtered.length, services: svcSet.size, factuality, formatJson };
   }, [filtered]);
+
+  // Counts over the WHOLE dataset — shown on the always-visible filter
+  // chips so users see dataset totals even when collapsed. Independent
+  // of the filtered stats above.
+  const totalCounts = useMemo(() => {
+    let factuality = 0;
+    let formatJson = 0;
+    for (const tc of testCases) {
+      if (tc.category === 'factuality') factuality += 1;
+      else if (tc.category === 'format_json') formatJson += 1;
+    }
+    return { all: testCases.length, factuality, formatJson };
+  }, [testCases]);
+
+  const handleCategoryClick = (id) => {
+    setCategoryFilter(id);
+    if (!expanded) setExpanded(true);
+  };
 
   const columns = [
     {
@@ -135,24 +158,11 @@ export default function TestCasesSection({ testCases, services }) {
 
       {testCases.length > 0 ? (
         <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
-          {/* Stats tiles — react to filter selections. */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-5 py-4 border-b border-hairline">
-            <StatTile label="Test cases" value={stats.total} />
-            <StatTile label="Services" value={stats.services} />
-            <StatTile
-              label="Factuality"
-              value={stats.factuality}
-              tone="accent"
-            />
-            <StatTile
-              label="Format JSON"
-              value={stats.formatJson}
-              tone="paused"
-            />
-          </div>
-
-          {/* Filter toolbar — category chips + service dropdown. */}
-          <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-hairline bg-surface-elevated/40">
+          {/* Always-visible summary row — category filter chips with
+              per-category counts, plus the expand/collapse chevron.
+              Clicking a chip also expands the body so a filter change
+              is never invisible. */}
+          <div className="flex flex-wrap items-center gap-2 px-5 py-3 bg-surface-elevated/40">
             <div className="flex items-center gap-1.5 text-text-subtle" aria-hidden="true">
               <Filter size={12} strokeWidth={1.75} />
               <span className="text-[10px] uppercase font-semibold tracking-[0.09em]">Filter</span>
@@ -160,55 +170,93 @@ export default function TestCasesSection({ testCases, services }) {
 
             <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Category filter">
               {[
-                { id: 'all',         label: 'All' },
-                { id: 'factuality',  label: 'Factuality' },
-                { id: 'format_json', label: 'Format JSON' },
-              ].map(c => (
-                <button
-                  key={c.id}
-                  role="tab"
-                  aria-selected={categoryFilter === c.id}
-                  onClick={() => setCategoryFilter(c.id)}
-                  className={`px-2.5 py-0.5 text-[11px] font-medium rounded-pill transition-standard whitespace-nowrap ${
-                    categoryFilter === c.id
-                      ? 'bg-surface-elevated text-text shadow-xs'
-                      : 'text-text-muted hover:text-text'
-                  }`}
-                >
-                  {c.label}
-                </button>
-              ))}
+                { id: 'all',         label: 'All',         count: totalCounts.all },
+                { id: 'factuality',  label: 'Factuality',  count: totalCounts.factuality },
+                { id: 'format_json', label: 'Format JSON', count: totalCounts.formatJson },
+              ].map(c => {
+                const active = categoryFilter === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => handleCategoryClick(c.id)}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] font-medium rounded-pill transition-standard whitespace-nowrap ${
+                      active
+                        ? 'bg-surface-elevated text-text shadow-xs'
+                        : 'text-text-muted hover:text-text'
+                    }`}
+                  >
+                    {c.label}
+                    <span className={`text-[10px] font-mono tabular-nums rounded-full px-1.5 py-0.5 ${
+                      active ? 'bg-surface text-text-subtle' : 'bg-surface text-text-subtle/70'
+                    }`}>
+                      {c.count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
-            <select
-              value={serviceFilter}
-              onChange={(e) => setServiceFilter(e.target.value)}
-              aria-label="Filter by service"
-              className="ml-auto text-[11px] py-1 px-2.5 rounded-pill bg-[var(--material-thick)] text-text transition-standard"
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              aria-expanded={expanded}
+              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-text-muted hover:text-text hover:bg-surface-elevated rounded-pill transition-standard"
             >
-              <option value="all">All services</option>
-              {serviceOptions.map(s => (
-                <option key={s.id} value={String(s.id)}>{s.name}</option>
-              ))}
-            </select>
+              {expanded ? 'Hide details' : 'Show details'}
+              {expanded
+                ? <ChevronUp size={13} strokeWidth={1.75} />
+                : <ChevronDown size={13} strokeWidth={1.75} />
+              }
+            </button>
           </div>
 
-          {filtered.length > 0 ? (
-            <DataTable
-              columns={columns}
-              data={filtered}
-              searchPlaceholder="Search test cases..."
-              flat
-              maxHeight="480px"
-            />
-          ) : (
-            <div className="p-6">
-              <EmptyState
-                icon={FlaskConical}
-                title="No matches"
-                description="No test cases match the current filters. Clear a filter to see more."
-              />
-            </div>
+          {expanded && (
+            <>
+              {/* Stats tiles — react to filter selections. */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-5 py-4 border-t border-hairline">
+                <StatTile label="Test cases" value={stats.total} />
+                <StatTile label="Services" value={stats.services} />
+                <StatTile label="Factuality" value={stats.factuality} tone="accent" />
+                <StatTile label="Format JSON" value={stats.formatJson} tone="paused" />
+              </div>
+
+              {/* Service dropdown lives in its own slim toolbar — kept
+                  out of the always-visible summary to avoid crowding. */}
+              <div className="flex items-center gap-2 px-5 py-2 border-t border-hairline bg-surface-elevated/20">
+                <span className="text-[10px] uppercase font-semibold tracking-[0.09em] text-text-subtle">Service</span>
+                <select
+                  value={serviceFilter}
+                  onChange={(e) => setServiceFilter(e.target.value)}
+                  aria-label="Filter by service"
+                  className="text-[11px] py-1 px-2.5 rounded-pill bg-[var(--material-thick)] text-text transition-standard"
+                >
+                  <option value="all">All services</option>
+                  {serviceOptions.map(s => (
+                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {filtered.length > 0 ? (
+                <DataTable
+                  columns={columns}
+                  data={filtered}
+                  searchPlaceholder="Search test cases..."
+                  flat
+                  maxHeight="480px"
+                />
+              ) : (
+                <div className="p-6 border-t border-hairline">
+                  <EmptyState
+                    icon={FlaskConical}
+                    title="No matches"
+                    description="No test cases match the current filters. Clear a filter to see more."
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (

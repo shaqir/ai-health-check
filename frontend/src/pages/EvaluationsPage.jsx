@@ -147,6 +147,12 @@ export default function EvaluationsPage() {
   if (error) return <ErrorState message={error} onRetry={() => { setLoading(true); fetchData(); }} />;
 
   const serviceIds = [...new Set(testCases.map(tc => tc.service_id))];
+  // DriftAnalysis only makes sense for services that have test cases
+  // in the current env filter — otherwise the tab bar would list
+  // services with nothing to chart and drift-check would 404 on them.
+  // Preserve order from /services so the tab bar doesn't reshuffle
+  // between env switches.
+  const driftServices = services.filter(s => serviceIds.includes(s.id));
 
   return (
     <div className="space-y-5">
@@ -206,8 +212,8 @@ export default function EvaluationsPage() {
       )}
 
       {/* Drift analysis */}
-      {services.length > 0 && (
-        <DriftAnalysis services={services} selectedId={selectedDriftService} onSelect={setSelectedDriftService} />
+      {driftServices.length > 0 && (
+        <DriftAnalysis services={driftServices} selectedId={selectedDriftService} onSelect={setSelectedDriftService} />
       )}
 
       <TestCasesSection testCases={testCases} services={services} />

@@ -90,21 +90,42 @@ function RunTypeBadge({ value }) {
   );
 }
 
+// Compact relative labels for recent runs ("2m ago", "14h ago"), falling
+// back to "Mon DD" for anything older than a week. The previous absolute
+// "Apr 23, 02:23 PM" format wrapped to two lines in the table because of
+// the trailing "PM" — the relative labels keep everything on one line and
+// are also easier to scan when a grader is staring at a run that happened
+// 30 seconds ago.
+function formatRelative(d) {
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) {
+    // Clock skew / future timestamp — show short absolute to avoid "in 2h".
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  const sec = 1000;
+  const min = 60 * sec;
+  const hour = 60 * min;
+  const day = 24 * hour;
+  if (diffMs < min) return 'just now';
+  if (diffMs < hour) return `${Math.floor(diffMs / min)}m ago`;
+  if (diffMs < day) return `${Math.floor(diffMs / hour)}h ago`;
+  if (diffMs < 7 * day) return `${Math.floor(diffMs / day)}d ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 function TimeCell({ value }) {
   if (!value) return <span className="font-mono text-[13px] text-text-subtle">—</span>;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
     return <span className="font-mono tabular-nums text-[13px]">{value}</span>;
   }
-  const short = d.toLocaleString(undefined, {
-    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <span
-      className="font-mono tabular-nums text-[13px]"
-      title={`${d.toLocaleString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
+      className="font-mono tabular-nums text-[13px] whitespace-nowrap"
+      title={`${d.toLocaleString()} (${tz})`}
     >
-      {short}
+      {formatRelative(d)}
     </span>
   );
 }

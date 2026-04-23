@@ -51,11 +51,6 @@ const SCHEDULED_TOOLTIP = (
       <span className="whitespace-nowrap"> 60 min</span>) inside the running backend process. Each tick runs
       factuality + format tests against every active service that has at least one test case.
     </p>
-    <p>
-      <span className="font-semibold text-text">Skipped:</span> services labelled <em>confidential</em> — the
-      scheduler has no admin present to approve the sensitivity override, so their prompts never leave the box
-      automatically. Register a manual run to include them.
-    </p>
     <p className="text-text-subtle text-[10.5px]">
       Disable entirely with <code className="font-mono text-[10.5px]">SCHEDULER_ENABLED=false</code> in the
       backend <code className="font-mono text-[10.5px]">.env</code>.
@@ -67,9 +62,7 @@ const MANUAL_TOOLTIP = (
   <div className="space-y-1.5 leading-snug">
     <div className="font-semibold text-text text-[12px]">User-triggered eval run</div>
     <p>
-      A logged-in user clicked <em>Run Evaluation</em> on this service. Attributed to that user in the audit
-      log, and it <em>can</em> reach a confidential service via an explicit
-      <code className="font-mono text-[10.5px]"> allow_confidential=true</code> admin override.
+      A logged-in user clicked <em>Run Evaluation</em> on this service. Attributed to that user in the audit log.
     </p>
   </div>
 );

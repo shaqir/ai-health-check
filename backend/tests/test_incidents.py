@@ -315,14 +315,11 @@ def test_incident_response_exposes_service_sensitivity(client, db, admin_token):
 
 
 @patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
-def test_generate_summary_blocked_on_confidential_without_override(
+def test_generate_summary_allowed_on_confidential_without_override(
     mock_gen, client, db, admin_token
 ):
-    """
-    Even an admin gets 403 when the incident's service is confidential
-    and no allow_confidential=true is passed. The override must be an
-    explicit choice, recorded in the audit log.
-    """
+    """The sensitivity gate is disabled — admins can generate a summary
+    on a confidential-labelled service without any override flag."""
     mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
     svc = AIService(
         name="Conf", owner="T", environment=Environment.prod,
@@ -340,45 +337,16 @@ def test_generate_summary_blocked_on_confidential_without_override(
         f"/api/v1/incidents/{inc.id}/generate-summary",
         headers=auth_header(admin_token),
     )
-    assert res.status_code == 403
-    assert "confidential" in res.json()["detail"].lower()
-    assert not mock_gen.called, "LLM must not be called when blocked"
-
-
-@patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
-def test_generate_summary_allowed_on_confidential_with_admin_override(
-    mock_gen, client, db, admin_token
-):
-    """Admin with allow_confidential=true gets through and the LLM is called."""
-    mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
-    svc = AIService(
-        name="Conf", owner="T", environment=Environment.prod,
-        model_name="claude-haiku-4-5-20251001",
-        sensitivity_label=SensitivityLabel.confidential,
-    )
-    db.add(svc); db.commit(); db.refresh(svc)
-    inc = Incident(
-        service_id=svc.id, severity=Severity.medium,
-        symptoms="x", status=IncidentStatus.open,
-    )
-    db.add(inc); db.commit(); db.refresh(inc)
-
-    res = client.post(
-        f"/api/v1/incidents/{inc.id}/generate-summary?allow_confidential=true",
-        headers=auth_header(admin_token),
-    )
     assert res.status_code == 200
     assert mock_gen.called
 
 
 @patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
-def test_generate_summary_blocked_for_maintainer_even_with_override(
+def test_generate_summary_allowed_for_maintainer_on_confidential(
     mock_gen, client, db, maintainer_token
 ):
-    """
-    Non-admins cannot bypass the confidential gate even by passing
-    allow_confidential=true. Matches the services/evaluations contract.
-    """
+    """With the gate removed, maintainers can also generate a draft against
+    confidential services — RBAC still applies at the route level."""
     mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
     svc = AIService(
         name="Conf", owner="T", environment=Environment.prod,
@@ -393,8 +361,8 @@ def test_generate_summary_blocked_for_maintainer_even_with_override(
     db.add(inc); db.commit(); db.refresh(inc)
 
     res = client.post(
-        f"/api/v1/incidents/{inc.id}/generate-summary?allow_confidential=true",
+        f"/api/v1/incidents/{inc.id}/generate-summary",
         headers=auth_header(maintainer_token),
     )
-    assert res.status_code == 403
-    assert not mock_gen.called
+    assert res.status_code == 200
+    assert mock_gen.called

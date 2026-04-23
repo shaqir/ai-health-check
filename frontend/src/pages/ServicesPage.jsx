@@ -8,7 +8,6 @@ import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ErrorState from '../components/common/ErrorState';
 import Modal from '../components/common/Modal';
-import ConfirmModal from '../components/common/ConfirmModal';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import Toast from '../components/common/Toast';
 
@@ -127,9 +126,6 @@ export default function ServicesPage() {
   const [deleteError, setDeleteError] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Confidential Ping confirmation — holds the service the user clicked
-  // on until they either confirm the override or cancel. Null when closed.
-  const [confidentialPingTarget, setConfidentialPingTarget] = useState(null);
 
   const [form, setForm] = useState(DEFAULT_FORM);
 
@@ -273,20 +269,9 @@ export default function ServicesPage() {
   };
 
   const handleTestConnection = (id) => {
-    const service = services.find((s) => s.id === id);
-    if (service?.sensitivity_label === 'confidential') {
-      // Defer to confirm modal; override query-string attached on approve.
-      setConfidentialPingTarget(service);
-      return;
-    }
-    runPing(id);
-  };
-
-  const confirmConfidentialPing = async () => {
-    if (!confidentialPingTarget) return;
-    const id = confidentialPingTarget.id;
-    setConfidentialPingTarget(null);
-    await runPing(id, '?mode=llm&allow_confidential=true');
+    // Every service — regardless of sensitivity label — runs a LIVE Claude
+    // call so the demo exercises the full safety pipeline every click.
+    runPing(id, '?mode=llm');
   };
 
   const filtered = services.filter(s =>
@@ -646,22 +631,6 @@ export default function ServicesPage() {
           </div>
         )}
       </Modal>
-
-      {/* Confidential Ping override — admin-only path through the
-          sensitivity gate. Backend rejects without this flag. */}
-      <ConfirmModal
-        isOpen={!!confidentialPingTarget}
-        onClose={() => setConfidentialPingTarget(null)}
-        onConfirm={confirmConfidentialPing}
-        title="Confidential service — live Claude call"
-        variant="warning"
-        confirmLabel="Run live check"
-        description={
-          confidentialPingTarget
-            ? `"${confidentialPingTarget.name}" is labelled confidential. This runs a LIVE Claude call against ${confidentialPingTarget.model_name} (not a cheap HTTP probe): expect ~1–2 seconds and ~$0.0002 of real API spend. Only admins can override, and every override is recorded in the audit log.`
-            : ''
-        }
-      />
 
       {toast.visible && (
         <Toast

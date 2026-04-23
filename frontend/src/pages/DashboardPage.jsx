@@ -188,8 +188,8 @@ export default function DashboardPage() {
       render: (v) => {
         const scheduled = String(v).toLowerCase() === 'scheduled';
         const tip = scheduled
-          ? 'Scheduler tick: APScheduler fires every eval_schedule_minutes (default 60 min) against every active non-confidential service. Disable with SCHEDULER_ENABLED=false.'
-          : 'Manual run: a logged-in user clicked Run Evaluation. Can override confidential services with allow_confidential=true.';
+          ? 'Scheduler tick: APScheduler fires every eval_schedule_minutes (default 60 min) against every active service with test cases. Disable with SCHEDULER_ENABLED=false.'
+          : 'Manual run: a logged-in user clicked Run Evaluation.';
         return <span title={tip} className="cursor-help">{v}</span>;
       },
     },

@@ -18,7 +18,7 @@ const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border 
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function EvaluationsPage() {
-  const { canEdit, isAdmin } = useAuth();
+  const { canEdit } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [testCases, setTestCases] = useState([]);
@@ -48,8 +48,8 @@ export default function EvaluationsPage() {
   const [trendScoreCount, setTrendScoreCount] = useState(null);
 
   const [form, setForm] = useState({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
-  // Eval-run confirmation. Holds the service + cost preview + confidential
-  // flag between the "Run" click and the confirm action. Null when closed.
+  // Eval-run confirmation. Holds the service + cost preview between
+  // the "Run" click and the confirm action. Null when closed.
   const [runConfirm, setRunConfirm] = useState(null);
 
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
@@ -127,14 +127,6 @@ export default function EvaluationsPage() {
     const service = services.find((s) => s.id === serviceId);
     if (!service) return;
 
-    // Confidential services are admin-only on the server side. Block at the
-    // UI boundary so maintainers don't hit a 403 after confirming a modal
-    // they were never going to get through.
-    if (service.sensitivity_label === 'confidential' && !isAdmin) {
-      showToast('Confidential services require an admin to run evaluations.', 'error');
-      return;
-    }
-
     // Fetch cost preview up-front so the confirm modal can show it. If
     // this fails we bail before opening the modal. `previewingService`
     // locks the Run buttons during the fetch so a second click can't
@@ -158,13 +150,11 @@ export default function EvaluationsPage() {
   const confirmRunEval = async () => {
     if (!runConfirm) return;
     const { service, preview } = runConfirm;
-    const isConfidential = service.sensitivity_label === 'confidential';
-    const qs = isConfidential ? '?allow_confidential=true' : '';
 
     setRunConfirm(null);
     setRunningService(service.id);
     try {
-      const res = await api.post(`/evaluations/run/${service.id}${qs}`);
+      const res = await api.post(`/evaluations/run/${service.id}`);
       const r = res.data;
       showToast(
         `Quality: ${r.quality_score}% ${r.drift_flagged ? '— drift detected' : ''}`,
@@ -314,29 +304,15 @@ export default function EvaluationsPage() {
         </form>
       </Modal>
 
-      {/* Run-eval confirmation — shows cost preview + confidential warning
-          in a single modal so the user isn't chained through two native
-          prompts. */}
+      {/* Run-eval confirmation — shows the cost preview so the user can
+          see the per-run cost before triggering live LLM calls. */}
       <ConfirmModal
         isOpen={!!runConfirm}
         onClose={() => setRunConfirm(null)}
         onConfirm={confirmRunEval}
-        title={
-          runConfirm?.service?.sensitivity_label === 'confidential'
-            ? 'Run evaluation — confidential service override'
-            : 'Run evaluation — cost preview'
-        }
-        variant={runConfirm?.service?.sensitivity_label === 'confidential' ? 'warning' : 'default'}
-        confirmLabel={
-          runConfirm?.service?.sensitivity_label === 'confidential'
-            ? 'Run with override'
-            : 'Run evaluation'
-        }
-        description={
-          runConfirm?.service?.sensitivity_label === 'confidential'
-            ? `"${runConfirm.service.name}" is labelled confidential. The run will send prompts to an external LLM and the override will be recorded in the audit log.`
-            : `Running ${runConfirm?.preview?.test_cases ?? 0} test cases against "${runConfirm?.service?.name ?? ''}".`
-        }
+        title="Run evaluation — cost preview"
+        confirmLabel="Run evaluation"
+        description={`Running ${runConfirm?.preview?.test_cases ?? 0} test cases against "${runConfirm?.service?.name ?? ''}".`}
         details={
           runConfirm?.preview && (
             <div className="rounded-lg bg-surface-elevated border border-hairline p-3 text-[12px] space-y-1">

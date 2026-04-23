@@ -275,27 +275,10 @@ def _create_confidential_service(client, admin_token, db):
     return res.json()["id"]
 
 
-def test_confidential_service_blocks_llm_without_override(client, db, admin_token):
-    """LLM test-connection on a confidential service must be refused without override."""
-    service_id = _create_confidential_service(client, admin_token, db)
-
-    res = client.post(
-        f"/api/v1/services/{service_id}/test-connection?mode=llm",
-        headers=auth_header(admin_token),
-    )
-    assert res.status_code == 403
-    assert "confidential" in res.json()["detail"].lower()
-
-
-def test_confidential_service_allows_admin_override(client, db, admin_token, monkeypatch):
-    """An admin passing allow_confidential=true must be allowed through — and audited."""
-    from app.models import AuditLog
-
-    # Stub the LLM call so we don't hit the real API
+def test_confidential_service_allows_llm_without_override(client, db, admin_token, monkeypatch):
+    """The sensitivity gate is disabled — confidential services let the LLM
+    call through for any user with the right role, with no override flag."""
     async def _fake_test_connection(model=None, **kwargs):
-        # **kwargs absorbs user_id + service_id, added when observability
-        # threading landed in commit e0940c5. Accepting them keeps the
-        # stub compatible with both old and new call-sites.
         return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
 
     monkeypatch.setattr(
@@ -305,27 +288,29 @@ def test_confidential_service_allows_admin_override(client, db, admin_token, mon
     service_id = _create_confidential_service(client, admin_token, db)
 
     res = client.post(
-        f"/api/v1/services/{service_id}/test-connection?mode=llm&allow_confidential=true",
+        f"/api/v1/services/{service_id}/test-connection?mode=llm",
         headers=auth_header(admin_token),
     )
     assert res.status_code == 200
 
-    # The override must leave an audit trail
-    overrides = db.query(AuditLog).filter(
-        AuditLog.action == "confidential_llm_override"
-    ).all()
-    assert len(overrides) == 1
 
+def test_maintainer_can_llm_test_confidential(client, db, admin_token, maintainer_token, monkeypatch):
+    """With the gate removed, maintainers can also run a live LLM test
+    against confidential services."""
+    async def _fake_test_connection(model=None, **kwargs):
+        return {"status": "success", "latency_ms": 1, "response_snippet": "ok"}
 
-def test_maintainer_cannot_override_confidential(client, db, admin_token, maintainer_token):
-    """Only admin may override. Maintainer with allow_confidential=true must still 403."""
+    monkeypatch.setattr(
+        "app.routers.services.llm_test_connection", _fake_test_connection
+    )
+
     service_id = _create_confidential_service(client, admin_token, db)
 
     res = client.post(
-        f"/api/v1/services/{service_id}/test-connection?mode=llm&allow_confidential=true",
+        f"/api/v1/services/{service_id}/test-connection?mode=llm",
         headers=auth_header(maintainer_token),
     )
-    assert res.status_code == 403
+    assert res.status_code == 200
 
 
 def test_registration_rejects_metadata_url(client, db, admin_token):

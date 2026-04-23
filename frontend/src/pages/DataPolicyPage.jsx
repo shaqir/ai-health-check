@@ -8,7 +8,7 @@ import StatusBadge from '../components/common/StatusBadge';
 const SENSITIVITY_COPY = {
   public:       'Non-sensitive. Full LLM features enabled.',
   internal:     'Business data. LLM features enabled with caution.',
-  confidential: 'Highly sensitive. LLM requires explicit approval.',
+  confidential: 'Highly sensitive. Tag is informational; no gate is applied.',
 };
 
 export default function DataPolicyPage() {

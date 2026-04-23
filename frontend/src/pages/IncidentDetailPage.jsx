@@ -34,9 +34,6 @@ export default function IncidentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [generating, setGenerating] = useState(false);
-  // Confirm modal for generate-draft on a confidential service. Admin-only;
-  // maintainers see a disabled button with a tooltip instead.
-  const [generateConfirmOpen, setGenerateConfirmOpen] = useState(false);
   const [showMaintForm, setShowMaintForm] = useState(false);
   const [submittingMaint, setSubmittingMaint] = useState(false);
 
@@ -91,26 +88,10 @@ export default function IncidentDetailPage() {
   const secsSinceFetch = Math.max(0, Math.floor((nowTick - lastFetchAt) / 1000));
   const updatedLabel = secsSinceFetch < 1 ? 'just now' : `${secsSinceFetch}s ago`;
 
-  // Two-step for confidential services: the click opens a confirm modal,
-  // then `confirmGenerateSummary` posts with the admin override. For
-  // public/internal we skip the modal and fire directly.
-  const handleGenerateSummary = () => {
-    if (incident?.service_sensitivity === 'confidential') {
-      if (!isAdmin) {
-        showToast('Confidential services require an admin to generate a draft.', 'error');
-        return;
-      }
-      setGenerateConfirmOpen(true);
-      return;
-    }
-    runGenerateSummary(false);
-  };
-
-  const runGenerateSummary = async (withOverride) => {
+  const handleGenerateSummary = async () => {
     setGenerating(true);
     try {
-      const qs = withOverride ? '?allow_confidential=true' : '';
-      await api.post(`/incidents/${id}/generate-summary${qs}`);
+      await api.post(`/incidents/${id}/generate-summary`);
       showToast('Draft generated', 'success');
       fetchData();
     } catch (err) {
@@ -118,11 +99,6 @@ export default function IncidentDetailPage() {
     } finally {
       setGenerating(false);
     }
-  };
-
-  const confirmGenerateSummary = async () => {
-    setGenerateConfirmOpen(false);
-    await runGenerateSummary(true);
   };
 
   // Approval is a two-step flow:
@@ -550,20 +526,6 @@ export default function IncidentDetailPage() {
         description={`Approving a ${planToApprove?.risk_level ?? ''} risk plan for INC-${incident.id}. The approval is recorded in the audit log.`}
         confirmLabel={approvingPlan ? 'Approving…' : 'Approve plan'}
         busy={approvingPlan}
-      />
-
-      {/* Generate-draft override modal — only rendered when the incident's
-          service is confidential. `allow_confidential=true` is sent on
-          confirm, matching the EvaluationsPage pattern. */}
-      <ConfirmModal
-        isOpen={generateConfirmOpen}
-        onClose={() => (generating ? null : setGenerateConfirmOpen(false))}
-        onConfirm={confirmGenerateSummary}
-        title="Generate draft — confidential service override"
-        description={`"${incident.service_name}" is labelled confidential. Generating the draft will send incident details to the LLM and the override will be recorded in the audit log.`}
-        confirmLabel={generating ? 'Drafting…' : 'Confirm + generate'}
-        variant="warning"
-        busy={generating}
       />
 
       {toast.visible && (

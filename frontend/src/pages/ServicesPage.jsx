@@ -334,7 +334,7 @@ export default function ServicesPage() {
       setConfidentialPingTarget(service);
       return;
     }
-    runPing(id);
+    runPing(id, '?mode=llm');
   };
 
   const confirmConfidentialPing = async () => {
@@ -672,10 +672,6 @@ export default function ServicesPage() {
                 })()}
               </>
             )}
-          </div>
-          <div>
-            <label className={LABEL_CLS}>Endpoint URL</label>
-            <input className={INPUT_CLS} placeholder="https://api.example.com/v1/..." value={form.endpoint_url} onChange={(e) => setForm({ ...form, endpoint_url: e.target.value })} />
           </div>
         </form>
       </Modal>

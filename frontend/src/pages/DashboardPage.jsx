@@ -20,7 +20,7 @@ import {
   CHART_GRID_DASH, CHART_BAR_RADIUS,
 } from '../components/common/chartStyle';
 
-const QUALITY_THRESHOLD = 70;
+const QUALITY_THRESHOLD = 75;
 
 // Metric-card tooltips — structured (title + body + source) so the panel
 // tiles are self-explanatory without needing to open the Evaluations or

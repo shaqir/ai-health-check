@@ -1,5 +1,6 @@
 """Tests for the evaluations router — test case CRUD, eval runs, drift detection."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from tests.conftest import auth_header
@@ -140,6 +141,72 @@ def test_run_evaluation_no_test_cases(client, db, admin_token):
     svc = _create_service(db)
     res = client.post(f"/api/v1/evaluations/run/{svc.id}", headers=auth_header(admin_token))
     assert res.status_code == 400
+
+
+def test_drift_check_reports_output_distribution_psi(client, db, admin_token):
+    svc = _create_service(db)
+    tc = EvalTestCase(
+        service_id=svc.id,
+        prompt="Summarize the case",
+        expected_output="short summary",
+        category="factuality",
+    )
+    db.add(tc)
+    db.commit()
+    db.refresh(tc)
+
+    now = datetime.now(timezone.utc)
+    previous = EvalRun(
+        service_id=svc.id,
+        quality_score=92.0,
+        drift_flagged=False,
+        run_type="manual",
+        run_status="complete",
+        run_at=now - timedelta(days=1),
+    )
+    current = EvalRun(
+        service_id=svc.id,
+        quality_score=91.0,
+        drift_flagged=False,
+        run_type="manual",
+        run_status="complete",
+        run_at=now,
+    )
+    db.add_all([previous, current])
+    db.commit()
+    db.refresh(previous)
+    db.refresh(current)
+
+    db.add_all([
+        EvalResult(
+            eval_run_id=previous.id,
+            test_case_id=tc.id,
+            response_text="OK.",
+            score=92.0,
+            status="success",
+        ),
+        EvalResult(
+            eval_run_id=current.id,
+            test_case_id=tc.id,
+            response_text=("Detailed paragraph. " * 50),
+            score=91.0,
+            status="success",
+        ),
+    ])
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/evaluations/drift-check/{svc.id}?window=2",
+        headers=auth_header(admin_token),
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    psi = body["output_distribution_drift"]
+    assert psi["method"] == "psi_response_length_buckets"
+    assert psi["severity"] == "critical"
+    assert psi["psi_score"] >= 0.25
+    assert body["drift_detected"] is True
 
 
 def test_list_eval_runs(client, db, admin_token):

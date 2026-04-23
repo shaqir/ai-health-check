@@ -173,6 +173,19 @@ async def _probe_service_endpoint(endpoint_url: str) -> dict:
             "status": "failure",
             "latency_ms": latency_ms,
             "response_snippet": str(exc)[:200],
+            "http_status": None,
+        }
+    except Exception as exc:
+        # Defence-in-depth: anything httpx could not classify (DNS, SSL quirks,
+        # unexpected parser crashes) still returns a structured failure dict
+        # instead of bubbling a 500 to the caller. The scheduled equivalent in
+        # main.py already does this; the user-facing endpoint should match.
+        latency_ms = round((time.perf_counter() - start) * 1000, 1)
+        return {
+            "status": "failure",
+            "latency_ms": latency_ms,
+            "response_snippet": f"Probe error: {exc!s}"[:200],
+            "http_status": None,
         }
 
 

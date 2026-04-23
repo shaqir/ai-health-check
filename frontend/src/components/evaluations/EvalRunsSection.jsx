@@ -136,12 +136,14 @@ function buildTrendExample(row) {
   };
 }
 
-function ScoreDetailsModal({ isOpen, onClose, row }) {
+function ScoreDetailsModal({ isOpen, onClose, row, threshold }) {
   if (!row) return null;
-  const threshold = 75;                       // matches settings.drift_threshold default
-  const warnCeiling = threshold + 10;         // Gate B early-warning ceiling (85)
+  // `threshold` comes from /evaluations/config (backend settings.drift_threshold).
+  // Fallback to 75 if the parent hasn't loaded it yet — matches config.py default.
+  const effectiveThreshold = threshold ?? 75;
+  const warnCeiling = effectiveThreshold + 10;  // Gate B early-warning ceiling (threshold + 10)
   const score = row.quality_score;
-  const gateA = typeof score === 'number' && score < threshold;
+  const gateA = typeof score === 'number' && score < effectiveThreshold;
   const incomplete = row.run_status === 'incomplete';
   const trend = buildTrendExample(row);
 
@@ -211,9 +213,9 @@ function ScoreDetailsModal({ isOpen, onClose, row }) {
           <div className="pl-5 space-y-3">
             <div className="rounded-md bg-surface-elevated/50 border border-hairline p-3">
               <p className="font-semibold text-text mb-1">Gate A — hard threshold</p>
-              <p>Flag drift when <code className="font-mono text-[11px] bg-surface px-1.5 py-0.5 rounded">quality_score &lt; {threshold}</code>.</p>
+              <p>Flag drift when <code className="font-mono text-[11px] bg-surface px-1.5 py-0.5 rounded">quality_score &lt; {effectiveThreshold}</code>.</p>
               <p className="mt-1 text-[12px]">
-                This run: <span className="font-mono tabular-nums">{incomplete ? '—' : `${score}`}</span>{' < '}{threshold} → {' '}
+                This run: <span className="font-mono tabular-nums">{incomplete ? '—' : `${score}`}</span>{' < '}{effectiveThreshold} → {' '}
                 <span className={gateA ? 'text-status-failing font-semibold' : 'text-status-healthy font-semibold'}>
                   {incomplete ? 'N/A' : (gateA ? 'TRIPPED (critical)' : 'clear')}
                 </span>
@@ -232,7 +234,7 @@ diff >  3 → improving
 diff < -3 → declining
 else      → stable`}
               </pre>
-              <p className="mt-2">If trend is <span className="text-status-failing font-semibold">declining</span> AND score &lt; {warnCeiling} (i.e. threshold + 10) ⇒ flag drift as <span className="text-status-degraded font-semibold">warning</span>. Catches the slide <em>before</em> it crashes through {threshold}.</p>
+              <p className="mt-2">If trend is <span className="text-status-failing font-semibold">declining</span> AND score &lt; {warnCeiling} (i.e. threshold + 10) ⇒ flag drift as <span className="text-status-degraded font-semibold">warning</span>. Catches the slide <em>before</em> it crashes through {effectiveThreshold}.</p>
               {trend ? (
                 <div className="mt-2 text-[12px] space-y-1 bg-surface p-2 rounded">
                   <p>Recent scores: <span className="font-mono tabular-nums">[{trend.scores.join(', ')}]</span></p>
@@ -262,7 +264,7 @@ else      → stable`}
   );
 }
 
-export default function EvalRunsSection({ evalRuns }) {
+export default function EvalRunsSection({ evalRuns, driftThreshold }) {
   const [detailRow, setDetailRow] = useState(null);
 
   const columns = [
@@ -329,7 +331,7 @@ export default function EvalRunsSection({ evalRuns }) {
     {
       key: 'drift_flagged',
       label: 'Status',
-      tooltip: 'Tri-state: Healthy (quality above threshold), Drift Detected (quality below threshold — triggers an alert), or No Signal (every test errored or judge refused — we honestly cannot measure).',
+      tooltip: 'Tri-state: Healthy (quality above effectiveThreshold), Drift Detected (quality below effectiveThreshold — triggers an alert), or No Signal (every test errored or judge refused — we honestly cannot measure).',
       render: (v, row) => {
         if (row && row.run_status === 'incomplete') {
           return <StatusBadge status="No signal" />;
@@ -352,6 +354,7 @@ export default function EvalRunsSection({ evalRuns }) {
         isOpen={Boolean(detailRow)}
         onClose={() => setDetailRow(null)}
         row={detailRow}
+        threshold={driftThreshold}
       />
     </div>
   );

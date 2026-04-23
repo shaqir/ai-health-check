@@ -66,6 +66,26 @@ class EvalRunDetailResponse(EvalRunResponse):
     results: list[dict] = []
 
 
+class EvalConfigResponse(BaseModel):
+    """Read-only runtime config the Evaluations UI needs to describe
+    scoring rules to reviewers. Kept minimal — only fields that the UI
+    actively renders."""
+    drift_threshold: float
+
+
+# ── Evaluation Config ──
+
+@router.get("/config", response_model=EvalConfigResponse)
+def get_eval_config(_: User = Depends(get_current_user)) -> EvalConfigResponse:
+    """
+    Expose the active drift_threshold so the Score-details modal can
+    quote the number that's really in force instead of hard-coding 75.
+    Before this endpoint existed, changing DRIFT_THRESHOLD in .env would
+    silently desync the backend math from the UI explainer.
+    """
+    return EvalConfigResponse(drift_threshold=settings.drift_threshold)
+
+
 # ── Drift Analysis Helpers ──
 #
 # The quality-scores trend classifier (improving / declining / stable)

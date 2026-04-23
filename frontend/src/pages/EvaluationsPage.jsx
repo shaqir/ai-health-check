@@ -34,6 +34,9 @@ export default function EvaluationsPage() {
   const [selectedDriftService, setSelectedDriftService] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
   const [activeEnv, setActiveEnv] = useState('all');
+  // Falls back to 75 (config.py default) if /evaluations/config hasn't
+  // responded yet. Once real data arrives the modal re-renders.
+  const [driftThreshold, setDriftThreshold] = useState(75);
 
   const [form, setForm] = useState({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
   // Eval-run confirmation. Holds the service + cost preview + confidential
@@ -46,14 +49,19 @@ export default function EvaluationsPage() {
     setError(null);
     try {
       const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
-      const [tcRes, runsRes, srvRes] = await Promise.all([
+      // /evaluations/config is fetched alongside — it returns the
+      // active drift_threshold so ScoreDetailsModal can quote the
+      // real backend value instead of a hardcoded 75.
+      const [tcRes, runsRes, srvRes, cfgRes] = await Promise.all([
         api.get('/evaluations/test-cases', { params: envParam }),
         api.get('/evaluations/runs', { params: envParam }),
         api.get('/services'),
+        api.get('/evaluations/config'),
       ]);
       setTestCases(tcRes.data);
       setEvalRuns(runsRes.data);
       setServices(srvRes.data);
+      setDriftThreshold(cfgRes.data.drift_threshold);
       // Reselect drift service when the env filter drops the current pick
       // (e.g. switching from "all" to "dev" when the selected service is
       // prod-only). Without this, the Drift tab silently points at a
@@ -217,7 +225,7 @@ export default function EvaluationsPage() {
       )}
 
       <TestCasesSection testCases={testCases} services={services} />
-      <EvalRunsSection evalRuns={evalRuns} />
+      <EvalRunsSection evalRuns={evalRuns} driftThreshold={driftThreshold} />
 
       {/* Create modal */}
       <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Add test case" footer={

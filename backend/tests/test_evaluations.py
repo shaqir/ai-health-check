@@ -98,6 +98,30 @@ def test_viewer_cannot_create_test_case(client, db, viewer_token):
     assert res.status_code == 403
 
 
+# ── Eval Config ──
+
+def test_eval_config_returns_drift_threshold(client, viewer_token):
+    """Config endpoint exposes drift_threshold so the UI Score-details
+    modal can quote the running value instead of hardcoding 75.
+    Viewer-accessible (it's not sensitive — same number is visible in
+    /drift-check responses)."""
+    res = client.get(
+        "/api/v1/evaluations/config",
+        headers=auth_header(viewer_token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert "drift_threshold" in body
+    # Default from config.py is 75.0; the test harness doesn't override
+    # it, so this is the expected value.
+    assert body["drift_threshold"] == 75.0
+
+
+def test_eval_config_requires_auth(client):
+    res = client.get("/api/v1/evaluations/config")
+    assert res.status_code == 401
+
+
 # ── Eval Runs ──
 
 @patch("app.services.eval_runner.run_eval_prompt", new_callable=AsyncMock)

@@ -13,7 +13,7 @@ def _create_service(db):
         environment=Environment.prod,
         model_name="claude-sonnet-4-6-20250415",
         sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com",
+
     )
     db.add(svc)
     db.commit()
@@ -130,7 +130,7 @@ def _create_service_in(db, env, name="Svc"):
         environment=env,
         model_name="claude-sonnet-4-6",
         sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com",
+
     )
     db.add(svc)
     db.commit()

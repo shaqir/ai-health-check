@@ -2,7 +2,6 @@
 Unit tests for auth, services CRUD, RBAC, and connection checks.
 """
 
-from app.routers import services as services_router
 from tests.conftest import auth_header
 
 
@@ -55,7 +54,6 @@ def test_create_service_supports_staging(client, admin_token):
             "environment": "staging",
             "model_name": "claude-sonnet-4-6-20250415",
             "sensitivity_label": "internal",
-            "endpoint_url": "https://staging.example.com/health",
         },
         headers=auth_header(admin_token),
     )
@@ -106,7 +104,6 @@ def test_update_service(client, admin_token):
             "environment": "dev",
             "model_name": "claude-sonnet-4-6-20250415",
             "sensitivity_label": "public",
-            "endpoint_url": "https://old.example.com/health",
         },
         headers=auth_header(admin_token),
     )
@@ -116,7 +113,6 @@ def test_update_service(client, admin_token):
         f"/api/v1/services/{service_id}",
         json={
             "environment": "staging",
-            "endpoint_url": "https://new.example.com/health",
             "is_active": False,
         },
         headers=auth_header(admin_token),
@@ -124,66 +120,7 @@ def test_update_service(client, admin_token):
     assert response.status_code == 200
     data = response.json()
     assert data["environment"] == "staging"
-    assert data["endpoint_url"] == "https://new.example.com/health"
     assert data["is_active"] is False
-
-
-def test_test_connection_success(client, admin_token, monkeypatch):
-    async def fake_probe(endpoint_url: str):
-        assert endpoint_url == "https://service.example.com/health"
-        return {
-            "status": "success",
-            "latency_ms": 12.3,
-            "response_snippet": "ok",
-        }
-
-    monkeypatch.setattr(services_router, "_probe_service_endpoint", fake_probe)
-
-    create_res = client.post(
-        "/api/v1/services/",
-        json={
-            "name": "Health Bot",
-            "owner": "Ops",
-            "environment": "prod",
-            "model_name": "claude-sonnet-4-6-20250415",
-            "sensitivity_label": "internal",
-            "endpoint_url": "https://service.example.com/health",
-        },
-        headers=auth_header(admin_token),
-    )
-    service_id = create_res.json()["id"]
-
-    response = client.post(
-        f"/api/v1/services/{service_id}/test-connection",
-        headers=auth_header(admin_token),
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert data["endpoint_url"] == "https://service.example.com/health"
-    assert data["latency_ms"] == 12.3
-
-
-def test_test_connection_requires_endpoint_url(client, admin_token):
-    create_res = client.post(
-        "/api/v1/services/",
-        json={
-            "name": "No URL Bot",
-            "owner": "Ops",
-            "environment": "dev",
-            "model_name": "claude-sonnet-4-6-20250415",
-            "sensitivity_label": "internal",
-        },
-        headers=auth_header(admin_token),
-    )
-    service_id = create_res.json()["id"]
-
-    response = client.post(
-        f"/api/v1/services/{service_id}/test-connection",
-        headers=auth_header(admin_token),
-    )
-    assert response.status_code == 400
-    assert "endpoint_url" in response.json()["detail"]
 
 
 def test_viewer_cannot_create_service(client, viewer_token):
@@ -311,76 +248,6 @@ def test_maintainer_can_llm_test_confidential(client, db, admin_token, maintaine
         headers=auth_header(maintainer_token),
     )
     assert res.status_code == 200
-
-
-def test_registration_rejects_metadata_url(client, db, admin_token):
-    """SSRF guard: registering an AWS metadata URL must be rejected."""
-    res = client.post(
-        "/api/v1/services/",
-        json={
-            "name": "Evil",
-            "owner": "attacker",
-            "environment": "prod",
-            "model_name": "claude-sonnet-4-6-20250415",
-            "sensitivity_label": "public",
-            "endpoint_url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
-        },
-        headers=auth_header(admin_token),
-    )
-    assert res.status_code == 400
-    assert "blocked range" in res.json()["detail"].lower()
-
-
-def test_registration_rejects_file_scheme(client, db, admin_token):
-    """file:// is not http/https — must be rejected."""
-    res = client.post(
-        "/api/v1/services/",
-        json={
-            "name": "Evil",
-            "owner": "attacker",
-            "environment": "prod",
-            "model_name": "m",
-            "sensitivity_label": "public",
-            "endpoint_url": "file:///etc/passwd",
-        },
-        headers=auth_header(admin_token),
-    )
-    assert res.status_code == 400
-
-
-def test_update_rejects_rebound_to_private_ip(client, db, admin_token, monkeypatch):
-    """Editing a service's endpoint_url to a private IP must be rejected."""
-    # First create a valid service (pointing at example.com which resolves publicly)
-    import socket
-
-    def fake_resolve(host, *args, **kwargs):
-        if "example.com" in host:
-            return [(2, 1, 6, "", ("1.1.1.1", 0))]
-        if "10.0.0" in host or host.startswith("10."):
-            return [(2, 1, 6, "", ("10.0.0.5", 0))]
-        raise socket.gaierror("unknown")
-
-    monkeypatch.setattr(socket, "getaddrinfo", fake_resolve)
-
-    create = client.post(
-        "/api/v1/services/",
-        json={
-            "name": "S", "owner": "t", "environment": "prod",
-            "model_name": "m", "sensitivity_label": "public",
-            "endpoint_url": "http://example.com/health",
-        },
-        headers=auth_header(admin_token),
-    )
-    assert create.status_code in (200, 201)
-    sid = create.json()["id"]
-
-    # Now try to update to a private IP
-    res = client.put(
-        f"/api/v1/services/{sid}",
-        json={"endpoint_url": "http://10.0.0.5/"},
-        headers=auth_header(admin_token),
-    )
-    assert res.status_code == 400
 
 
 def test_public_service_not_gated(client, db, admin_token, monkeypatch):

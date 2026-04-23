@@ -78,8 +78,7 @@ class AIService(Base):
     model_name = Column(String(100), nullable=False)
     sensitivity_label = Column(
         SAEnum(SensitivityLabel), nullable=False
-    )  # public / internal / confidential — exact values from project outline
-    endpoint_url = Column(String(500), default="")
+    )  # public / internal / confidential — informational metadata only
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

@@ -41,7 +41,6 @@ class Settings(BaseSettings):
 
     # Evaluation
     drift_threshold: float = 75.0
-    health_check_schedule_minutes: int = 5
     # Automated eval runs (APScheduler). Set SCHEDULER_ENABLED=false to opt out.
     eval_schedule_minutes: int = 60
 

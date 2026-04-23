@@ -15,7 +15,7 @@ def _create_service(db):
         environment=Environment.prod,
         model_name="claude-sonnet-4-6-20250415",
         sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com",
+
     )
     db.add(svc)
     db.commit()
@@ -328,7 +328,7 @@ def _create_service_with_model(db, model_name: str, name: str = "Svc"):
     svc = AIService(
         name=name, owner="Team", environment=Environment.prod,
         model_name=model_name, sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com",
+
     )
     db.add(svc)
     db.commit()
@@ -548,7 +548,7 @@ def _create_service_in(db, env, name="Svc"):
         environment=env,
         model_name="claude-sonnet-4-6",
         sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com",
+
     )
     db.add(svc)
     db.commit()
@@ -649,7 +649,7 @@ def test_list_eval_runs_does_not_n_plus_one(client, db, admin_token):
         environment=Environment.prod,
         model_name="claude-sonnet-4-6-20250415",
         sensitivity_label=SensitivityLabel.internal,
-        endpoint_url="https://example.com/b",
+
     )
     db.add(svc_b)
     db.commit()

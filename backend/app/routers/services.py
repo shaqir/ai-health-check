@@ -3,10 +3,7 @@ Services router for Module 1: service registry CRUD and connectivity checks.
 """
 
 import json
-import time
-from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
@@ -18,7 +15,6 @@ from app.middleware.rbac import require_role
 from app.models import AIService, ConnectionLog, Environment, SensitivityLabel, User
 from app.services.llm_client import test_connection as llm_test_connection
 from app.services.sensitivity import enforce_sensitivity
-from app.services.url_validator import UnsafeUrlError, validate_outbound_url
 
 router = APIRouter()
 
@@ -31,7 +27,6 @@ class ServiceCreate(BaseModel):
     environment: str
     model_name: str
     sensitivity_label: str
-    endpoint_url: str = ""
 
 
 class ServiceUpdate(BaseModel):
@@ -42,7 +37,6 @@ class ServiceUpdate(BaseModel):
     environment: str | None = None
     model_name: str | None = None
     sensitivity_label: str | None = None
-    endpoint_url: str | None = None
     is_active: bool | None = None
 
 
@@ -58,7 +52,6 @@ class ServiceResponse(BaseModel):
     environment: str
     model_name: str
     sensitivity_label: str
-    endpoint_url: str
     is_active: bool
 
 
@@ -67,7 +60,6 @@ class ServiceConnectionResponse(BaseModel):
 
     service_id: int
     service_name: str
-    endpoint_url: str
     status: str
     latency_ms: float | None
     response_snippet: str
@@ -81,7 +73,6 @@ def _serialize_service(service: AIService) -> ServiceResponse:
         environment=service.environment.value,
         model_name=service.model_name,
         sensitivity_label=service.sensitivity_label.value,
-        endpoint_url=service.endpoint_url,
         is_active=service.is_active,
     )
 
@@ -109,84 +100,6 @@ def _parse_sensitivity_label(value: str) -> SensitivityLabel:
                 f"Allowed values: {allowed}"
             ),
         ) from exc
-
-
-def classify_probe_response(code: int, snippet: str) -> tuple[str, str]:
-    """
-    Map an HTTP response code + body snippet to a (status, snippet_msg)
-    pair for ConnectionLog. Pure function — no IO, no side effects —
-    shared between the router probe (`_probe_service_endpoint`) and the
-    scheduled health check (`main.scheduled_health_check`) so both paths
-    stay in sync on the 4xx-reachable semantics below.
-
-    Liveness semantics: the probe is a *network reachability* check,
-    not a functional auth/method check. Many registered AI endpoints
-    (Anthropic, OpenAI, etc.) are POST-only and respond 405 to GET, or
-    401 without credentials — both mean "the server is up and answered
-    us," which is what a ping should test. Only 5xx + network errors
-    count as the endpoint being down.
-
-    Returns:
-        status     ∈ {"success", "failure"}
-        snippet_msg — length-bounded human-readable text for the UI
-    """
-    if code < 400:
-        return "success", (snippet or f"HTTP {code} from service endpoint")
-    if code < 500:
-        return "success", (
-            f"HTTP {code} (reachable — endpoint is up but rejected our "
-            f"anonymous GET; most AI APIs are POST-only + auth-required). "
-            f"{snippet[:120]}"
-        )
-    return "failure", f"HTTP {code} (server error). {snippet[:120]}"
-
-
-async def _probe_service_endpoint(endpoint_url: str) -> dict:
-    # Re-validate at probe time too. Closes the DNS-rebinding window where
-    # an endpoint passed validation at registration but now resolves to a
-    # private IP. Also catches anyone who bypassed the API to edit the DB.
-    try:
-        validate_outbound_url(endpoint_url)
-    except UnsafeUrlError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsafe endpoint URL: {exc}",
-        )
-
-    start = time.perf_counter()
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            response = await client.get(endpoint_url)
-        latency_ms = round((time.perf_counter() - start) * 1000, 1)
-        snippet = (response.text or "")[:200]
-        probe_status, snippet_msg = classify_probe_response(response.status_code, snippet)
-        return {
-            "status": probe_status,
-            "latency_ms": latency_ms,
-            "response_snippet": snippet_msg,
-            "http_status": response.status_code,
-        }
-    except httpx.HTTPError as exc:
-        latency_ms = round((time.perf_counter() - start) * 1000, 1)
-        return {
-            "status": "failure",
-            "latency_ms": latency_ms,
-            "response_snippet": str(exc)[:200],
-            "http_status": None,
-        }
-    except Exception as exc:
-        # Defence-in-depth: anything httpx could not classify (DNS, SSL quirks,
-        # unexpected parser crashes) still returns a structured failure dict
-        # instead of bubbling a 500 to the caller. The scheduled equivalent in
-        # main.py already does this; the user-facing endpoint should match.
-        latency_ms = round((time.perf_counter() - start) * 1000, 1)
-        return {
-            "status": "failure",
-            "latency_ms": latency_ms,
-            "response_snippet": f"Probe error: {exc!s}"[:200],
-            "http_status": None,
-        }
 
 
 @router.get("", response_model=list[ServiceResponse])
@@ -220,22 +133,12 @@ def create_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    endpoint_url = req.endpoint_url.strip()
-    if endpoint_url:
-        try:
-            validate_outbound_url(endpoint_url)
-        except UnsafeUrlError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsafe endpoint URL: {exc}",
-            )
     service = AIService(
         name=req.name,
         owner=req.owner,
         environment=_parse_environment(req.environment),
         model_name=req.model_name,
         sensitivity_label=_parse_sensitivity_label(req.sensitivity_label),
-        endpoint_url=endpoint_url,
     )
     db.add(service)
     db.commit()
@@ -276,16 +179,6 @@ def update_service(
             value = _parse_environment(value)
         elif key == "sensitivity_label" and value:
             value = _parse_sensitivity_label(value)
-        elif key == "endpoint_url" and value is not None:
-            value = value.strip()
-            if value:
-                try:
-                    validate_outbound_url(value)
-                except UnsafeUrlError as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Unsafe endpoint URL: {exc}",
-                    )
         setattr(service, key, value)
 
     db.commit()
@@ -377,8 +270,8 @@ def delete_service(
 )
 async def test_service_connection(
     service_id: int,
-    mode: str = Query("http", description="Test mode: 'http' for endpoint probe, 'llm' for Claude API health check"),
-    allow_confidential: bool = Query(False, description="Admin override to allow LLM for confidential services"),
+    mode: str = Query("llm", description="Reserved; the backend only runs live LLM pings now."),
+    allow_confidential: bool = Query(False, description="Retained for API compatibility; ignored."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -386,20 +279,12 @@ async def test_service_connection(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    if mode == "llm":
-        enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
-        result = await llm_test_connection(
-            model=service.model_name,
-            user_id=current_user.id,
-            service_id=service.id,
-        )
-    else:
-        if not service.endpoint_url:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Service has no endpoint_url configured",
-            )
-        result = await _probe_service_endpoint(service.endpoint_url)
+    enforce_sensitivity(db, service, current_user, allow_confidential=allow_confidential)
+    result = await llm_test_connection(
+        model=service.model_name,
+        user_id=current_user.id,
+        service_id=service.id,
+    )
 
     log = ConnectionLog(
         service_id=service.id,
@@ -427,6 +312,5 @@ async def test_service_connection(
     return ServiceConnectionResponse(
         service_id=service.id,
         service_name=service.name,
-        endpoint_url=service.endpoint_url,
         **result,
     )

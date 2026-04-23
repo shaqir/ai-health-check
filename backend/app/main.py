@@ -5,11 +5,8 @@ Start with: uvicorn app.main:app --reload --port 8000
 API docs:   http://localhost:8000/docs
 """
 
-import logging
-import time
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.middleware.correlation import CorrelationIdMiddleware
@@ -22,7 +19,6 @@ from app.config import get_settings
 from app.database import engine, Base, SessionLocal
 from app.services.llm_client import BudgetExceededError
 from app.services.safety import PromptSafetyError
-from app.services.url_validator import UnsafeUrlError, validate_outbound_url
 
 # Import all models so SQLAlchemy knows about them
 from app.models import (  # noqa: F401
@@ -37,9 +33,7 @@ from app.routers import users as compliance_users, audit as compliance_audit, ex
 
 settings = get_settings()
 
-_health_check_log = logging.getLogger(__name__)
-
-# Background scheduler for health checks / eval runs
+# Background scheduler for periodic eval runs.
 scheduler = BackgroundScheduler()
 
 
@@ -85,99 +79,6 @@ def scheduled_eval_run():
         db.close()
 
 
-def scheduled_health_check():
-    """Runs periodic health checks on all active services with an endpoint URL.
-
-    Resilience contract: each service's probe result commits
-    independently. A failure writing one service's ConnectionLog cannot
-    retroactively wipe another service's already-committed row. Errors
-    are logged with stack traces via `logging.exception` so ops can
-    find them; previously they leaked to stdout via `print`.
-    """
-    db = SessionLocal()
-    try:
-        active_services = db.query(AIService).filter(
-            AIService.is_active == True,
-            AIService.endpoint_url != "",
-            AIService.endpoint_url != None,
-        ).all()
-
-        for service in active_services:
-            try:
-                _run_single_health_check(db, service)
-                db.commit()
-            except Exception:
-                # Any failure touching this service — SSRF validator
-                # raising an unexpected error, DB constraint, bug in
-                # probe classification, etc. — gets logged with a
-                # stack trace and the loop moves on. Rollback only
-                # affects this service's partial work; earlier
-                # services' commits survive because we commit per
-                # iteration.
-                _health_check_log.exception(
-                    "scheduled probe failed for service_id=%s", service.id,
-                )
-                db.rollback()
-                continue
-    finally:
-        db.close()
-
-
-def _run_single_health_check(db, service):
-    """One service's probe step. Stages ConnectionLog (+ Telemetry on
-    non-SSRF-blocked paths) into the session. Caller is responsible
-    for commit / rollback. Raises on unrecoverable errors; the caller
-    turns those into per-service `logging.exception` entries."""
-    start = time.perf_counter()
-
-    # SSRF guard also on the scheduled path — stale data from before
-    # the validator shipped, or a rebinding DNS record, shouldn't
-    # be able to hit an internal address during the 5-minute tick.
-    try:
-        validate_outbound_url(service.endpoint_url)
-    except UnsafeUrlError as exc:
-        db.add(ConnectionLog(
-            service_id=service.id,
-            latency_ms=0.0,
-            status="failure",
-            response_snippet=f"blocked: {exc}"[:200],
-        ))
-        return  # No Telemetry — no latency to record on a blocked probe.
-
-    try:
-        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-            response = client.get(service.endpoint_url)
-        latency_ms = round((time.perf_counter() - start) * 1000, 1)
-        # 4xx-reachable / 5xx-failure classification lives in
-        # routers/services.classify_probe_response so this path and
-        # the manual probe endpoint stay in sync.
-        from app.routers.services import classify_probe_response
-        raw_snippet = (response.text or "")[:200]
-        status_str, snippet = classify_probe_response(
-            response.status_code, raw_snippet,
-        )
-    except Exception as exc:
-        # Network / httpx / timeout errors — expected failure modes for
-        # a reachability probe. Record and move on; don't let it escape
-        # to the per-service outer handler (that's reserved for
-        # unexpected failures like DB / ORM issues).
-        latency_ms = round((time.perf_counter() - start) * 1000, 1)
-        status_str = "failure"
-        snippet = str(exc)[:200]
-
-    db.add(ConnectionLog(
-        service_id=service.id,
-        latency_ms=latency_ms,
-        status=status_str,
-        response_snippet=snippet,
-    ))
-    db.add(Telemetry(
-        service_id=service.id,
-        metric_name="latency",
-        metric_value=latency_ms,
-    ))
-
-
 def _install_audit_log_triggers():
     """
     Install SQLite triggers that block UPDATE and DELETE on audit_log.
@@ -216,12 +117,6 @@ async def lifespan(app: FastAPI):
     # SCHEDULER_ENABLED=false so metrics stay stable during narration.
     if settings.scheduler_enabled:
         scheduler.add_job(
-            scheduled_health_check,
-            "interval",
-            minutes=settings.health_check_schedule_minutes,
-            id="health_check",
-        )
-        scheduler.add_job(
             scheduled_eval_run,
             "interval",
             minutes=settings.eval_schedule_minutes,
@@ -230,8 +125,7 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         print(f"[Startup] {settings.app_name} is running")
         print(f"[Startup] Background scheduler started "
-              f"(health check every {settings.health_check_schedule_minutes}m, "
-              f"eval every {settings.eval_schedule_minutes}m)")
+              f"(eval every {settings.eval_schedule_minutes}m)")
     else:
         print(f"[Startup] {settings.app_name} is running")
         print("[Startup] Background scheduler DISABLED (SCHEDULER_ENABLED=false)")

@@ -75,7 +75,6 @@ def seed():
             # always resolves to the latest release within the family.
             model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.internal,
-            endpoint_url="https://api.anthropic.com/v1/messages",
         ),
         AIService(
             name="Internal Report Generator",
@@ -83,7 +82,6 @@ def seed():
             environment=Environment.prod,
             model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.confidential,
-            endpoint_url="https://api.anthropic.com/v1/messages/batches",
         ),
         AIService(
             name="Dev Chatbot (Staging)",
@@ -91,7 +89,6 @@ def seed():
             environment=Environment.dev,
             model_name="claude-sonnet-4-6",
             sensitivity_label=SensitivityLabel.public,
-            endpoint_url="https://api.anthropic.com/v1/messages",
         ),
     ]
     db.add_all(services)

@@ -97,7 +97,7 @@ const DEFAULT_FORM = {
   // Canonical catalog id (undated). Backend normalizes either form, but
   // writing the canonical value here keeps new rows tidy.
   model_name: 'claude-sonnet-4-6',
-  sensitivity_label: 'internal', endpoint_url: '',
+  sensitivity_label: 'internal',
 };
 
 const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
@@ -175,7 +175,6 @@ export default function ServicesPage() {
       environment: service.environment,
       model_name: service.model_name,
       sensitivity_label: service.sensitivity_label,
-      endpoint_url: service.endpoint_url || '',
     });
     setFormError(null);
     setEditingId(service.id);
@@ -602,10 +601,6 @@ export default function ServicesPage() {
                 })()}
               </>
             )}
-          </div>
-          <div>
-            <label className={LABEL_CLS}>Endpoint URL</label>
-            <input className={INPUT_CLS} placeholder="https://api.example.com/v1/..." value={form.endpoint_url} onChange={(e) => setForm({ ...form, endpoint_url: e.target.value })} />
           </div>
         </form>
       </Modal>

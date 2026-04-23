@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Info, Play, Gauge, LineChart, SignalHigh, ListChecks, ArrowRight, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Play, AlertCircle } from 'lucide-react';
 import {
   AreaChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, ReferenceLine
@@ -42,15 +42,12 @@ export default function DriftAnalysis({
   selectedIsPending = false,
   anyPending = false,
   refetchToken = 0,
+  onTrendScoreCountChange,
 }) {
   const [data, setData] = useState(null);
   const [trend, setTrend] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
-  // Methodology section collapsed by default — it's a reference
-  // explainer that first-time reviewers want, but that pushes the
-  // live chart below the fold on return visits.
-  const [methodologyOpen, setMethodologyOpen] = useState(false);
 
   const fetchDrift = async (id) => {
     setLoading(true);
@@ -68,6 +65,11 @@ export default function DriftAnalysis({
           label: d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : `#${i + 1}`,
         };
       }));
+      // Let the parent know how many runs the trend is based on so the
+      // standalone DriftMethodology card can quote the same N.
+      if (onTrendScoreCountChange) {
+        onTrendScoreCountChange(checkRes.data?.trend_scores?.length ?? null);
+      }
     } catch (err) {
       const detail = await extractErrorDetail(err, 'Failed to load drift data');
       setFetchError(detail);
@@ -290,18 +292,23 @@ export default function DriftAnalysis({
             );
           })()}
 
-          {/* Chart */}
+          {/* Chart — bumped to 264px and given a lightly tinted backdrop
+              so it reads as the focal point of the panel, not an
+              afterthought between the score row and the per-test list. */}
           {trend.length > 0 && (
-            <div className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="text-[15px] font-semibold text-text tracking-tight">Quality over time</h4>
+            <div className="px-5 py-5 bg-surface-elevated/20">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-[15px] font-semibold text-text tracking-tight">Quality over time</h4>
+                  <p className="text-[11.5px] text-text-subtle mt-0.5">Last {trend.length} run{trend.length === 1 ? '' : 's'} · threshold line dashed</p>
+                </div>
                 <div className="flex items-center gap-3.5 text-[12px] text-text-muted">
                   <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 rounded-full" style={{ background: 'var(--chart-1)' }} /> Quality</span>
                   <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 rounded-full" style={{ background: 'var(--chart-2)' }} /> Factuality</span>
                   <span className="flex items-center gap-1.5"><span className="w-3 h-0.5 rounded-full" style={{ background: 'var(--chart-4)' }} /> Threshold</span>
                 </div>
               </div>
-              <div className="h-44">
+              <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={trend}>
                     <defs>
@@ -359,140 +366,6 @@ export default function DriftAnalysis({
             </div>
           )}
 
-          {/* Methodology footer — demo-app explainer. Collapsed by default
-              (first-time reviewers can expand; return visits keep the
-              chart in the viewport). Toggle button is the full-width
-              header row itself so there's no hunting for a chevron. */}
-          <div className="border-t border-hairline bg-surface-elevated/40">
-            <button
-              type="button"
-              onClick={() => setMethodologyOpen(v => !v)}
-              aria-expanded={methodologyOpen}
-              className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-surface-elevated/60 transition-standard"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-accent-weak flex items-center justify-center shrink-0">
-                  <Info size={15} strokeWidth={1.75} className="text-accent" />
-                </div>
-                <div className="text-left">
-                  <h4 className="text-[14px] font-semibold text-text tracking-tight leading-tight">How drift detection works</h4>
-                  <p className="text-[11.5px] text-text-subtle leading-tight mt-0.5">The pipeline, the math, and what each severity level means.</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2.5">
-                <span className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase bg-surface px-2.5 py-1 rounded-pill border border-hairline">Demo reference</span>
-                {methodologyOpen
-                  ? <ChevronUp size={15} strokeWidth={1.75} className="text-text-subtle" />
-                  : <ChevronDown size={15} strokeWidth={1.75} className="text-text-subtle" />
-                }
-              </div>
-            </button>
-
-          {methodologyOpen && (
-          <div className="px-5 pb-5 pt-1 space-y-5">
-            {/* Pipeline flow — 4 stages with arrows, so the mental model
-                (run → score → compare → classify) is visible at a glance. */}
-            <div>
-              <p className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase mb-2.5">Pipeline</p>
-              <div className="flex items-stretch gap-1.5 overflow-x-auto">
-                {[
-                  { icon: Play, label: 'Run tests', desc: 'Send every prompt to the model' },
-                  { icon: Gauge, label: 'Score each', desc: 'Judge factuality · parse JSON · detect hallucination' },
-                  { icon: LineChart, label: 'Compare history', desc: 'Split-half trend vs. last runs' },
-                  { icon: SignalHigh, label: 'Classify', desc: 'None · Warning · Critical' },
-                ].map((step, i, arr) => (
-                  <div key={step.label} className="flex items-center gap-1.5 flex-1 min-w-0">
-                    <div className="flex-1 min-w-0 rounded-lg bg-surface border border-hairline p-3">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <div className="w-5 h-5 rounded-full bg-accent-weak flex items-center justify-center shrink-0">
-                          <span className="text-[10px] font-mono font-semibold text-accent tabular-nums">{i + 1}</span>
-                        </div>
-                        <step.icon size={13} strokeWidth={1.75} className="text-text-muted shrink-0" />
-                        <span className="text-[13px] font-semibold text-text truncate">{step.label}</span>
-                      </div>
-                      <p className="text-[12px] text-text-muted leading-snug">{step.desc}</p>
-                    </div>
-                    {i < arr.length - 1 && <ArrowRight size={14} strokeWidth={1.5} className="text-text-subtle shrink-0" />}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Severity levels — three cards with an explicit "trigger" chip
-                so the rule is obvious, not buried in prose. */}
-            <div>
-              <p className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase mb-2.5">Severity levels</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                {[
-                  {
-                    icon: ShieldCheck, label: 'Healthy', tone: 'healthy',
-                    trigger: `score ≥ ${data.threshold + 10}%`,
-                    desc: 'Quality sits comfortably above the threshold and trend isn\u2019t declining. No action needed.',
-                  },
-                  {
-                    icon: ShieldAlert, label: 'Warning', tone: 'degraded',
-                    trigger: `${data.threshold}\u2013${data.threshold + 10}% · or declining`,
-                    desc: 'Within 10 pts of the threshold, or the trend is declining. Investigate before it breaks.',
-                  },
-                  {
-                    icon: ShieldX, label: 'Critical', tone: 'failing',
-                    trigger: `score < ${data.threshold}% · or 15+ pt drop`,
-                    desc: 'Below the threshold, or a sudden 15+ pt drop vs. the recent average. Page oncall.',
-                  },
-                ].map(sev => (
-                  <div key={sev.label} className={`rounded-lg border border-hairline bg-status-${sev.tone}-muted/30 p-3.5`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <sev.icon size={15} strokeWidth={1.75} className={`text-status-${sev.tone}`} />
-                        <span className={`text-[14px] font-semibold text-status-${sev.tone}`}>{sev.label}</span>
-                      </div>
-                      <span className={`text-[11px] font-mono tabular-nums text-status-${sev.tone} bg-surface border border-hairline rounded-pill px-2 py-0.5`}>
-                        {sev.trigger}
-                      </span>
-                    </div>
-                    <p className="text-[12.5px] text-text-muted leading-snug">{sev.desc}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Concept explainers — replaces the paragraph wall with three
-                icon-led cards. Easier to scan than prose. */}
-            <div>
-              <p className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase mb-2.5">Behind the numbers</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                <div className="rounded-lg bg-surface border border-hairline p-3.5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Gauge size={14} strokeWidth={1.75} className="text-accent" />
-                    <span className="text-[13px] font-semibold text-text">Quality score</span>
-                  </div>
-                  <p className="text-[12.5px] text-text-muted leading-relaxed">
-                    Mean of per-test-case scores in a run. Factuality is LLM-judged; JSON format parses the response. <span className="text-text">One failing case can pull the mean down sharply</span> &mdash; see the composition strip above.
-                  </p>
-                </div>
-                <div className="rounded-lg bg-surface border border-hairline p-3.5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <LineChart size={14} strokeWidth={1.75} className="text-accent" />
-                    <span className="text-[13px] font-semibold text-text">Trend direction</span>
-                  </div>
-                  <p className="text-[12.5px] text-text-muted leading-relaxed">
-                    Split the last <span className="font-mono tabular-nums">{data.trend_scores?.length || 'N'}</span> runs in half, compare averages. {'>'} 3 pts flips to <span className="text-status-healthy font-medium">improving</span> or <span className="text-status-failing font-medium">declining</span>. Confidence: <span className="text-text-subtle">low</span> ≤ 2 runs · <span className="text-text-muted">medium</span> 3&ndash;4 · <span className="text-text">high</span> 5+.
-                  </p>
-                </div>
-                <div className="rounded-lg bg-surface border border-hairline p-3.5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <ListChecks size={14} strokeWidth={1.75} className="text-accent" />
-                    <span className="text-[13px] font-semibold text-text">Per-test breakdown</span>
-                  </div>
-                  <p className="text-[12.5px] text-text-muted leading-relaxed">
-                    Aggregates hide which case broke. Each row above shows the case&rsquo;s current score, delta vs. its own recent average, and its own trend &mdash; so you <span className="text-text">pinpoint the regressing prompt</span>, not the service.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-          )}
-          </div>
         </div>
       ) : (
         <div className="py-10">

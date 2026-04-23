@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Clock, User as UserIcon, Check, AlertTriangle, Gauge, Info } from 'lucide-react';
+import { Activity, Clock, User as UserIcon, Check, AlertTriangle, Gauge, Info, Rows3, Rows4 } from 'lucide-react';
 import DataTable from '../common/DataTable';
 import StatusBadge from '../common/StatusBadge';
 import ModelBadge from '../common/ModelBadge';
@@ -138,13 +138,25 @@ function formatShortAbsolute(d) {
   return `${date}, ${time}`;
 }
 
-function TimeCell({ value }) {
+function TimeCell({ value, compact = false }) {
   if (!value) return <span className="font-mono text-[13px] text-text-subtle">—</span>;
   const d = parseBackendDate(value);
   if (!d) {
     return <span className="font-mono tabular-nums text-[13px]">{String(value)}</span>;
   }
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Compact density: single relative label only. Absolute time stays in
+  // the tooltip so it's still one hover away.
+  if (compact) {
+    return (
+      <span
+        className="font-mono tabular-nums text-[13px] whitespace-nowrap"
+        title={`${d.toLocaleString()} (${tz})`}
+      >
+        {formatRelative(d)}
+      </span>
+    );
+  }
   return (
     <div
       className="flex flex-col leading-tight whitespace-nowrap"
@@ -317,6 +329,11 @@ else      → stable`}
 
 export default function EvalRunsSection({ evalRuns, driftThreshold }) {
   const [detailRow, setDetailRow] = useState(null);
+  // Density toggle — "compact" drops the per-row absolute timestamp so
+  // more history fits without scrolling; "comfortable" (default) shows
+  // both relative + absolute for deeper scanning.
+  const [density, setDensity] = useState('comfortable');
+  const compact = density === 'compact';
 
   const columns = [
     { key: 'service_name', label: 'Service', render: (v) => <span className="font-medium text-text text-[14px]">{v}</span> },
@@ -390,19 +407,54 @@ export default function EvalRunsSection({ evalRuns, driftThreshold }) {
         return <StatusBadge status={v ? 'Drift Detected' : 'Healthy'} />;
       },
     },
-    { key: 'run_at', label: 'Time', render: (v) => <TimeCell value={v} /> },
+    { key: 'run_at', label: 'Time', render: (v) => <TimeCell value={v} compact={compact} /> },
   ];
 
   return (
     <div>
-      <div className="mb-3">
-        <h3 className="text-[15px] font-semibold text-text tracking-tight">Evaluation runs</h3>
-        <p className="text-[12px] text-text-subtle leading-snug mt-0.5">
-          History of every run — click a quality score to see how it was computed.
-        </p>
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-[15px] font-semibold text-text tracking-tight">Evaluation runs</h3>
+          <p className="text-[12px] text-text-subtle leading-snug mt-0.5">
+            History of every run — click a quality score to see how it was computed.
+          </p>
+        </div>
+        {evalRuns.length > 0 && (
+          <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5 shrink-0" role="tablist" aria-label="Row density">
+            <button
+              role="tab"
+              aria-selected={!compact}
+              onClick={() => setDensity('comfortable')}
+              title="Comfortable density"
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-pill transition-standard ${
+                !compact ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              <Rows3 size={12} strokeWidth={1.75} />
+              Comfortable
+            </button>
+            <button
+              role="tab"
+              aria-selected={compact}
+              onClick={() => setDensity('compact')}
+              title="Compact density"
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-pill transition-standard ${
+                compact ? 'bg-surface-elevated text-text shadow-xs' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              <Rows4 size={12} strokeWidth={1.75} />
+              Compact
+            </button>
+          </div>
+        )}
       </div>
       {evalRuns.length > 0 ? (
-        <DataTable columns={columns} data={evalRuns} searchPlaceholder="Search runs..." />
+        <DataTable
+          columns={columns}
+          data={evalRuns}
+          searchPlaceholder="Search runs..."
+          maxHeight={compact ? '420px' : '540px'}
+        />
       ) : (
         <EmptyState icon={Activity} title="No evaluation runs" description="Add test cases and run an evaluation." />
       )}

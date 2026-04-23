@@ -10,6 +10,7 @@ import Toast from '../components/common/Toast';
 import ErrorState from '../components/common/ErrorState';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import DriftAnalysis from '../components/evaluations/DriftAnalysis';
+import DriftMethodology from '../components/evaluations/DriftMethodology';
 import TestCasesSection from '../components/evaluations/TestCasesSection';
 import EvalRunsSection from '../components/evaluations/EvalRunsSection';
 
@@ -42,6 +43,9 @@ export default function EvaluationsPage() {
   // (setSelectedDriftService(sameId) is a no-op and wouldn't retrigger
   // the useEffect). Parent tracks it; child consumes it as a dep.
   const [driftRefetchToken, setDriftRefetchToken] = useState(0);
+  // Surfaced from DriftAnalysis so DriftMethodology's "Trend direction"
+  // card can cite the real N instead of a placeholder.
+  const [trendScoreCount, setTrendScoreCount] = useState(null);
 
   const [form, setForm] = useState({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
   // Eval-run confirmation. Holds the service + cost preview + confidential
@@ -261,10 +265,12 @@ export default function EvaluationsPage() {
           selectedIsPending={selectedIsPending}
           anyPending={anyPending}
           refetchToken={driftRefetchToken}
+          onTrendScoreCountChange={setTrendScoreCount}
         />
       )}
 
       <TestCasesSection testCases={testCases} services={services} />
+      <DriftMethodology threshold={driftThreshold} trendScoreCount={trendScoreCount} />
       <EvalRunsSection evalRuns={evalRuns} driftThreshold={driftThreshold} />
 
       {/* Create modal */}

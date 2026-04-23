@@ -37,6 +37,11 @@ export default function EvaluationsPage() {
   // Falls back to 75 (config.py default) if /evaluations/config hasn't
   // responded yet. Once real data arrives the modal re-renders.
   const [driftThreshold, setDriftThreshold] = useState(75);
+  // Bumped after a successful Run so DriftAnalysis re-fetches its
+  // chart data even when the user ran the *already-selected* service
+  // (setSelectedDriftService(sameId) is a no-op and wouldn't retrigger
+  // the useEffect). Parent tracks it; child consumes it as a dep.
+  const [driftRefetchToken, setDriftRefetchToken] = useState(0);
 
   const [form, setForm] = useState({ service_id: '', prompt: '', expected_output: '', category: 'factuality' });
   // Eval-run confirmation. Holds the service + cost preview + confidential
@@ -153,8 +158,19 @@ export default function EvaluationsPage() {
         `Quality: ${r.quality_score}% ${r.drift_flagged ? '— drift detected' : ''}`,
         r.drift_flagged ? 'error' : 'success',
       );
-      fetchData();
+      // Point the drift panel at the just-evaluated service (no-op if
+      // it was already selected — common case).
       setSelectedDriftService(service.id);
+      // Bump the token so DriftAnalysis re-fetches its chart even
+      // when the selectedId didn't actually change. Must fire before
+      // fetchData() so the render for updated test-cases/runs already
+      // carries the new token and the child fetches once.
+      setDriftRefetchToken(t => t + 1);
+      // Await the refresh so the Evaluation runs table visibly updates
+      // in the same interaction — without the await, the finally block
+      // clears runningService before the new row lands and the user
+      // sees the old table + a dismissed spinner.
+      await fetchData();
     } catch (err) {
       const detail = await extractErrorDetail(err, 'Evaluation failed');
       showToast(detail, 'error');
@@ -244,6 +260,7 @@ export default function EvaluationsPage() {
           onRunService={handleRunEval}
           selectedIsPending={selectedIsPending}
           anyPending={anyPending}
+          refetchToken={driftRefetchToken}
         />
       )}
 

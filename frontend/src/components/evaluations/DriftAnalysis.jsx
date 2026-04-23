@@ -28,6 +28,7 @@ export default function DriftAnalysis({
   onRunService,
   selectedIsPending = false,
   anyPending = false,
+  refetchToken = 0,
 }) {
   const [data, setData] = useState(null);
   const [trend, setTrend] = useState([]);
@@ -59,13 +60,13 @@ export default function DriftAnalysis({
     } finally { setLoading(false); }
   };
 
-  // Re-fetch whenever the parent's selection changes — initial mount (once
-  // services load and parent picks a default), tab clicks (handler just
-  // calls onSelect; this effect does the fetch), and post-eval updates
-  // (confirmRunEval bumps selectedDriftService to the just-evaluated service).
+  // Re-fetch on: (1) selection change (tab click / initial mount), and
+  // (2) parent bumping `refetchToken` after a successful Run — required
+  // because running the already-selected service leaves selectedId
+  // unchanged, so a selectedId-only dep would silently render stale data.
   useEffect(() => {
     if (selectedId) fetchDrift(selectedId);
-  }, [selectedId]);
+  }, [selectedId, refetchToken]);
 
   const sev = data ? SEV_CONFIG[data.drift_severity] || SEV_CONFIG.none : null;
 

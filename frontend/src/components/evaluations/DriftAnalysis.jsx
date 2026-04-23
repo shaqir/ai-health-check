@@ -6,22 +6,10 @@ import {
 } from 'recharts';
 import api from '../../utils/api';
 import { extractErrorDetail } from '../../utils/errors';
+import { parseBackendDate } from '../../utils/dates';
 import EmptyState from '../common/EmptyState';
 import { InfoTip } from '../common/Tooltip';
 import { GRID_STROKE, AXIS_TICK, TOOLTIP_STYLE, CHART_GRID_DASH, CHART_LINE_STROKE } from '../common/chartStyle';
-
-// Backend sends naive UTC strings (no Z suffix). JS parses naive ISO as
-// LOCAL, offsetting chart tick labels by the viewer's timezone. Append Z
-// when missing so tick dates match the Time column in EvalRunsSection.
-// Keep the raw value if it already has an offset.
-function parseBackendDate(value) {
-  if (value == null) return null;
-  if (value instanceof Date) return value;
-  const str = String(value);
-  const normalized = /[Zz]|[+-]\d\d:?\d\d$/.test(str) ? str : `${str}Z`;
-  const d = new Date(normalized);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
 
 const SEV_CONFIG = {
   critical: { icon: ShieldX, bg: 'bg-status-failing-muted', text: 'text-status-failing', label: 'Critical drift', desc: 'Quality below threshold. Immediate attention required.' },

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Plus, AlertTriangle, CheckSquare, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { parseBackendDate } from '../utils/dates';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
@@ -301,8 +302,8 @@ export default function IncidentsPage() {
 
               <div className="flex items-center gap-4 mt-3 text-xs text-text-subtle">
                 {(() => {
-                  const d = inc.created_at ? new Date(inc.created_at) : null;
-                  if (!d || Number.isNaN(d.getTime())) {
+                  const d = parseBackendDate(inc.created_at);
+                  if (!d) {
                     return <span className="flex items-center gap-1 font-mono"><Clock size={12} strokeWidth={1.5} />—</span>;
                   }
                   const short = d.toLocaleString(undefined, {

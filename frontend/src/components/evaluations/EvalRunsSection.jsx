@@ -6,6 +6,7 @@ import ModelBadge from '../common/ModelBadge';
 import EmptyState from '../common/EmptyState';
 import Modal from '../common/Modal';
 import { Tooltip } from '../common/Tooltip';
+import { parseBackendDate, formatRelative, formatShortAbsolute } from '../../utils/dates';
 
 // Hallucination scoring is inverted: 0 = clean, 100 = fully hallucinated.
 // Show as a Yes/No flag; when Yes, show the severity-colored score alongside.
@@ -88,54 +89,6 @@ function RunTypeBadge({ value }) {
       </span>
     </Tooltip>
   );
-}
-
-// Backend's SQLAlchemy DateTime column is naive — Pydantic serializes
-// UTC timestamps WITHOUT a Z suffix ("2026-04-23T14:23:56.203304").
-// `new Date(naive)` then parses it as LOCAL time per ES spec, so a
-// 14:23 UTC run shows up as 14:23 local (= 6 hours into the future in
-// MDT). Appending Z forces correct UTC parsing. Keep the raw-value
-// fallback for already-offset strings ("…Z" / "…+05:30").
-function parseBackendDate(value) {
-  if (value == null) return null;
-  if (value instanceof Date) return value;
-  const str = String(value);
-  const normalized = /[Zz]|[+-]\d\d:?\d\d$/.test(str) ? str : `${str}Z`;
-  const d = new Date(normalized);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-// Compact relative labels for recent runs ("2m ago", "14h ago"), falling
-// back to "Mon DD" for anything older than a week. The previous absolute
-// "Apr 23, 02:23 PM" format wrapped to two lines in the table because of
-// the trailing "PM" — the relative labels keep everything on one line and
-// are also easier to scan when a grader is staring at a run that happened
-// 30 seconds ago.
-function formatRelative(d) {
-  const diffMs = Date.now() - d.getTime();
-  if (diffMs < 0) {
-    // Clock skew / future timestamp — show short absolute to avoid "in 2h".
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  const sec = 1000;
-  const min = 60 * sec;
-  const hour = 60 * min;
-  const day = 24 * hour;
-  if (diffMs < min) return 'just now';
-  if (diffMs < hour) return `${Math.floor(diffMs / min)}m ago`;
-  if (diffMs < day) return `${Math.floor(diffMs / hour)}h ago`;
-  if (diffMs < 7 * day) return `${Math.floor(diffMs / day)}d ago`;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-// Short absolute in 12-hour with AM/PM. Wrap is now prevented at the
-// cell level (`whitespace-nowrap` on the flex column) so we can keep
-// the human-friendly format without it breaking across two lines.
-// Example output: "Apr 23, 02:23 PM".
-function formatShortAbsolute(d) {
-  const date = d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true });
-  return `${date}, ${time}`;
 }
 
 function TimeCell({ value, compact = false }) {

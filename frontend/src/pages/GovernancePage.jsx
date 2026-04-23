@@ -3,6 +3,7 @@ import { FileJson, FileText, Download, Users, UserCog, History, Shield, ShieldCh
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import { extractErrorDetail } from '../utils/errors';
+import { parseBackendDate } from '../utils/dates';
 import PageHeader from '../components/common/PageHeader';
 import DataTable from '../components/common/DataTable';
 import EmptyState from '../components/common/EmptyState';
@@ -166,8 +167,8 @@ export default function GovernancePage() {
       if (actionFilter !== 'all' && l.rawAction !== actionFilter) return false;
       if (actorFilter !== 'all' && l.user !== actorFilter) return false;
       if (windowMs !== Infinity && l.timestamp) {
-        const ts = new Date(l.timestamp).getTime();
-        if (Number.isNaN(ts) || (now - ts) > windowMs) return false;
+        const d = parseBackendDate(l.timestamp);
+        if (!d || (now - d.getTime()) > windowMs) return false;
       }
       return true;
     });
@@ -185,8 +186,8 @@ export default function GovernancePage() {
       actorSet.add(l.user);
       if (l.rawAction) actionCount[l.rawAction] = (actionCount[l.rawAction] || 0) + 1;
       if (l.timestamp) {
-        const ts = new Date(l.timestamp).getTime();
-        if (!Number.isNaN(ts) && ts > dayAgo) eventsToday += 1;
+        const d = parseBackendDate(l.timestamp);
+        if (d && d.getTime() > dayAgo) eventsToday += 1;
       }
     }
     const topEntry = Object.entries(actionCount).sort(([, a], [, b]) => b - a)[0];
@@ -286,9 +287,9 @@ export default function GovernancePage() {
       label: 'Time',
       render: (v) => {
         if (!v) return <span className="font-mono text-xs text-text-subtle">—</span>;
-        const d = new Date(v);
-        if (Number.isNaN(d.getTime())) {
-          return <span className="font-mono tabular-nums text-xs whitespace-nowrap">{v}</span>;
+        const d = parseBackendDate(v);
+        if (!d) {
+          return <span className="font-mono tabular-nums text-xs whitespace-nowrap">{String(v)}</span>;
         }
         // Two-line compact layout — date on top (subtle), time below (mono).
         // Keeps the Time column narrow without wrapping mid-word like the
@@ -628,7 +629,7 @@ export default function GovernancePage() {
               </div>
               <div>
                 {users.map(u => {
-                  const joined = u.createdAt ? new Date(u.createdAt) : null;
+                  const joined = parseBackendDate(u.createdAt);
                   const joinedShort = joined && !Number.isNaN(joined.getTime())
                     ? joined.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
                     : '—';

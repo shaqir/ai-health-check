@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, CheckSquare, Clock, ShieldCheck, FileText, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../utils/api';
+import { parseBackendDate } from '../utils/dates';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import ErrorState from '../components/common/ErrorState';
@@ -210,8 +211,8 @@ export default function IncidentDetailPage() {
         <StatusBadge status={incident.severity} />
         <StatusBadge status={incident.status} />
         {(() => {
-          const d = incident.created_at ? new Date(incident.created_at) : null;
-          if (!d || Number.isNaN(d.getTime())) return null;
+          const d = parseBackendDate(incident.created_at);
+          if (!d) return null;
           const short = d.toLocaleString(undefined, {
             month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
           });
@@ -345,8 +346,8 @@ export default function IncidentDetailPage() {
                         <span className="font-medium">Approved by</span>{' '}
                         <span className="font-mono">{incident.approved_by_email}</span>
                         {incident.approved_at && (() => {
-                          const d = new Date(incident.approved_at);
-                          if (Number.isNaN(d.getTime())) return null;
+                          const d = parseBackendDate(incident.approved_at);
+                          if (!d) return null;
                           const full = d.toLocaleString();
                           return (
                             <>
@@ -469,8 +470,8 @@ export default function IncidentDetailPage() {
                         </div>
                       </div>
                       {plan.scheduled_date && (() => {
-                        const d = new Date(plan.scheduled_date);
-                        if (Number.isNaN(d.getTime())) return null;
+                        const d = parseBackendDate(plan.scheduled_date);
+                        if (!d) return null;
                         const short = d.toLocaleString(undefined, {
                           month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
                         });

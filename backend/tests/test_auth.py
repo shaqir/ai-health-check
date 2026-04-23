@@ -6,6 +6,7 @@ test_services.py). Here we prove every auth event also lands in the
 authoritative audit log so governance review has a single trail.
 """
 
+from tests.conftest import auth_header
 from app.models import AuditLog, LoginAttempt
 
 
@@ -71,3 +72,25 @@ def test_login_audit_and_throttle_table_are_both_populated(client, admin_user, d
 
     assert db.query(LoginAttempt).filter(LoginAttempt.success == False).count() == 1
     assert db.query(AuditLog).filter(AuditLog.action == "login_failed").count() == 1
+
+
+def test_register_invalid_role_returns_400_not_500(client, admin_token):
+    """
+    POST /auth/register with an unknown role string used to raise bare
+    ValueError and surface as an opaque 500. Now validated explicitly —
+    should be a 400 with a helpful list of allowed values.
+    """
+    res = client.post(
+        "/api/v1/auth/register",
+        headers=auth_header(admin_token),
+        json={
+            "username": "newbie",
+            "email": "newbie@test.local",
+            "password": "secret-password-1",
+            "role": "superadmin",  # not a valid UserRole
+        },
+    )
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert "superadmin" in detail
+    assert "admin" in detail and "maintainer" in detail and "viewer" in detail

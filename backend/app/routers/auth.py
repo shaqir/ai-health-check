@@ -129,11 +129,23 @@ def register(
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")
 
+    # Validate the role string against the UserRole enum here — without this
+    # guard an invalid value like "superadmin" raises ValueError and FastAPI
+    # returns an opaque 500. Mirrors the users.py CRUD contract.
+    try:
+        role = UserRole(req.role)
+    except ValueError:
+        allowed = ", ".join(r.value for r in UserRole)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role '{req.role}'. Allowed values: {allowed}",
+        )
+
     user = User(
         username=req.username,
         email=req.email,
         password_hash=hash_password(req.password),
-        role=UserRole(req.role),
+        role=role,
     )
     db.add(user)
     db.commit()

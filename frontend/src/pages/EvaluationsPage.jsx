@@ -18,7 +18,7 @@ const INPUT_CLS = 'w-full px-3.5 py-2 text-sm bg-[var(--material-thick)] border 
 const LABEL_CLS = 'block text-[11px] font-medium text-text-muted tracking-tight mb-1.5';
 
 export default function EvaluationsPage() {
-  const { canEdit } = useAuth();
+  const { canEdit, isAdmin } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [testCases, setTestCases] = useState([]);
@@ -126,6 +126,14 @@ export default function EvaluationsPage() {
   const handleRunEval = async (serviceId) => {
     const service = services.find((s) => s.id === serviceId);
     if (!service) return;
+
+    // Confidential services are admin-only on the server side. Block at the
+    // UI boundary so maintainers don't hit a 403 after confirming a modal
+    // they were never going to get through.
+    if (service.sensitivity_label === 'confidential' && !isAdmin) {
+      showToast('Confidential services require an admin to run evaluations.', 'error');
+      return;
+    }
 
     // Fetch cost preview up-front so the confirm modal can show it. If
     // this fails we bail before opening the modal. `previewingService`

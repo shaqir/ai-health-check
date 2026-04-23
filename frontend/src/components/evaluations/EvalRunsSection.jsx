@@ -113,6 +113,14 @@ function formatRelative(d) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// Short absolute in 24-hour so there's no "PM" to wrap. Same output
+// regardless of locale for predictable column width ("Apr 23, 14:23").
+function formatShortAbsolute(d) {
+  const date = d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${date}, ${time}`;
+}
+
 function TimeCell({ value }) {
   if (!value) return <span className="font-mono text-[13px] text-text-subtle">—</span>;
   const d = new Date(value);
@@ -121,12 +129,17 @@ function TimeCell({ value }) {
   }
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
-    <span
-      className="font-mono tabular-nums text-[13px] whitespace-nowrap"
+    <div
+      className="flex flex-col leading-tight whitespace-nowrap"
       title={`${d.toLocaleString()} (${tz})`}
     >
-      {formatRelative(d)}
-    </span>
+      <span className="font-mono tabular-nums text-[13px] text-text">
+        {formatRelative(d)}
+      </span>
+      <span className="font-mono tabular-nums text-[11px] text-text-subtle mt-0.5">
+        {formatShortAbsolute(d)}
+      </span>
+    </div>
   );
 }
 

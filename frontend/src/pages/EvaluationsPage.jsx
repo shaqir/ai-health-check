@@ -49,19 +49,25 @@ export default function EvaluationsPage() {
     setError(null);
     try {
       const envParam = activeEnv !== 'all' ? { environment: activeEnv } : {};
-      // /evaluations/config is fetched alongside — it returns the
-      // active drift_threshold so ScoreDetailsModal can quote the
-      // real backend value instead of a hardcoded 75.
-      const [tcRes, runsRes, srvRes, cfgRes] = await Promise.all([
+      // Core data must succeed or the page can't render. /evaluations/config
+      // is a nice-to-have (used only by the ScoreDetails modal) so it's
+      // fetched with allSettled — a missing endpoint on an older backend
+      // must NOT blank out the whole page.
+      const [tcRes, runsRes, srvRes] = await Promise.all([
         api.get('/evaluations/test-cases', { params: envParam }),
         api.get('/evaluations/runs', { params: envParam }),
         api.get('/services'),
-        api.get('/evaluations/config'),
       ]);
       setTestCases(tcRes.data);
       setEvalRuns(runsRes.data);
       setServices(srvRes.data);
-      setDriftThreshold(cfgRes.data.drift_threshold);
+      // Best-effort config fetch — failure silently falls back to 75.
+      try {
+        const cfgRes = await api.get('/evaluations/config');
+        if (cfgRes?.data?.drift_threshold != null) {
+          setDriftThreshold(cfgRes.data.drift_threshold);
+        }
+      } catch { /* leave driftThreshold at its current (or default) value */ }
       // Reselect drift service when the env filter drops the current pick
       // (e.g. switching from "all" to "dev" when the selected service is
       // prod-only). Without this, the Drift tab silently points at a

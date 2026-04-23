@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Info, Play, Gauge, LineChart, SignalHigh, ListChecks, ArrowRight } from 'lucide-react';
+import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Info, Play, Gauge, LineChart, SignalHigh, ListChecks, ArrowRight, AlertCircle } from 'lucide-react';
 import {
   AreaChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, ReferenceLine
 } from 'recharts';
 import api from '../../utils/api';
+import { extractErrorDetail } from '../../utils/errors';
 import EmptyState from '../common/EmptyState';
 import { InfoTip } from '../common/Tooltip';
 import { GRID_STROKE, AXIS_TICK, TOOLTIP_STYLE, CHART_GRID_DASH, CHART_LINE_STROKE } from '../common/chartStyle';
@@ -22,9 +23,11 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
   const [data, setData] = useState(null);
   const [trend, setTrend] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   const fetchDrift = async (id) => {
     setLoading(true);
+    setFetchError(null);
     try {
       const [checkRes, trendRes] = await Promise.all([
         api.get(`/evaluations/drift-check/${id}`),
@@ -35,7 +38,12 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
         ...r,
         label: r.run_at ? new Date(r.run_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : `#${i + 1}`,
       })));
-    } catch { /* silent */ } finally { setLoading(false); }
+    } catch (err) {
+      const detail = await extractErrorDetail(err, 'Failed to load drift data');
+      setFetchError(detail);
+      setData(null);
+      setTrend([]);
+    } finally { setLoading(false); }
   };
 
   // Re-fetch whenever the parent's selection changes — initial mount (once
@@ -71,6 +79,23 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 size={18} strokeWidth={1.5} className="animate-spin text-text-subtle" />
+        </div>
+      ) : fetchError ? (
+        <div className="px-5 py-6">
+          <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg bg-status-failing-muted border border-status-failing/30" role="alert">
+            <AlertCircle size={16} strokeWidth={1.75} className="text-status-failing shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] font-medium text-status-failing">Failed to load drift data</p>
+              <p className="text-[12px] text-text-muted leading-snug mt-0.5 break-words">{fetchError}</p>
+              <button
+                type="button"
+                onClick={() => fetchDrift(selectedId)}
+                className="mt-2 text-[12px] font-medium text-accent hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         </div>
       ) : data && data.current_score !== null ? (
         <div>

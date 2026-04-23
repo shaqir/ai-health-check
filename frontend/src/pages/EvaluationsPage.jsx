@@ -224,9 +224,11 @@ export default function EvaluationsPage() {
         <div className="w-7 h-7 rounded-md bg-accent-weak flex items-center justify-center shrink-0">
           <Info size={14} strokeWidth={1.75} className="text-accent" />
         </div>
-        <div className="flex-1 min-w-0 text-[12.5px] text-text-muted leading-snug">
-          Each service is tested against its <span className="font-semibold text-text">golden dataset</span> — stored prompts with known-good answers. The <span className="font-semibold text-text">Actor</span> (Sonnet 4.6) answers; the <span className="font-semibold text-text">Judge</span> (Haiku 4.5) grades factuality + hallucination. Quality below the threshold or a declining trend flags <span className="font-semibold text-text">drift</span>.
-        </div>
+        <ul className="flex-1 min-w-0 text-[12.5px] text-text-muted leading-snug space-y-1 list-disc pl-4 marker:text-text-subtle">
+          <li>Each service is tested against its <span className="font-semibold text-text">golden dataset</span> — stored prompts with known-good answers.</li>
+          <li>The <span className="font-semibold text-text">Actor</span> (Sonnet 4.6) answers; the <span className="font-semibold text-text">Judge</span> (Haiku 4.5) grades factuality + hallucination.</li>
+          <li>Quality below the threshold or a declining trend flags <span className="font-semibold text-text">drift</span>.</li>
+        </ul>
       </div>
 
       {/* Drift analysis — now owns the per-service Run action so the

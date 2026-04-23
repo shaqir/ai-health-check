@@ -45,6 +45,18 @@ export default function EvaluationsPage() {
 
   const showToast = (message, type = 'info') => setToast({ visible: true, message, type });
 
+  // Test-case counts per service — surfaced next to service names in
+  // the DriftAnalysis tab bar so users still see "how many prompts
+  // will this run exercise" after the Run button was relocated off
+  // the top strip. Declared at component top so the hook order stays
+  // stable across `if (loading) return` / `if (error) return` early
+  // exits below (Rules of Hooks).
+  const testCaseCountByService = useMemo(() => {
+    const counts = {};
+    for (const tc of testCases) counts[tc.service_id] = (counts[tc.service_id] || 0) + 1;
+    return counts;
+  }, [testCases]);
+
   const fetchData = async () => {
     setError(null);
     try {
@@ -167,15 +179,6 @@ export default function EvaluationsPage() {
   // Preserve order from /services so the tab bar doesn't reshuffle
   // between env switches.
   const driftServices = services.filter(s => serviceIds.includes(s.id));
-  // Test-case counts per service — surfaced next to service names in
-  // the DriftAnalysis tab bar so users still see "how many prompts
-  // will this run exercise" after the Run button was relocated off
-  // the top strip.
-  const testCaseCountByService = useMemo(() => {
-    const counts = {};
-    for (const tc of testCases) counts[tc.service_id] = (counts[tc.service_id] || 0) + 1;
-    return counts;
-  }, [testCases]);
   const selectedIsPending =
     (previewingService !== null && previewingService === selectedDriftService) ||
     (runningService !== null && runningService === selectedDriftService);

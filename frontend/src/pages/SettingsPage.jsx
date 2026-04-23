@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Brain, DollarSign, Zap, ShieldCheck, Activity, Gauge, CreditCard,
+  DollarSign, Zap, ShieldCheck, Activity, Gauge, CreditCard,
   Shield, BarChart3, Ban, Cpu, LineChart as LineChartIcon,
   Regex, Bot, UserX, AlertOctagon, Maximize2, FileWarning,
   Clock, KeyRound, ServerCrash, FileX, HelpCircle, TimerReset,
@@ -1284,37 +1284,9 @@ function Row({ label, value, mono, tooltip }) {
   );
 }
 
-function BudgetCard({ label, spent, budget, pct, tooltip }) {
-  const barColor = pct > 90 ? 'bg-status-failing' : pct > 70 ? 'bg-status-degraded' : 'bg-accent';
-  const remaining = Math.max(budget - spent, 0);
-  return (
-    <div className="bg-surface-elevated rounded-lg p-3">
-      <div className="flex items-center gap-1.5 mb-2">
-        <DollarSign size={12} strokeWidth={1.5} className="text-text-subtle" />
-        <span className="text-[10px] font-medium text-text-subtle tracking-tight">{label}</span>
-        {tooltip && <InfoTip content={tooltip} size={10} />}
-      </div>
-      {/* Spent is the hero; cap is shown as denominator so users see how
-          much headroom is left without needing to subtract mentally. */}
-      <div className="flex items-baseline gap-1.5">
-        <p className="text-xl font-semibold font-mono tabular-nums text-text">${spent.toFixed(4)}</p>
-        <span className="text-[11px] text-text-subtle font-mono tabular-nums">/ ${budget.toFixed(2)}</span>
-      </div>
-      <div className="w-full bg-hairline rounded-pill h-1.5 my-1.5">
-        <div className={`h-1.5 rounded-pill transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-      </div>
-      <div className="flex justify-between text-[10px] text-text-subtle font-mono tabular-nums">
-        <span>{pct.toFixed(1)}% used</span>
-        <span>${remaining.toFixed(2)} left</span>
-      </div>
-    </div>
-  );
-}
-
 function LimitStat({ icon: Icon, label, value, sub, pct, tooltip }) {
   // `pct` is optional. When provided, renders a tiny progress bar that
-  // goes yellow >70%, red >90% — same palette as BudgetCard so reviewers
-  // read "approaching cap" consistently across the page.
+  // goes yellow >70%, red >90% — consistent "approaching cap" signal.
   const barColor = pct == null
     ? null
     : pct > 90 ? 'bg-status-failing' : pct > 70 ? 'bg-status-degraded' : 'bg-accent';

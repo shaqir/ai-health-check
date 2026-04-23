@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, CheckSquare, Clock, ShieldCheck, FileText, AlertTriangle, Loader2 } from 'lucide-react';
 import api from '../utils/api';
 import { parseBackendDate } from '../utils/dates';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import ErrorState from '../components/common/ErrorState';
@@ -94,7 +95,7 @@ export default function IncidentDetailPage() {
       showToast('Draft generated', 'success');
       fetchData();
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Failed to generate summary', 'error');
+      showToast(await extractErrorDetail(err, 'Failed to generate summary'), 'error');
     } finally {
       setGenerating(false);
     }
@@ -119,9 +120,7 @@ export default function IncidentDetailPage() {
       fetchData();
     } catch (err) {
       // Keep the modal open so the user can retry without losing context.
-      // Inline banner in ReviewerNoteModal + Toast for redundancy.
-      const detail = err.response?.data?.detail || err.message;
-      const msg = typeof detail === 'string' ? detail : 'Approval failed — please try again.';
+      const msg = await extractErrorDetail(err, 'Approval failed — please try again.');
       setApproveError(msg);
       showToast('Failed to approve summary: ' + msg, 'error');
     } finally {
@@ -140,7 +139,7 @@ export default function IncidentDetailPage() {
       showToast('Maintenance plan created', 'success');
       fetchData();
     } catch (err) {
-      showToast('Failed to create maintenance plan: ' + (err.response?.data?.detail || err.message), 'error');
+      showToast('Failed to create maintenance plan: ' + await extractErrorDetail(err), 'error');
     } finally {
       setSubmittingMaint(false);
     }
@@ -155,7 +154,7 @@ export default function IncidentDetailPage() {
       showToast('Maintenance plan approved', 'success');
       fetchData();
     } catch (err) {
-      showToast('Failed to approve plan: ' + (err.response?.data?.detail || err.message), 'error');
+      showToast('Failed to approve plan: ' + await extractErrorDetail(err), 'error');
     } finally {
       setApprovingPlan(false);
     }

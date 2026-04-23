@@ -4,6 +4,7 @@ import { Plus, AlertTriangle, CheckSquare, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import { parseBackendDate } from '../utils/dates';
+import { extractErrorDetail } from '../utils/errors';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
@@ -127,7 +128,7 @@ export default function IncidentsPage() {
       showToast('Incident reported', 'success');
       fetchData();
     } catch (err) {
-      showToast(err.response?.data?.detail || 'Failed to report incident', 'error');
+      showToast(await extractErrorDetail(err, 'Failed to report incident'), 'error');
     } finally {
       setSubmitting(false);
     }

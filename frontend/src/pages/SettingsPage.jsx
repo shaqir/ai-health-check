@@ -525,7 +525,7 @@ export default function SettingsPage() {
       const res = await api.get(`/settings/trace/activities?${params.toString()}`);
       setTraceActivities(res.data);
     } catch (err) {
-      setTraceError(err?.response?.data?.detail || err?.message || 'Failed to load trace');
+      setTraceError(await extractErrorDetail(err, 'Failed to load trace'));
     } finally {
       setTraceLoading(false);
     }

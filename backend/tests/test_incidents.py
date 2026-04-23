@@ -285,3 +285,116 @@ def test_generate_summary_passes_checklist_to_llm(mock_gen, client, db, admin_to
     # Symptoms + severity also flow through so the prompt can reference them.
     assert kwargs.get("symptoms") == "500ms p99 spike"
     assert kwargs.get("severity") == "high"
+
+
+def test_incident_response_exposes_service_sensitivity(client, db, admin_token):
+    """
+    The frontend needs to know a service's sensitivity label *before* clicking
+    "Generate draft" so it can show the override modal (or hide the button
+    for non-admins). Regression guard for the field being silently removed.
+    """
+    svc = AIService(
+        name="Confidential-svc", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5-20251001",
+        sensitivity_label=SensitivityLabel.confidential,
+    )
+    db.add(svc)
+    db.commit()
+    db.refresh(svc)
+    inc = Incident(
+        service_id=svc.id, severity=Severity.medium,
+        symptoms="x", status=IncidentStatus.open,
+    )
+    db.add(inc)
+    db.commit()
+
+    res = client.get("/api/v1/incidents", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    row = next(r for r in res.json() if r["id"] == inc.id)
+    assert row["service_sensitivity"] == "confidential"
+
+
+@patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
+def test_generate_summary_blocked_on_confidential_without_override(
+    mock_gen, client, db, admin_token
+):
+    """
+    Even an admin gets 403 when the incident's service is confidential
+    and no allow_confidential=true is passed. The override must be an
+    explicit choice, recorded in the audit log.
+    """
+    mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
+    svc = AIService(
+        name="Conf", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5-20251001",
+        sensitivity_label=SensitivityLabel.confidential,
+    )
+    db.add(svc); db.commit(); db.refresh(svc)
+    inc = Incident(
+        service_id=svc.id, severity=Severity.medium,
+        symptoms="x", status=IncidentStatus.open,
+    )
+    db.add(inc); db.commit(); db.refresh(inc)
+
+    res = client.post(
+        f"/api/v1/incidents/{inc.id}/generate-summary",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 403
+    assert "confidential" in res.json()["detail"].lower()
+    assert not mock_gen.called, "LLM must not be called when blocked"
+
+
+@patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
+def test_generate_summary_allowed_on_confidential_with_admin_override(
+    mock_gen, client, db, admin_token
+):
+    """Admin with allow_confidential=true gets through and the LLM is called."""
+    mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
+    svc = AIService(
+        name="Conf", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5-20251001",
+        sensitivity_label=SensitivityLabel.confidential,
+    )
+    db.add(svc); db.commit(); db.refresh(svc)
+    inc = Incident(
+        service_id=svc.id, severity=Severity.medium,
+        symptoms="x", status=IncidentStatus.open,
+    )
+    db.add(inc); db.commit(); db.refresh(inc)
+
+    res = client.post(
+        f"/api/v1/incidents/{inc.id}/generate-summary?allow_confidential=true",
+        headers=auth_header(admin_token),
+    )
+    assert res.status_code == 200
+    assert mock_gen.called
+
+
+@patch("app.routers.incidents.generate_summary", new_callable=AsyncMock)
+def test_generate_summary_blocked_for_maintainer_even_with_override(
+    mock_gen, client, db, maintainer_token
+):
+    """
+    Non-admins cannot bypass the confidential gate even by passing
+    allow_confidential=true. Matches the services/evaluations contract.
+    """
+    mock_gen.return_value = {"summary_draft": "s", "root_causes_draft": "r"}
+    svc = AIService(
+        name="Conf", owner="T", environment=Environment.prod,
+        model_name="claude-haiku-4-5-20251001",
+        sensitivity_label=SensitivityLabel.confidential,
+    )
+    db.add(svc); db.commit(); db.refresh(svc)
+    inc = Incident(
+        service_id=svc.id, severity=Severity.medium,
+        symptoms="x", status=IncidentStatus.open,
+    )
+    db.add(inc); db.commit(); db.refresh(inc)
+
+    res = client.post(
+        f"/api/v1/incidents/{inc.id}/generate-summary?allow_confidential=true",
+        headers=auth_header(maintainer_token),
+    )
+    assert res.status_code == 403
+    assert not mock_gen.called

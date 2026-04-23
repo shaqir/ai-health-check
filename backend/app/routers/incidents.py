@@ -47,6 +47,11 @@ class IncidentResponse(BaseModel):
     id: int
     service_id: int
     service_name: str
+    # Surfaced so the frontend can gate the "Generate draft" button on
+    # confidential services: the override is admin-only, and the UI needs
+    # to know *before* the click whether to show a warning modal or hide
+    # the button entirely.
+    service_sensitivity: str
     severity: str
     symptoms: str
     status: str
@@ -90,6 +95,7 @@ def _serialize_incident(inc: Incident, db: Session) -> IncidentResponse:
         id=inc.id,
         service_id=inc.service_id,
         service_name=service.name if service else "Unknown Service",
+        service_sensitivity=service.sensitivity_label.value if service else "public",
         severity=inc.severity.value,
         symptoms=inc.symptoms,
         status=inc.status.value,

@@ -48,8 +48,16 @@ export default function EvaluationsPage() {
       setTestCases(tcRes.data);
       setEvalRuns(runsRes.data);
       setServices(srvRes.data);
+      // Reselect drift service when the env filter drops the current pick
+      // (e.g. switching from "all" to "dev" when the selected service is
+      // prod-only). Without this, the Drift tab silently points at a
+      // service with no data in the current env.
       const svcWithCases = [...new Set(tcRes.data.map(tc => tc.service_id))];
-      if (svcWithCases.length > 0 && !selectedDriftService) setSelectedDriftService(svcWithCases[0]);
+      setSelectedDriftService(prev => {
+        if (svcWithCases.length === 0) return null;
+        if (prev === null || !svcWithCases.includes(prev)) return svcWithCases[0];
+        return prev;
+      });
     } catch { setError('Failed to load evaluation data.'); } finally { setLoading(false); }
   };
 

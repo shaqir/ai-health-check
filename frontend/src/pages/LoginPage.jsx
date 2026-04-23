@@ -3,15 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Server, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 
-// Demo-role convenience panel. Emails only — passwords are set by the
-// operator via SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD /
-// SEED_VIEWER_PASSWORD in backend/.env and never shipped with the
-// frontend bundle. Clicking a row pre-fills the email field; the user
-// types the password they configured themselves.
+// Demo-role convenience panel. Capstone demo credentials — clicking a
+// row pre-fills both email and password.
 const DEMO_ROLES = [
-  { role: 'Admin', email: 'admin@aiops.local', desc: 'Full access' },
-  { role: 'Maintainer', email: 'maintainer@aiops.local', desc: 'Services + incidents' },
-  { role: 'Viewer', email: 'viewer@aiops.local', desc: 'Read-only' },
+  { role: 'Admin', email: 'admin@aiops.local', password: 'admin123', desc: 'Full access' },
+  { role: 'Maintainer', email: 'maintainer@aiops.local', password: 'maintainer123', desc: 'Services + incidents' },
+  { role: 'Viewer', email: 'viewer@aiops.local', password: 'viewer123', desc: 'Read-only' },
 ];
 
 const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
@@ -39,11 +36,9 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemoClick = (demoEmail) => {
+  const handleDemoClick = (demoEmail, demoPassword) => {
     setEmail(demoEmail);
-    // Password intentionally not pre-filled — the user enters the
-    // password they set via SEED_*_PASSWORD in backend/.env. See
-    // .env.example for the override documentation.
+    setPassword(demoPassword);
   };
 
   return (
@@ -134,19 +129,17 @@ export default function LoginPage() {
                 <button
                   key={i}
                   type="button"
-                  onClick={() => handleDemoClick(cred.email)}
+                  onClick={() => handleDemoClick(cred.email, cred.password)}
                   className="w-full flex items-center justify-between px-5 py-2.5 text-left hover:bg-accent-weak transition-standard border-b border-hairline last:border-b-0"
                 >
                   <div>
                     <p className="text-[12px] font-medium text-text">{cred.role}</p>
                     <p className="text-[10px] text-text-subtle font-mono">{cred.email}</p>
+                    <p className="text-[10px] text-text-subtle font-mono">pw: {cred.password}</p>
                   </div>
                   <span className="text-[10px] font-medium text-accent">{cred.desc}</span>
                 </button>
               ))}
-              <p className="px-5 py-2.5 text-[10px] text-text-subtle border-t border-hairline bg-[var(--material-thick)]">
-                Passwords are set via <code className="font-mono">SEED_*_PASSWORD</code> in <code className="font-mono">backend/.env</code>.
-              </p>
             </div>
           )}
         </div>

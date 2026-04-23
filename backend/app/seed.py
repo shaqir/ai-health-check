@@ -1,16 +1,8 @@
 """
 Seed script — creates default users, sample services, test cases, eval runs, and telemetry.
 Run with: python -m app.seed
-
-Seed user passwords can be overridden via env vars:
-  SEED_ADMIN_PASSWORD, SEED_MAINTAINER_PASSWORD, SEED_VIEWER_PASSWORD
-
-If unset, demo-friendly defaults are used and a warning is printed so
-operators know those values are NOT secret (they used to live in the
-README; they're now just fallback conveniences for local development).
 """
 
-import os
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -24,21 +16,11 @@ from app.middleware.audit import log_action
 from app.middleware.auth import hash_password
 
 
-# Single neutral fallback used when SEED_*_PASSWORD env vars are unset.
-# A grader cloning the repo can still run `python -m app.seed` and log
-# in with this literal value; for anything beyond a local demo, set
-# the env vars in .env. Kept as one generic placeholder (not per-role
-# literals) so automated secret scanners don't flag this file.
-_DEMO_FALLBACK_PASSWORD = "change-me"
-
-
-def _resolve_seed_password(env_var: str) -> tuple[str, bool]:
-    """Return (password, is_default). is_default=True means we fell back
-    to the generic demo value and the caller should surface a warning."""
-    explicit = os.getenv(env_var, "").strip()
-    if explicit:
-        return explicit, False
-    return _DEMO_FALLBACK_PASSWORD, True
+# Hardcoded demo passwords for the three seeded roles. This is a capstone
+# demo project — these credentials are intentionally known and shared.
+SEED_ADMIN_PASSWORD = "admin123"
+SEED_MAINTAINER_PASSWORD = "maintainer123"
+SEED_VIEWER_PASSWORD = "viewer123"
 
 
 def seed():
@@ -56,48 +38,29 @@ def seed():
     now = datetime.now(timezone.utc)
 
     # ── Create default users (3 roles) ──
-    admin_pwd, admin_is_default = _resolve_seed_password("SEED_ADMIN_PASSWORD")
-    maint_pwd, maint_is_default = _resolve_seed_password("SEED_MAINTAINER_PASSWORD")
-    viewer_pwd, viewer_is_default = _resolve_seed_password("SEED_VIEWER_PASSWORD")
-
     users = [
         User(
             username="admin",
             email="admin@aiops.local",
-            password_hash=hash_password(admin_pwd),
+            password_hash=hash_password(SEED_ADMIN_PASSWORD),
             role=UserRole.admin,
         ),
         User(
             username="maintainer",
             email="maintainer@aiops.local",
-            password_hash=hash_password(maint_pwd),
+            password_hash=hash_password(SEED_MAINTAINER_PASSWORD),
             role=UserRole.maintainer,
         ),
         User(
             username="viewer",
             email="viewer@aiops.local",
-            password_hash=hash_password(viewer_pwd),
+            password_hash=hash_password(SEED_VIEWER_PASSWORD),
             role=UserRole.viewer,
         ),
     ]
     db.add_all(users)
     db.commit()
-    print("[Seed] Created 3 default users (admin, maintainer, viewer)")
-
-    if admin_is_default or maint_is_default or viewer_is_default:
-        roles_on_defaults = [
-            name for name, used_default in (
-                ("admin", admin_is_default),
-                ("maintainer", maint_is_default),
-                ("viewer", viewer_is_default),
-            ) if used_default
-        ]
-        print(
-            f"[Seed] WARNING: {', '.join(roles_on_defaults)} using demo-default "
-            f"password. Set SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD / "
-            f"SEED_VIEWER_PASSWORD in .env to override for anything beyond "
-            f"a local demo."
-        )
+    print("[Seed] Created 3 default users (admin / maintainer / viewer)")
 
     # ── Create sample AI services ──
     services = [

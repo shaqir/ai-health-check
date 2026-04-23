@@ -90,6 +90,27 @@ const FLAG_EXPLAINERS = {
     how: 'Pattern set in safety.py::_PII_PATTERNS. Each match type adds a fixed weight to risk_score.',
     source: 'safety.py::scan_input — step 3 "PII detection"',
   },
+  phi_redacted: {
+    icon: Lock,
+    layer: 'Input',
+    layerTone: 'healthy',
+    action: 'Replaces matched spans before model call',
+    title: 'PII/PHI redacted',
+    description:
+      'Supported identifiers were replaced with placeholders such as [PATIENT_NAME], [DOB], [SSN], [EMAIL], [PHONE], [MRN], or [ADDRESS] before the request was sent.',
+    how: 'safety.py::redact_sensitive_text runs deterministic regex replacement after detection. The API usage log stores the redacted prompt text.',
+    source: 'safety.py::redact_sensitive_text + llm_client.py::_make_api_call',
+  },
+  output_phi_redacted: {
+    icon: Lock,
+    layer: 'Output',
+    layerTone: 'healthy',
+    action: 'Replaces matched spans before logging/return',
+    title: 'Response redacted',
+    description:
+      'The model response included supported PII/PHI patterns and the scanner replaced those spans with placeholders before storing the response snippet.',
+    source: 'safety.py::scan_output + llm_client.py::_make_api_call',
+  },
   length_exceeded: {
     icon: Maximize2,
     layer: 'Input',
@@ -144,6 +165,18 @@ function resolveFlagExplainer(flag) {
       title: `PII in response (${kind})`,
       description: `Response appears to contain ${kind}. Scanner pattern-matched on the outbound text before returning to the caller.`,
       source: 'safety.py::scan_output — step 1 "PII in response"',
+    };
+  }
+  if (flag && flag.startsWith('output_phi_')) {
+    const kind = flag.slice('output_phi_'.length);
+    return {
+      icon: Lock,
+      layer: 'Output',
+      layerTone: 'healthy',
+      action: 'Flag and redact',
+      title: `PHI in response (${kind})`,
+      description: `Response appears to contain ${kind}. The matching text is replaced with a placeholder before the response snippet is stored.`,
+      source: 'safety.py::scan_output',
     };
   }
   return {

@@ -3,6 +3,7 @@ Evaluations router for Module 2: evaluation harness, test case management, and d
 """
 
 import json
+import math
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -88,6 +89,87 @@ def _compute_variance(scores: list[float]) -> float:
         return 0.0
     mean = sum(scores) / len(scores)
     return round(sum((s - mean) ** 2 for s in scores) / len(scores), 2)
+
+
+_OUTPUT_BUCKETS = ("empty", "short", "medium", "long")
+
+
+def _response_bucket(text: str) -> str:
+    """Bucket output size for PSI-style response distribution drift."""
+    length = len((text or "").strip())
+    if length == 0:
+        return "empty"
+    if length < 120:
+        return "short"
+    if length < 600:
+        return "medium"
+    return "long"
+
+
+def _bucket_counts(results: list[EvalResult]) -> dict[str, int]:
+    counts = {bucket: 0 for bucket in _OUTPUT_BUCKETS}
+    for result in results:
+        counts[_response_bucket(result.response_text)] += 1
+    return counts
+
+
+def _bucket_percentages(counts: dict[str, int]) -> dict[str, float]:
+    total = sum(counts.values())
+    if total == 0:
+        return {bucket: 0.0 for bucket in _OUTPUT_BUCKETS}
+    return {bucket: round((counts.get(bucket, 0) / total) * 100, 1) for bucket in _OUTPUT_BUCKETS}
+
+
+def _population_stability_index(
+    baseline_counts: dict[str, int],
+    current_counts: dict[str, int],
+) -> float | None:
+    baseline_total = sum(baseline_counts.values())
+    current_total = sum(current_counts.values())
+    if baseline_total == 0 or current_total == 0:
+        return None
+
+    epsilon = 0.0001
+    psi = 0.0
+    for bucket in _OUTPUT_BUCKETS:
+        baseline_pct = max(baseline_counts.get(bucket, 0) / baseline_total, epsilon)
+        current_pct = max(current_counts.get(bucket, 0) / current_total, epsilon)
+        psi += (current_pct - baseline_pct) * math.log(current_pct / baseline_pct)
+    return round(psi, 4)
+
+
+def _psi_severity(score: float | None) -> str:
+    if score is None:
+        return "insufficient"
+    if score >= 0.25:
+        return "critical"
+    if score >= 0.10:
+        return "warning"
+    return "none"
+
+
+def _output_distribution_drift(
+    current_results: list[EvalResult],
+    baseline_results: list[EvalResult],
+) -> dict:
+    current_counts = _bucket_counts(current_results)
+    baseline_counts = _bucket_counts(baseline_results)
+    psi_score = _population_stability_index(baseline_counts, current_counts)
+    severity = _psi_severity(psi_score)
+    message = (
+        "Need at least one previous run with response text to calculate PSI."
+        if psi_score is None
+        else "PSI compares current response-length distribution against previous runs."
+    )
+    return {
+        "method": "psi_response_length_buckets",
+        "psi_score": psi_score,
+        "severity": severity,
+        "current_distribution": _bucket_percentages(current_counts),
+        "baseline_distribution": _bucket_percentages(baseline_counts),
+        "buckets": list(_OUTPUT_BUCKETS),
+        "message": message,
+    }
 
 
 # ── Test Case CRUD ──
@@ -393,6 +475,7 @@ def drift_check(
             "trend_scores": [],
             "trend_run_dates": [],
             "per_test_case_breakdown": [],
+            "output_distribution_drift": _output_distribution_drift([], []),
             "confidence": "low",
             "avg_last_n": None,
             "score_variance": None,
@@ -435,6 +518,19 @@ def drift_check(
         .filter(EvalResult.eval_run_id == current.id)
         .all()
     )
+    baseline_run_ids = [r.id for r in runs[1:]]
+    baseline_results = (
+        db.query(EvalResult)
+        .filter(EvalResult.eval_run_id.in_(baseline_run_ids))
+        .all()
+        if baseline_run_ids else []
+    )
+    distribution_drift = _output_distribution_drift(latest_results, baseline_results)
+    if distribution_drift["severity"] == "critical":
+        severity = "critical"
+    elif distribution_drift["severity"] == "warning" and severity == "none":
+        severity = "warning"
+
     for er in latest_results:
         tc = db.query(EvalTestCase).filter(EvalTestCase.id == er.test_case_id).first()
         # Get historical scores for this test case
@@ -467,10 +563,14 @@ def drift_check(
         "trend_scores": scores,
         "trend_run_dates": run_dates,
         "per_test_case_breakdown": per_test,
+        "output_distribution_drift": distribution_drift,
         "confidence": confidence,
         "avg_last_n": round(avg, 1),
         "score_variance": variance,
-        "message": f"Drift severity: {severity}. Trend: {trend}. Based on {len(runs)} runs.",
+        "message": (
+            f"Drift severity: {severity}. Trend: {trend}. "
+            f"PSI: {distribution_drift['severity']}. Based on {len(runs)} runs."
+        ),
     }
 
 

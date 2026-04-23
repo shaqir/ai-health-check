@@ -17,6 +17,12 @@ const SEV_CONFIG = {
 
 const scoreColor = (s) => s >= 85 ? 'text-status-healthy' : s >= 75 ? 'text-status-degraded' : 'text-status-failing';
 const scoreBg = (s) => s >= 85 ? 'bg-status-healthy' : s >= 75 ? 'bg-status-degraded' : 'bg-status-failing';
+const psiColor = (severity) => (
+  severity === 'critical' ? 'text-status-failing'
+    : severity === 'warning' ? 'text-status-degraded'
+      : severity === 'none' ? 'text-status-healthy'
+        : 'text-text-subtle'
+);
 
 export default function DriftAnalysis({ services, selectedId, onSelect }) {
   const [data, setData] = useState(null);
@@ -47,6 +53,9 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
   }, [selectedId]);
 
   const sev = data ? SEV_CONFIG[data.drift_severity] || SEV_CONFIG.none : null;
+  const psi = data?.output_distribution_drift;
+  const psiValue = typeof psi?.psi_score === 'number' ? psi.psi_score.toFixed(3) : '--';
+  const psiSeverity = psi?.severity || 'insufficient';
 
   return (
     <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
@@ -87,7 +96,7 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
           </div>
 
           {/* Score row */}
-          <div className="grid grid-cols-5 border-b border-hairline">
+          <div className="grid grid-cols-2 lg:grid-cols-6 border-b border-hairline">
             {/* Current */}
             <div className="p-5 flex flex-col items-center border-r border-hairline">
               <p className="text-[12px] font-medium text-text-subtle tracking-tight mb-2.5 flex items-center gap-1">
@@ -141,6 +150,18 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
                 <span className="capitalize">{data.trend_direction}</span>
               </div>
               <p className="text-[11px] text-text-subtle mt-1 capitalize">{data.confidence} conf.</p>
+            </div>
+            {/* PSI */}
+            <div className="p-5 flex flex-col items-center border-r border-hairline">
+              <p className="text-[12px] font-medium text-text-subtle tracking-tight mb-1.5 flex items-center gap-1">
+                PSI Drift
+                <InfoTip content="Population Stability Index over response-length buckets versus previous runs. <0.10 stable, 0.10-0.25 warning, >=0.25 critical." size={11} />
+              </p>
+              <div className={`flex items-center gap-1.5 text-[17px] font-semibold font-mono tabular-nums ${psiColor(psiSeverity)}`}>
+                <SignalHigh size={15} strokeWidth={1.75} />
+                <span>{psiValue}</span>
+              </div>
+              <p className={`text-[11px] mt-1 capitalize ${psiColor(psiSeverity)}`}>{psiSeverity}</p>
             </div>
             {/* Threshold */}
             <div className="p-5 flex flex-col items-center">
@@ -303,7 +324,7 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
                   { icon: Play, label: 'Run tests', desc: 'Send every prompt to the model' },
                   { icon: Gauge, label: 'Score each', desc: 'Judge factuality · parse JSON · detect hallucination' },
                   { icon: LineChart, label: 'Compare history', desc: 'Split-half trend vs. last runs' },
-                  { icon: SignalHigh, label: 'Classify', desc: 'None · Warning · Critical' },
+                  { icon: SignalHigh, label: 'Classify', desc: 'Threshold · trend · PSI' },
                 ].map((step, i, arr) => (
                   <div key={step.label} className="flex items-center gap-1.5 flex-1 min-w-0">
                     <div className="flex-1 min-w-0 rounded-lg bg-surface border border-hairline p-3">
@@ -364,7 +385,7 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
                 icon-led cards. Easier to scan than prose. */}
             <div>
               <p className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase mb-2.5">Behind the numbers</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
                 <div className="rounded-lg bg-surface border border-hairline p-3.5">
                   <div className="flex items-center gap-2 mb-2">
                     <Gauge size={14} strokeWidth={1.75} className="text-accent" />
@@ -390,6 +411,15 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
                   </div>
                   <p className="text-[12.5px] text-text-muted leading-relaxed">
                     Aggregates hide which case broke. Each row above shows the case&rsquo;s current score, delta vs. its own recent average, and its own trend &mdash; so you <span className="text-text">pinpoint the regressing prompt</span>, not the service.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-surface border border-hairline p-3.5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <SignalHigh size={14} strokeWidth={1.75} className="text-accent" />
+                    <span className="text-[13px] font-semibold text-text">Output distribution (PSI)</span>
+                  </div>
+                  <p className="text-[12.5px] text-text-muted leading-relaxed">
+                    Buckets response text as empty, short, medium, or long, then compares the latest run with previous runs. <span className="text-text">PSI 0.10+</span> signals the model&rsquo;s output shape changed even if quality has not fallen yet.
                   </p>
                 </div>
               </div>

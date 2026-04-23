@@ -107,13 +107,13 @@ export default function DataPolicyPage() {
             <li className="flex items-start gap-2"><Dot /> Incident details for LLM summary generation</li>
             <li className="flex items-start gap-2"><Dot /> Dashboard and compliance report generation requests</li>
           </ul>
-          <p className="mt-2 text-text-subtle">All inputs are scanned by the safety scanner before transmission.</p>
+          <p className="mt-2 text-text-subtle">All inputs are scanned by the safety scanner, and supported PII/PHI matches are replaced with placeholders before transmission.</p>
         </PolicySection>
 
         <PolicySection icon={Lock} title="Are prompts logged?">
-          Prompts sent to the LLM are not stored in the database by default. Only metadata is recorded:
-          latency, token counts, cost estimate, safety flags, and risk score. Response snippets from test
-          connections are stored for debugging. Per Anthropic's policy, API inputs/outputs are not used
+          Redacted prompt and response snippets are stored in the local API usage log for traceability,
+          truncated to 2,000 characters. The log also records latency, token counts, cost estimate,
+          safety flags, and risk score. Per Anthropic's policy, API inputs/outputs are not used
           for model training.
         </PolicySection>
 
@@ -157,8 +157,9 @@ export default function DataPolicyPage() {
               </span>
             )}
           </div>
-          All inputs are checked for injection patterns, PII, and length limits before reaching Claude. Blocked
-          calls are logged with safety flags and risk scores. Budget enforcement prevents cost overruns.{' '}
+          All inputs are checked for injection patterns, PII/PHI, and length limits before reaching Claude.
+          Supported identifiers are redacted to placeholders such as [PATIENT_NAME], [DOB], and [SSN].
+          Blocked calls are logged with safety flags and risk scores. Budget enforcement prevents cost overruns.{' '}
           <Link
             to="/settings"
             className="inline-flex items-center gap-0.5 text-accent hover:underline"

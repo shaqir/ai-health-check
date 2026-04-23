@@ -43,12 +43,94 @@ _INJECTION_PATTERNS = [
 _INJECTION_COMPILED = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 
 # ── PII Patterns ──
-_PII_PATTERNS = {
-    "email": re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
-    "phone": re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
-    "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-    "credit_card": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),
+_SENSITIVE_PATTERNS = {
+    "patient_name": {
+        "pattern": re.compile(r"\b((?i:patient(?:\s+name)?))\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b"),
+        "placeholder": "[PATIENT_NAME]",
+        "family": "phi",
+        "keep_label": True,
+    },
+    "dob": {
+        "pattern": re.compile(
+            r"\b(DOB|date\s+of\s+birth)\s*[:=]?\s*"
+            r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
+            re.IGNORECASE,
+        ),
+        "placeholder": "[DOB]",
+        "family": "phi",
+        "keep_label": True,
+    },
+    "ssn": {
+        "pattern": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+        "placeholder": "[SSN]",
+        "family": "pii",
+    },
+    "mrn": {
+        "pattern": re.compile(r"\b(MRN|medical\s+record(?:\s+number)?)\s*[:=]?\s*[A-Z0-9-]{4,20}\b", re.IGNORECASE),
+        "placeholder": "[MRN]",
+        "family": "phi",
+        "keep_label": True,
+    },
+    "email": {
+        "pattern": re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
+        "placeholder": "[EMAIL]",
+        "family": "pii",
+    },
+    "phone": {
+        "pattern": re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
+        "placeholder": "[PHONE]",
+        "family": "pii",
+    },
+    "credit_card": {
+        "pattern": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),
+        "placeholder": "[CREDIT_CARD]",
+        "family": "pii",
+    },
+    "address": {
+        "pattern": re.compile(
+            r"\b\d{1,6}\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,5}\s+"
+            r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way)\b",
+            re.IGNORECASE,
+        ),
+        "placeholder": "[ADDRESS]",
+        "family": "phi",
+    },
 }
+
+_PII_PATTERNS = {
+    key: spec["pattern"]
+    for key, spec in _SENSITIVE_PATTERNS.items()
+    if spec["family"] == "pii"
+}
+
+
+def redact_sensitive_text(text: str) -> tuple[str, dict[str, int]]:
+    """Replace supported PII/PHI spans with deterministic placeholders."""
+    if not text:
+        return text, {}
+
+    redacted = text
+    counts: dict[str, int] = {}
+
+    for kind, spec in _SENSITIVE_PATTERNS.items():
+        pattern = spec["pattern"]
+        matches = list(pattern.finditer(redacted))
+        if not matches:
+            continue
+
+        counts[kind] = len(matches)
+        placeholder = spec["placeholder"]
+
+        if spec.get("keep_label"):
+            def _replace_with_label(match, placeholder=placeholder):
+                return f"{match.group(1)}: {placeholder}"
+
+            redacted = pattern.sub(_replace_with_label, redacted)
+        else:
+            redacted = pattern.sub(placeholder, redacted)
+
+    return redacted, counts
 
 # ── Safety Constants ──
 RISK_WEIGHT_INJECTION = 40  # per injection pattern match
@@ -76,7 +158,7 @@ def scan_input(text: str) -> dict:
     risk_score = 0
 
     if not text:
-        return {"safe": True, "flags": [], "risk_score": 0, "details": {}}
+        return {"safe": True, "flags": [], "risk_score": 0, "details": {}, "redacted_text": text}
 
     # 1. Length check
     max_len = settings.max_prompt_length
@@ -101,17 +183,29 @@ def scan_input(text: str) -> dict:
         details["injection_matches"] = injection_matches[:5]  # cap at 5
         risk_score += RISK_WEIGHT_INJECTION * len(injection_matches)
 
-    # 3. PII detection
-    pii_found = {}
-    for pii_type, pattern in _PII_PATTERNS.items():
-        matches = pattern.findall(text)
-        if matches:
-            pii_found[pii_type] = len(matches)
+    # 3. PII / PHI detection and redaction
+    redacted_text, redactions = redact_sensitive_text(text)
+    pii_found = {
+        kind: count for kind, count in redactions.items()
+        if _SENSITIVE_PATTERNS[kind]["family"] == "pii"
+    }
+    phi_found = {
+        kind: count for kind, count in redactions.items()
+        if _SENSITIVE_PATTERNS[kind]["family"] == "phi"
+    }
 
-    if pii_found:
+    if redactions:
         flags.append("pii_detected")
-        details["pii"] = pii_found
-        risk_score += RISK_WEIGHT_PII * len(pii_found)
+        flags.append("phi_redacted")
+        if pii_found:
+            details["pii"] = pii_found
+        if phi_found:
+            details["phi"] = phi_found
+        details["redactions"] = redactions
+        # Redacted identifiers should raise visibility without blocking a
+        # cleaned request by themselves; injection and hard length limits
+        # still push the risk score over the blocking threshold.
+        risk_score += min(RISK_WEIGHT_PII * len(redactions), 60)
 
     risk_score = min(risk_score, 100)
 
@@ -120,6 +214,7 @@ def scan_input(text: str) -> dict:
         "flags": flags,
         "risk_score": risk_score,
         "details": details,
+        "redacted_text": redacted_text,
     }
 
 
@@ -131,14 +226,20 @@ def scan_output(text: str) -> dict:
     flags = []
 
     if not text:
-        return {"safe": True, "flags": [], "pii_detected": False}
+        return {"safe": True, "flags": [], "pii_detected": False, "redacted_text": text, "redactions": {}}
 
-    # 1. PII in response
+    # 1. PII / PHI in response
+    redacted_text, redactions = redact_sensitive_text(text)
     pii_found = False
-    for pii_type, pattern in _PII_PATTERNS.items():
-        if pattern.search(text):
-            flags.append(f"output_pii_{pii_type}")
+    for kind in redactions:
+        family = _SENSITIVE_PATTERNS[kind]["family"]
+        if family == "pii":
+            flags.append(f"output_pii_{kind}")
             pii_found = True
+        else:
+            flags.append(f"output_phi_{kind}")
+    if redactions:
+        flags.append("output_phi_redacted")
 
     # 2. Refusal detection (Claude refused the request)
     refusal_patterns = [
@@ -171,6 +272,8 @@ def scan_output(text: str) -> dict:
         "safe": "output_pii_ssn" not in flags and "output_pii_credit_card" not in flags and "toxicity_detected" not in flags,
         "flags": flags,
         "pii_detected": pii_found,
+        "redacted_text": redacted_text,
+        "redactions": redactions,
     }
 
 

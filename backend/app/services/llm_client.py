@@ -371,6 +371,57 @@ def _finalize_reservation(
         db.close()
 
 
+def _redact_message_payload(messages: list, redact_fn):
+    """Return Anthropic messages with string content redacted in-place copies."""
+    safe_messages = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            safe_messages.append(msg)
+            continue
+
+        safe_msg = dict(msg)
+        content = safe_msg.get("content", "")
+        if isinstance(content, str):
+            safe_msg["content"] = redact_fn(content)[0]
+        elif isinstance(content, list):
+            safe_blocks = []
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    safe_block = dict(block)
+                    safe_block["text"] = redact_fn(block["text"])[0]
+                    safe_blocks.append(safe_block)
+                else:
+                    safe_blocks.append(block)
+            safe_msg["content"] = safe_blocks
+        safe_messages.append(safe_msg)
+    return safe_messages
+
+
+def _message_text(messages: list) -> str:
+    chunks = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            chunks.append(content)
+        elif isinstance(content, list):
+            chunks.extend(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and isinstance(block.get("text"), str)
+            )
+    return " ".join(chunks)
+
+
+def _redact_response_text(response, redacted_text: str) -> None:
+    try:
+        if response.content:
+            response.content[0].text = redacted_text
+    except Exception:
+        pass
+
+
 def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
                    max_retries: int = 2, user_id: int | None = None,
                    service_id: int | None = None, **kwargs):
@@ -382,21 +433,25 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
       4. Output safety scan (scan_output)
       5. Finalize reservation with real usage + cost
     """
-    from app.services.safety import scan_input, scan_output, PromptSafetyError
+    from app.services.safety import scan_input, scan_output, redact_sensitive_text, PromptSafetyError
 
-    input_text = " ".join(
-        m.get("content", "") for m in messages if isinstance(m, dict)
-    )
+    input_text = _message_text(messages)
 
     # 1. Input safety scan (single-layer regex)
     safety_result = scan_input(input_text)
     safety_flags_str = ",".join(safety_result["flags"])
+    safe_messages = _redact_message_payload(messages, redact_sensitive_text)
+    safe_input_text = _message_text(safe_messages)
+    safe_kwargs = dict(kwargs)
+    if isinstance(safe_kwargs.get("system"), str):
+        safe_kwargs["system"] = redact_sensitive_text(safe_kwargs["system"])[0]
 
     if not safety_result["safe"]:
         _log_usage(
             caller, model, 0, 0, 0, "blocked_safety",
             user_id=user_id, safety_flags=safety_flags_str,
             risk_score=safety_result["risk_score"],
+            prompt_text=safe_input_text,
         )
         raise PromptSafetyError(
             f"Prompt blocked by safety scanner: {', '.join(safety_result['flags'])}",
@@ -411,7 +466,7 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
         enforce_call_limits(
             model=model,
             max_tokens=max_tokens,
-            prompt_text=input_text,
+            prompt_text=safe_input_text,
             user_id=user_id,
         )
         reservation_id = _reserve_slot(caller, model, max_tokens, user_id, service_id)
@@ -429,9 +484,9 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             response = client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                messages=messages,
+                messages=safe_messages,
                 timeout=float(settings.llm_timeout_seconds),
-                **kwargs,
+                **safe_kwargs,
             )
             wall_ms = round((time.time() - call_start) * 1000, 1)
 
@@ -441,13 +496,16 @@ def _make_api_call(caller: str, model: str, max_tokens: int, messages: list,
             # 4. Safety scan on output.
             output_text = response.content[0].text if response.content else ""
             output_scan = scan_output(output_text)
+            safe_output_text = output_scan.get("redacted_text", output_text)
+            if safe_output_text != output_text:
+                _redact_response_text(response, safe_output_text)
             if output_scan["flags"]:
                 safety_flags_str += ("," if safety_flags_str else "") + ",".join(output_scan["flags"])
 
             _finalize_reservation(
                 reservation_id, model, input_tokens, output_tokens, wall_ms, "success",
                 safety_flags=safety_flags_str, risk_score=safety_result["risk_score"],
-                prompt_text=input_text, response_text=output_text,
+                prompt_text=safe_input_text, response_text=safe_output_text,
             )
             return response, wall_ms
 

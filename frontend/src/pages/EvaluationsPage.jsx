@@ -24,6 +24,12 @@ export default function EvaluationsPage() {
   const [evalRuns, setEvalRuns] = useState([]);
   const [services, setServices] = useState([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // Two-phase pending state: `previewingService` is set while
+  // /cost-preview is in flight (before the confirm modal opens);
+  // `runningService` takes over after confirm, while the eval itself
+  // runs. Either being non-null disables all Run buttons so a user
+  // can't double-click into overlapping flows.
+  const [previewingService, setPreviewingService] = useState(null);
   const [runningService, setRunningService] = useState(null);
   const [selectedDriftService, setSelectedDriftService] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
@@ -87,7 +93,10 @@ export default function EvaluationsPage() {
     if (!service) return;
 
     // Fetch cost preview up-front so the confirm modal can show it. If
-    // this fails we bail before opening the modal.
+    // this fails we bail before opening the modal. `previewingService`
+    // locks the Run buttons during the fetch so a second click can't
+    // race a second preview in.
+    setPreviewingService(serviceId);
     let preview;
     try {
       const res = await api.get(`/evaluations/cost-preview/${serviceId}`);
@@ -96,6 +105,8 @@ export default function EvaluationsPage() {
       const detail = await extractErrorDetail(err, 'Failed to get cost preview');
       showToast(detail, 'error');
       return;
+    } finally {
+      setPreviewingService(null);
     }
 
     setRunConfirm({ service, preview });
@@ -176,14 +187,17 @@ export default function EvaluationsPage() {
           {serviceIds.map(svcId => {
             const svc = services.find(s => s.id === svcId);
             const count = testCases.filter(tc => tc.service_id === svcId).length;
+            const isPending = previewingService === svcId || runningService === svcId;
+            const anyPending = previewingService !== null || runningService !== null;
             return (
               <button
                 key={svcId}
                 onClick={() => handleRunEval(svcId)}
-                disabled={runningService !== null}
+                disabled={anyPending}
+                aria-busy={isPending}
                 className="flex items-center gap-1.5 px-4 py-2 bg-status-healthy text-white rounded-pill text-[13px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
               >
-                {runningService === svcId ? <Loader2 size={14} strokeWidth={1.5} className="animate-spin" /> : <Play size={14} strokeWidth={1.75} />}
+                {isPending ? <Loader2 size={14} strokeWidth={1.5} className="animate-spin" /> : <Play size={14} strokeWidth={1.75} />}
                 {svc?.name || `#${svcId}`} ({count})
               </button>
             );

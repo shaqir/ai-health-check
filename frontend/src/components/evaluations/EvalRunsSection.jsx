@@ -344,7 +344,12 @@ export default function EvalRunsSection({ evalRuns, driftThreshold }) {
 
   return (
     <div>
-      <h3 className="text-[15px] font-semibold text-text tracking-tight mb-3">Evaluation runs</h3>
+      <div className="mb-3">
+        <h3 className="text-[15px] font-semibold text-text tracking-tight">Evaluation runs</h3>
+        <p className="text-[12px] text-text-subtle leading-snug mt-0.5">
+          History of every run — click a quality score to see how it was computed.
+        </p>
+      </div>
       {evalRuns.length > 0 ? (
         <DataTable columns={columns} data={evalRuns} searchPlaceholder="Search runs..." />
       ) : (

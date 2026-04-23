@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Info, Play, Gauge, LineChart, SignalHigh, ListChecks, ArrowRight, AlertCircle } from 'lucide-react';
+import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Info, Play, Gauge, LineChart, SignalHigh, ListChecks, ArrowRight, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   AreaChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, ReferenceLine
@@ -19,11 +19,24 @@ const SEV_CONFIG = {
 const scoreColor = (s) => s >= 85 ? 'text-status-healthy' : s >= 75 ? 'text-status-degraded' : 'text-status-failing';
 const scoreBg = (s) => s >= 85 ? 'bg-status-healthy' : s >= 75 ? 'bg-status-degraded' : 'bg-status-failing';
 
-export default function DriftAnalysis({ services, selectedId, onSelect }) {
+export default function DriftAnalysis({
+  services,
+  selectedId,
+  onSelect,
+  testCaseCountByService = {},
+  canEdit = false,
+  onRunService,
+  selectedIsPending = false,
+  anyPending = false,
+}) {
   const [data, setData] = useState(null);
   const [trend, setTrend] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  // Methodology section collapsed by default — it's a reference
+  // explainer that first-time reviewers want, but that pushes the
+  // live chart below the fold on return visits.
+  const [methodologyOpen, setMethodologyOpen] = useState(false);
 
   const fetchDrift = async (id) => {
     setLoading(true);
@@ -58,22 +71,51 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
 
   return (
     <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
-      {/* Tabs */}
-      <div className="flex items-center gap-1 px-5 py-3 border-b border-hairline" role="tablist" aria-label="Service drift analysis">
-        <span className="text-[12px] font-semibold text-text-subtle tracking-tight mr-3">Drift</span>
-        {services.map(svc => (
+      {/* Tabs — service picker on the left, primary Run action on the
+          right so the main CTA lives next to the data it refreshes. */}
+      <div className="flex items-center gap-2 px-5 py-3 border-b border-hairline" role="tablist" aria-label="Service drift analysis">
+        <span className="text-[12px] font-semibold text-text-subtle tracking-tight mr-1 shrink-0">Drift</span>
+        <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+          {services.map(svc => {
+            const count = testCaseCountByService[svc.id];
+            const isSelected = selectedId === svc.id;
+            return (
+              <button
+                key={svc.id}
+                role="tab"
+                aria-selected={isSelected}
+                onClick={() => onSelect(svc.id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-pill transition-standard ${
+                  isSelected ? 'bg-accent-weak text-text shadow-xs' : 'text-text-muted hover:text-text'
+                }`}
+              >
+                {svc.name}
+                {count != null && (
+                  <span className={`text-[11px] font-mono tabular-nums rounded-full px-1.5 py-0.5 ${
+                    isSelected ? 'bg-surface text-text-subtle' : 'bg-surface-elevated text-text-subtle'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {canEdit && onRunService && selectedId != null && (
           <button
-            key={svc.id}
-            role="tab"
-            aria-selected={selectedId === svc.id}
-            onClick={() => onSelect(svc.id)}
-            className={`px-3.5 py-1.5 text-[13px] font-medium rounded-pill transition-standard ${
-              selectedId === svc.id ? 'bg-accent-weak text-text shadow-xs' : 'text-text-muted hover:text-text'
-            }`}
+            onClick={() => onRunService(selectedId)}
+            disabled={anyPending}
+            aria-busy={selectedIsPending}
+            title="Run evaluation for the selected service"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-status-healthy text-white rounded-pill text-[13px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
           >
-            {svc.name}
+            {selectedIsPending
+              ? <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+              : <Play size={14} strokeWidth={1.75} />
+            }
+            Run
           </button>
-        ))}
+        )}
       </div>
 
       {loading ? (
@@ -300,25 +342,37 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
             </div>
           )}
 
-          {/* Methodology footer — demo-app explainer. Always visible so
-              reviewers understand the pipeline and severity rules at a
-              glance without reading eval code. Designed to be scannable:
-              pipeline flow → severity cards (with triggers) → concept cards. */}
-          <div className="px-5 py-5 border-t border-hairline bg-surface-elevated/40 space-y-5">
-            {/* Section header */}
-            <div className="flex items-center justify-between">
+          {/* Methodology footer — demo-app explainer. Collapsed by default
+              (first-time reviewers can expand; return visits keep the
+              chart in the viewport). Toggle button is the full-width
+              header row itself so there's no hunting for a chevron. */}
+          <div className="border-t border-hairline bg-surface-elevated/40">
+            <button
+              type="button"
+              onClick={() => setMethodologyOpen(v => !v)}
+              aria-expanded={methodologyOpen}
+              className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-surface-elevated/60 transition-standard"
+            >
               <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-accent-weak flex items-center justify-center">
+                <div className="w-7 h-7 rounded-md bg-accent-weak flex items-center justify-center shrink-0">
                   <Info size={15} strokeWidth={1.75} className="text-accent" />
                 </div>
-                <div>
-                  <h4 className="text-[15px] font-semibold text-text tracking-tight leading-tight">How drift detection works</h4>
-                  <p className="text-[12px] text-text-subtle leading-tight mt-0.5">The pipeline, the math, and what each severity level means.</p>
+                <div className="text-left">
+                  <h4 className="text-[14px] font-semibold text-text tracking-tight leading-tight">How drift detection works</h4>
+                  <p className="text-[11.5px] text-text-subtle leading-tight mt-0.5">The pipeline, the math, and what each severity level means.</p>
                 </div>
               </div>
-              <span className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase bg-surface px-2.5 py-1 rounded-pill border border-hairline">Demo reference</span>
-            </div>
+              <div className="flex items-center gap-2.5">
+                <span className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase bg-surface px-2.5 py-1 rounded-pill border border-hairline">Demo reference</span>
+                {methodologyOpen
+                  ? <ChevronUp size={15} strokeWidth={1.75} className="text-text-subtle" />
+                  : <ChevronDown size={15} strokeWidth={1.75} className="text-text-subtle" />
+                }
+              </div>
+            </button>
 
+          {methodologyOpen && (
+          <div className="px-5 pb-5 pt-1 space-y-5">
             {/* Pipeline flow — 4 stages with arrows, so the mental model
                 (run → score → compare → classify) is visible at a glance. */}
             <div>
@@ -419,6 +473,8 @@ export default function DriftAnalysis({ services, selectedId, onSelect }) {
                 </div>
               </div>
             </div>
+          </div>
+          )}
           </div>
         </div>
       ) : (

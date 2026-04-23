@@ -117,10 +117,15 @@ export default function TestCasesSection({ testCases, services }) {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-3 gap-3">
-        <h3 className="text-[15px] font-semibold text-text tracking-tight">Test cases</h3>
+      <div className="flex items-end justify-between mb-3 gap-3">
+        <div className="min-w-0">
+          <h3 className="text-[15px] font-semibold text-text tracking-tight">Test cases</h3>
+          <p className="text-[12px] text-text-subtle leading-snug mt-0.5">
+            The <span className="font-medium text-text-muted">golden dataset</span> — stored prompts with known-good answers. Each run scores every test case in scope.
+          </p>
+        </div>
         {testCases.length > 0 && (
-          <span className="text-[11px] text-text-subtle tracking-tight tabular-nums">
+          <span className="text-[11px] text-text-subtle tracking-tight tabular-nums shrink-0">
             {stats.total === testCases.length
               ? `${testCases.length} total`
               : `${stats.total} of ${testCases.length} shown`}

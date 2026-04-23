@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Play, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Info } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import { extractErrorDetail } from '../utils/errors';
@@ -161,12 +161,25 @@ export default function EvaluationsPage() {
   // Preserve order from /services so the tab bar doesn't reshuffle
   // between env switches.
   const driftServices = services.filter(s => serviceIds.includes(s.id));
+  // Test-case counts per service — surfaced next to service names in
+  // the DriftAnalysis tab bar so users still see "how many prompts
+  // will this run exercise" after the Run button was relocated off
+  // the top strip.
+  const testCaseCountByService = useMemo(() => {
+    const counts = {};
+    for (const tc of testCases) counts[tc.service_id] = (counts[tc.service_id] || 0) + 1;
+    return counts;
+  }, [testCases]);
+  const selectedIsPending =
+    (previewingService !== null && previewingService === selectedDriftService) ||
+    (runningService !== null && runningService === selectedDriftService);
+  const anyPending = previewingService !== null || runningService !== null;
 
   return (
     <div className="space-y-5">
       {toast.visible && <Toast message={toast.message} type={toast.type} onClose={() => setToast({ ...toast, visible: false })} />}
 
-      <PageHeader title="Evaluations" description="Test cases, evaluation runs, and drift detection.">
+      <PageHeader title="Evaluations" description="Grade AI services against a golden dataset; detect drift over time.">
         <div className="flex items-center gap-3">
           {/* Env tabs */}
           <div className="flex items-center bg-[var(--material-thick)] rounded-pill p-0.5" role="tablist" aria-label="Environment filter">
@@ -195,33 +208,32 @@ export default function EvaluationsPage() {
         </div>
       </PageHeader>
 
-      {/* Run buttons */}
-      {canEdit && serviceIds.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {serviceIds.map(svcId => {
-            const svc = services.find(s => s.id === svcId);
-            const count = testCases.filter(tc => tc.service_id === svcId).length;
-            const isPending = previewingService === svcId || runningService === svcId;
-            const anyPending = previewingService !== null || runningService !== null;
-            return (
-              <button
-                key={svcId}
-                onClick={() => handleRunEval(svcId)}
-                disabled={anyPending}
-                aria-busy={isPending}
-                className="flex items-center gap-1.5 px-4 py-2 bg-status-healthy text-white rounded-pill text-[13px] font-medium hover:opacity-90 transition-standard disabled:opacity-50"
-              >
-                {isPending ? <Loader2 size={14} strokeWidth={1.5} className="animate-spin" /> : <Play size={14} strokeWidth={1.75} />}
-                {svc?.name || `#${svcId}`} ({count})
-              </button>
-            );
-          })}
+      {/* Page intro — short, one-block explainer of what this page does
+          and how the scoring works at a glance. Kept compact so it
+          doesn't push the live data below the fold. */}
+      <div className="rounded-xl border border-hairline bg-surface-elevated/40 px-4 py-3 flex items-start gap-3">
+        <div className="w-7 h-7 rounded-md bg-accent-weak flex items-center justify-center shrink-0">
+          <Info size={14} strokeWidth={1.75} className="text-accent" />
         </div>
-      )}
+        <div className="flex-1 min-w-0 text-[12.5px] text-text-muted leading-snug">
+          Each service is tested against its <span className="font-semibold text-text">golden dataset</span> — stored prompts with known-good answers. The <span className="font-semibold text-text">Actor</span> (Sonnet 4.6) answers; the <span className="font-semibold text-text">Judge</span> (Haiku 4.5) grades factuality + hallucination. Quality below the threshold or a declining trend flags <span className="font-semibold text-text">drift</span>.
+        </div>
+      </div>
 
-      {/* Drift analysis */}
+      {/* Drift analysis — now owns the per-service Run action so the
+          primary CTA lives next to the data it affects, not as a
+          disconnected strip above the panel. */}
       {driftServices.length > 0 && (
-        <DriftAnalysis services={driftServices} selectedId={selectedDriftService} onSelect={setSelectedDriftService} />
+        <DriftAnalysis
+          services={driftServices}
+          selectedId={selectedDriftService}
+          onSelect={setSelectedDriftService}
+          testCaseCountByService={testCaseCountByService}
+          canEdit={canEdit}
+          onRunService={handleRunEval}
+          selectedIsPending={selectedIsPending}
+          anyPending={anyPending}
+        />
       )}
 
       <TestCasesSection testCases={testCases} services={services} />

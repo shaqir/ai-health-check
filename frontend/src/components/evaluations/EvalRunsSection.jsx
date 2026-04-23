@@ -331,7 +331,7 @@ export default function EvalRunsSection({ evalRuns, driftThreshold }) {
     {
       key: 'drift_flagged',
       label: 'Status',
-      tooltip: 'Tri-state: Healthy (quality above effectiveThreshold), Drift Detected (quality below effectiveThreshold — triggers an alert), or No Signal (every test errored or judge refused — we honestly cannot measure).',
+      tooltip: 'Tri-state: Healthy (quality above threshold), Drift Detected (quality below threshold — triggers an alert), or No Signal (every test errored or judge refused — we honestly cannot measure).',
       render: (v, row) => {
         if (row && row.run_status === 'incomplete') {
           return <StatusBadge status="No signal" />;

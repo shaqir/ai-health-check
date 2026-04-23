@@ -115,7 +115,7 @@ export default function IncidentsPage() {
       'info',
     );
     navigate(location.pathname, { replace: true, state: null });
-  }, [location.state, services, navigate, location.pathname]);
+  }, [location.state, services, navigate]);
 
   const handleCreate = async (e) => {
     e.preventDefault();

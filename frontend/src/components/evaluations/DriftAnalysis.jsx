@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Play, AlertCircle } from 'lucide-react';
+import { TrendingDown, TrendingUp, Minus, ShieldCheck, ShieldAlert, ShieldX, Activity, Loader2, Target, Play, AlertCircle, SignalHigh } from 'lucide-react';
 import {
   AreaChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, ReferenceLine
@@ -19,6 +19,12 @@ const SEV_CONFIG = {
 
 const scoreColor = (s) => s >= 85 ? 'text-status-healthy' : s >= 75 ? 'text-status-degraded' : 'text-status-failing';
 const scoreBg = (s) => s >= 85 ? 'bg-status-healthy' : s >= 75 ? 'bg-status-degraded' : 'bg-status-failing';
+const psiColor = (severity) => (
+  severity === 'critical' ? 'text-status-failing'
+    : severity === 'warning' ? 'text-status-degraded'
+      : severity === 'none' ? 'text-status-healthy'
+        : 'text-text-subtle'
+);
 
 export default function DriftAnalysis({
   services,
@@ -75,6 +81,9 @@ export default function DriftAnalysis({
   }, [selectedId, refetchToken]);
 
   const sev = data ? SEV_CONFIG[data.drift_severity] || SEV_CONFIG.none : null;
+  const psi = data?.output_distribution_drift;
+  const psiValue = typeof psi?.psi_score === 'number' ? psi.psi_score.toFixed(3) : '--';
+  const psiSeverity = psi?.severity || 'insufficient';
 
   return (
     <div className="bg-surface rounded-xl border border-hairline shadow-xs overflow-hidden">
@@ -161,7 +170,7 @@ export default function DriftAnalysis({
           </div>
 
           {/* Score row */}
-          <div className="grid grid-cols-5 border-b border-hairline">
+          <div className="grid grid-cols-2 lg:grid-cols-6 border-b border-hairline">
             {/* Current */}
             <div className="p-5 flex flex-col items-center border-r border-hairline">
               <p className="text-[12px] font-medium text-text-subtle tracking-tight mb-2.5 flex items-center gap-1">
@@ -215,6 +224,18 @@ export default function DriftAnalysis({
                 <span className="capitalize">{data.trend_direction}</span>
               </div>
               <p className="text-[11px] text-text-subtle mt-1 capitalize">{data.confidence} conf.</p>
+            </div>
+            {/* PSI */}
+            <div className="p-5 flex flex-col items-center border-r border-hairline">
+              <p className="text-[12px] font-medium text-text-subtle tracking-tight mb-1.5 flex items-center gap-1">
+                PSI Drift
+                <InfoTip content="Population Stability Index over response-length buckets versus previous runs. <0.10 stable, 0.10-0.25 warning, >=0.25 critical." size={11} />
+              </p>
+              <div className={`flex items-center gap-1.5 text-[17px] font-semibold font-mono tabular-nums ${psiColor(psiSeverity)}`}>
+                <SignalHigh size={15} strokeWidth={1.75} />
+                <span>{psiValue}</span>
+              </div>
+              <p className={`text-[11px] mt-1 capitalize ${psiColor(psiSeverity)}`}>{psiSeverity}</p>
             </div>
             {/* Threshold */}
             <div className="p-5 flex flex-col items-center">

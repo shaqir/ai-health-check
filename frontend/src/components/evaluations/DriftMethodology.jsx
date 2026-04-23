@@ -63,7 +63,7 @@ export default function DriftMethodology({ threshold = 75, trendScoreCount = nul
                 { icon: Play, label: 'Run tests', desc: 'Send every prompt to the model' },
                 { icon: Gauge, label: 'Score each', desc: 'Judge factuality · parse JSON · detect hallucination' },
                 { icon: LineChart, label: 'Compare history', desc: 'Split-half trend vs. recent runs' },
-                { icon: SignalHigh, label: 'Classify', desc: 'Healthy · Warning · Critical' },
+                { icon: SignalHigh, label: 'Classify', desc: 'Threshold · trend · PSI' },
               ].map((step, i, arr) => (
                 <div key={step.label} className="flex items-center gap-1.5 flex-1 min-w-0">
                   <div className="flex-1 min-w-0 rounded-lg bg-surface border border-hairline p-3">
@@ -126,7 +126,7 @@ export default function DriftMethodology({ threshold = 75, trendScoreCount = nul
             <p className="text-[11px] font-semibold text-text-subtle tracking-wider uppercase mb-2.5">
               Behind the numbers
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
               <div className="rounded-lg bg-surface border border-hairline p-3.5">
                 <div className="flex items-center gap-2 mb-2">
                   <Gauge size={14} strokeWidth={1.75} className="text-accent" />
@@ -152,6 +152,15 @@ export default function DriftMethodology({ threshold = 75, trendScoreCount = nul
                 </div>
                 <p className="text-[12.5px] text-text-muted leading-relaxed">
                   Aggregates hide which case broke. The drift panel&rsquo;s per-test list shows each case&rsquo;s current score, delta vs. its own recent average, and its own trend — so you <span className="text-text">pinpoint the regressing prompt</span>, not the service.
+                </p>
+              </div>
+              <div className="rounded-lg bg-surface border border-hairline p-3.5">
+                <div className="flex items-center gap-2 mb-2">
+                  <SignalHigh size={14} strokeWidth={1.75} className="text-accent" />
+                  <span className="text-[13px] font-semibold text-text">Output distribution (PSI)</span>
+                </div>
+                <p className="text-[12.5px] text-text-muted leading-relaxed">
+                  Buckets response text as empty, short, medium, or long, then compares the latest run with previous runs. <span className="text-text">PSI 0.10+</span> signals the model&rsquo;s output shape changed even if quality has not fallen yet.
                 </p>
               </div>
             </div>

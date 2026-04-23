@@ -1,5 +1,6 @@
 """Tests for the evaluations router — test case CRUD, eval runs, drift detection."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from tests.conftest import auth_header
@@ -164,6 +165,72 @@ def test_run_evaluation_no_test_cases(client, db, admin_token):
     svc = _create_service(db)
     res = client.post(f"/api/v1/evaluations/run/{svc.id}", headers=auth_header(admin_token))
     assert res.status_code == 400
+
+
+def test_drift_check_reports_output_distribution_psi(client, db, admin_token):
+    svc = _create_service(db)
+    tc = EvalTestCase(
+        service_id=svc.id,
+        prompt="Summarize the case",
+        expected_output="short summary",
+        category="factuality",
+    )
+    db.add(tc)
+    db.commit()
+    db.refresh(tc)
+
+    now = datetime.now(timezone.utc)
+    previous = EvalRun(
+        service_id=svc.id,
+        quality_score=92.0,
+        drift_flagged=False,
+        run_type="manual",
+        run_status="complete",
+        run_at=now - timedelta(days=1),
+    )
+    current = EvalRun(
+        service_id=svc.id,
+        quality_score=91.0,
+        drift_flagged=False,
+        run_type="manual",
+        run_status="complete",
+        run_at=now,
+    )
+    db.add_all([previous, current])
+    db.commit()
+    db.refresh(previous)
+    db.refresh(current)
+
+    db.add_all([
+        EvalResult(
+            eval_run_id=previous.id,
+            test_case_id=tc.id,
+            response_text="OK.",
+            score=92.0,
+            status="success",
+        ),
+        EvalResult(
+            eval_run_id=current.id,
+            test_case_id=tc.id,
+            response_text=("Detailed paragraph. " * 50),
+            score=91.0,
+            status="success",
+        ),
+    ])
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/evaluations/drift-check/{svc.id}?window=2",
+        headers=auth_header(admin_token),
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    psi = body["output_distribution_drift"]
+    assert psi["method"] == "psi_response_length_buckets"
+    assert psi["severity"] == "critical"
+    assert psi["psi_score"] >= 0.25
+    assert body["drift_detected"] is True
 
 
 def test_list_eval_runs(client, db, admin_token):
@@ -553,3 +620,66 @@ def test_test_case_deletion_cascades_to_results(client, db, admin_token):
     )
     # The EvalRun itself must survive — test-case deletion shouldn't wipe run history.
     assert db.query(EvalRun).filter(EvalRun.id == run.id).first() is not None
+
+
+# ── Regression guards (post-0c955fb cherry-pick) ──
+
+
+def test_eval_config_endpoint_still_returns_drift_threshold(client, admin_token):
+    """Regression guard for 4a99f6b: /config must still expose the drift
+    threshold so the Score-details modal doesn't fall back to a hardcoded 75."""
+    res = client.get("/api/v1/evaluations/config", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    body = res.json()
+    assert "drift_threshold" in body
+    assert isinstance(body["drift_threshold"], (int, float))
+
+
+def test_list_eval_runs_does_not_n_plus_one(client, db, admin_token):
+    """Regression guard for ffef25c: GET /runs batch-loads services. Create
+    runs across 2 services and assert the endpoint issues a bounded number
+    of DB queries instead of one-per-run."""
+    from sqlalchemy import event
+    from app.database import engine
+
+    svc_a = _create_service(db)
+    svc_b = AIService(
+        name="Test Bot B",
+        owner="Team",
+        environment=Environment.prod,
+        model_name="claude-sonnet-4-6-20250415",
+        sensitivity_label=SensitivityLabel.internal,
+        endpoint_url="https://example.com/b",
+    )
+    db.add(svc_b)
+    db.commit()
+    db.refresh(svc_b)
+
+    for svc in (svc_a, svc_b):
+        for _ in range(5):
+            db.add(EvalRun(
+                service_id=svc.id, quality_score=80.0,
+                drift_flagged=False, run_type="manual",
+            ))
+    db.commit()
+
+    query_count = 0
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        nonlocal query_count
+        query_count += 1
+
+    event.listen(engine, "before_cursor_execute", _count)
+    try:
+        res = client.get("/api/v1/evaluations/runs", headers=auth_header(admin_token))
+    finally:
+        event.remove(engine, "before_cursor_execute", _count)
+
+    assert res.status_code == 200
+    # 10 runs across 2 services. An N+1 pattern would issue ~11 queries
+    # (1 for runs + 10 for services). Batch-loading should stay well
+    # below that — cap generously at 6 for headroom.
+    assert query_count <= 6, (
+        f"list_eval_runs issued {query_count} queries for 10 runs — "
+        "batch-loading likely regressed (N+1 reintroduced)."
+    )

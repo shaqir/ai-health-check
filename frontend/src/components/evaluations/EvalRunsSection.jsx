@@ -90,6 +90,21 @@ function RunTypeBadge({ value }) {
   );
 }
 
+// Backend's SQLAlchemy DateTime column is naive — Pydantic serializes
+// UTC timestamps WITHOUT a Z suffix ("2026-04-23T14:23:56.203304").
+// `new Date(naive)` then parses it as LOCAL time per ES spec, so a
+// 14:23 UTC run shows up as 14:23 local (= 6 hours into the future in
+// MDT). Appending Z forces correct UTC parsing. Keep the raw-value
+// fallback for already-offset strings ("…Z" / "…+05:30").
+function parseBackendDate(value) {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  const str = String(value);
+  const normalized = /[Zz]|[+-]\d\d:?\d\d$/.test(str) ? str : `${str}Z`;
+  const d = new Date(normalized);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // Compact relative labels for recent runs ("2m ago", "14h ago"), falling
 // back to "Mon DD" for anything older than a week. The previous absolute
 // "Apr 23, 02:23 PM" format wrapped to two lines in the table because of
@@ -125,9 +140,9 @@ function formatShortAbsolute(d) {
 
 function TimeCell({ value }) {
   if (!value) return <span className="font-mono text-[13px] text-text-subtle">—</span>;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    return <span className="font-mono tabular-nums text-[13px]">{value}</span>;
+  const d = parseBackendDate(value);
+  if (!d) {
+    return <span className="font-mono tabular-nums text-[13px]">{String(value)}</span>;
   }
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (

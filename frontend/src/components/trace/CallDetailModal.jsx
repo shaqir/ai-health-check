@@ -95,7 +95,7 @@ export default function CallDetailModal({ call, onClose }) {
               {call.prompt_text}
             </pre>
             <p className="text-[10px] text-text-subtle mt-1">
-              Stored truncated to 2000 characters. What you see here is what Claude received.
+              Stored truncated to 2000 characters. What you see here is what the model received.
             </p>
           </div>
         )}

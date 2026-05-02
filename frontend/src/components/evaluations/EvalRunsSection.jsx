@@ -232,7 +232,7 @@ function ScoreDetailsModal({ isOpen, onClose, row }) {
           <h4 className="text-[14px] font-semibold text-text flex items-center gap-1.5 mb-2">
             <Gauge size={14} strokeWidth={1.75} className="text-accent" /> 2. Aggregate quality score
           </h4>
-          <p className="pl-5">Mean of all valid per-case scores. Excludes <span className="font-mono text-[11px] bg-surface-elevated px-1 rounded">judge_refused</span> and infra <span className="font-mono text-[11px] bg-surface-elevated px-1 rounded">error</span> rows so a flaky judge or a Claude 404 can't fake-drift by scoring 0. If every case is excluded ⇒ <span className="font-semibold text-text">incomplete</span> (dash, not 0%).</p>
+          <p className="pl-5">Mean of all valid per-case scores. Excludes <span className="font-mono text-[11px] bg-surface-elevated px-1 rounded">judge_refused</span> and infra <span className="font-mono text-[11px] bg-surface-elevated px-1 rounded">error</span> rows so a flaky judge or a the model 404 can't fake-drift by scoring 0. If every case is excluded ⇒ <span className="font-semibold text-text">incomplete</span> (dash, not 0%).</p>
         </section>
 
         {/* Drift gates */}

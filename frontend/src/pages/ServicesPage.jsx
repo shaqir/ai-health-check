@@ -68,9 +68,9 @@ async function extractErrorDetail(err, fallback = 'Request failed') {
 }
 
 
-// Translate a raw Anthropic error snippet (the thing llm_client.test_connection
+// Translate a raw the provider error snippet (the thing llm_client.test_connection
 // stores in response_snippet on failure) into a human-readable message + a
-// concrete fix hint. Anthropic returns Python-repr'd dicts, not JSON, so we
+// concrete fix hint. the provider returns Python-repr'd dicts, not JSON, so we
 // regex-extract rather than JSON.parse.
 //
 // Example raw input:
@@ -87,7 +87,7 @@ function humanizeLlmProbeError(rawSnippet, service) {
     return { title: raw, hint: '', raw };
   }
 
-  // Match the Anthropic error structure: type + message
+  // Match the the provider error structure: type + message
   const typeMatch = raw.match(/'type':\s*'([a-z_]+_error)'/);
   const msgMatch = raw.match(/'message':\s*'([^']+)'/);
   const errorType = typeMatch ? typeMatch[1] : null;
@@ -99,31 +99,31 @@ function humanizeLlmProbeError(rawSnippet, service) {
 
   const MAP = {
     not_found_error: {
-      title: `Anthropic doesn't recognize the model "${service?.model_name || message.replace(/^model:\s*/, '')}"`,
+      title: `the provider doesn't recognize the model "${service?.model_name || message.replace(/^model:\s*/, '')}"`,
       hint: 'Edit the service and change the Model field to a valid provider ID (for example, claude-sonnet-4-5-20250929 or claude-haiku-4-5-20251001).',
     },
     authentication_error: {
-      title: 'Anthropic rejected the API key',
+      title: 'the provider rejected the API key',
       hint: 'Check ANTHROPIC_API_KEY in backend/.env and restart the backend.',
     },
     permission_error: {
       title: 'API key does not have permission for this model',
-      hint: 'Verify the key has access to the model in the Anthropic console.',
+      hint: 'Verify the key has access to the model in the the provider console.',
     },
     rate_limit_error: {
-      title: 'Rate limited by Anthropic',
-      hint: 'Wait a moment and retry. If this persists, lower api_max_calls_per_minute or request a higher rate tier from Anthropic.',
+      title: 'Rate limited by the provider',
+      hint: 'Wait a moment and retry. If this persists, lower api_max_calls_per_minute or request a higher rate tier from the provider.',
     },
     overloaded_error: {
-      title: 'Anthropic is temporarily overloaded',
+      title: 'the provider is temporarily overloaded',
       hint: 'Retry in a few seconds — this is upstream capacity, nothing to fix on our side.',
     },
     api_error: {
-      title: 'Anthropic API error',
+      title: 'the provider API error',
       hint: message ? `Detail: ${message}` : 'Retry; if persistent, check https://status.anthropic.com.',
     },
     invalid_request_error: {
-      title: 'Anthropic rejected the request',
+      title: 'the provider rejected the request',
       hint: message || 'Check the request shape (model, max_tokens, messages).',
     },
   };
@@ -137,7 +137,7 @@ function humanizeLlmProbeError(rawSnippet, service) {
     };
   }
 
-  // Unknown Anthropic error type — surface what we have without the request_id noise
+  // Unknown the provider error type — surface what we have without the request_id noise
   const trimmed = raw.replace(/,?\s*'request_id':\s*'[^']+'/, '').slice(0, 220);
   return {
     title: status ? `${status} · LLM probe failed` : 'LLM probe failed',
@@ -312,7 +312,7 @@ export default function ServicesPage() {
         },
       }));
       if (res.data.status !== 'success') {
-        // Humanize the raw Anthropic / probe error before showing it.
+        // Humanize the raw the provider / probe error before showing it.
         const { title, hint } = humanizeLlmProbeError(res.data.response_snippet, service);
         const msg = hint ? `${title} — ${hint}` : title;
         showToast(`${service?.name || 'Service'}: ${msg}`, 'error');
@@ -484,13 +484,13 @@ export default function ServicesPage() {
                       <>
                         <span className="text-[11px] font-mono tabular-nums text-text-subtle">{test.latency_ms}ms</span>
                         {/* Mode tag: an HTTP probe is a ~100ms reachability
-                            check; an LLM ping is a real Claude call that
+                            check; an LLM ping is a real the model call that
                             costs money and takes 1–2s. Showing the mode
                             explains long latencies at a glance. */}
                         {test.mode === 'llm' ? (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded-pill bg-accent/10 text-accent"
-                            title={`Live Claude call using ${s.model_name}. Real API spend; ~1–2s typical.`}
+                            title={`Live the model call using ${s.model_name}. Real API spend; ~1–2s typical.`}
                           >
                             <Zap size={10} strokeWidth={2} /> live
                           </span>
@@ -665,7 +665,7 @@ export default function ServicesPage() {
                       <span className="font-mono">${selected.pricing.output_per_million_usd}</span> per 1M tokens
                       {' · recommended for '}
                       <span className="font-medium text-text-muted">{selected.recommended_for}</span>.
-                      {' Supported Anthropic models only (see '}
+                      {' Supported the provider models only (see '}
                       <code className="font-mono">model_catalog.py</code>).
                     </p>
                   );
@@ -704,12 +704,12 @@ export default function ServicesPage() {
         isOpen={!!confidentialPingTarget}
         onClose={() => setConfidentialPingTarget(null)}
         onConfirm={confirmConfidentialPing}
-        title="Confidential service — live Claude call"
+        title="Confidential service — live the model call"
         variant="warning"
         confirmLabel="Run live check"
         description={
           confidentialPingTarget
-            ? `"${confidentialPingTarget.name}" is labelled confidential. This runs a LIVE Claude call against ${confidentialPingTarget.model_name} (not a cheap HTTP probe): expect ~1–2 seconds and ~$0.0002 of real API spend. Only admins can override, and every override is recorded in the audit log.`
+            ? `"${confidentialPingTarget.name}" is labelled confidential. This runs a LIVE the model call against ${confidentialPingTarget.model_name} (not a cheap HTTP probe): expect ~1–2 seconds and ~$0.0002 of real API spend. Only admins can override, and every override is recorded in the audit log.`
             : ''
         }
       />

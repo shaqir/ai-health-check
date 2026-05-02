@@ -1,6 +1,6 @@
 /**
  * ModelBadge — renders a short tier label (Sonnet / Haiku / …) from a full
- * Anthropic model id so the API Usage table and eval runs stay scannable.
+ * the provider model id so the API Usage table and eval runs stay scannable.
  *
  * Two-tier architecture: Sonnet = actor (service under test, synthesis);
  * Haiku = judges + injection detector. Unknown model ids fall back to a

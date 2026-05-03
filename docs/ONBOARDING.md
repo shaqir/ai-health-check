@@ -8,7 +8,7 @@ New developer setup and platform workflow.
 
 - Python 3.11+
 - Node.js 18+
-- the LLM provider API key (set as `ANTHROPIC_API_KEY` environment variable)
+- Anthropic API key (Default provider, set as `ANTHROPIC_API_KEY`. Note: The system is designed to be model-agnostic and can be configured to use OpenAI, Gemini, or other providers).
 
 ## Setup
 

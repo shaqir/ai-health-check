@@ -61,10 +61,11 @@ single schema, a single audit chain, and a single human-in-the-loop
 (HITL) contract. Built as a university capstone, scoped for clarity
 rather than production scale.
 
-database, a two-tier the LLM provider integration (the AI Sonnet 4.6 as actor,
-the AI Haiku 4.5 as judge + prompt-injection detector, both via the same
-`_make_api_call` pipeline), advanced semantic similarity scoring,
-automated PII leakage detection, and 188 automated tests.
+database, a two-tier LLM integration (Claude Sonnet 4.6 as actor,
+Claude Haiku 4.5 as judge + prompt-injection detector, both via the same
+`_make_api_call` pipeline). While it uses Anthropic by default, the system is 
+architected to be **model-agnostic**, allowing for seamless integration of other 
+providers (OpenAI, Gemini, etc.).
 
 ---
 
@@ -180,8 +181,8 @@ involves a human who signs off.
 | Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts 2.12 | Single-file build, tree-shakable, fast dev feedback |
 | Backend | FastAPI, Pydantic, SQLAlchemy 2.0, Alembic (scaffolded) | Typed request validation, auto-OpenAPI docs, dialect-portable ORM |
 | Database | SQLite (file-based) | Zero-config for demo scope; migration path to Postgres documented |
-| LLM (actor) | the LLM provider the AI Sonnet 4.6 via `anthropic>=0.49.0` SDK | Service-under-test model + synthesis tasks (incident summaries, dashboard insights, compliance reports) |
-| LLM (judge) | the LLM provider the AI Haiku 4.5 via the same SDK | Merged factuality + hallucination judge — one structured call per factuality test case. Different size/training emphasis from the actor partially breaks the "model scoring itself" correlation. |
+| LLM (actor) | Claude Sonnet 4.6 via `anthropic>=0.49.0` SDK | Default actor; can be swapped for OpenAI/Gemini by updating the LLM pipeline. |
+| LLM (judge) | Claude Haiku 4.5 via the same SDK | Default judge; can be swapped for OpenAI/Gemini to avoid self-scoring bias. |
 | Semantic Metric | Pure-Python TF-IDF + Cosine Similarity | objective vocabulary-overlap scoring without LLM calls |
 | Security Metric | Regex-based PII Scanner | Automated detection of sensitive data (email, SSN, etc.) in LLM output |
 | Auth | JWT (HS256), bcrypt password hashing | Stateless token, industry-standard hashing |
@@ -213,11 +214,11 @@ involves a human who signs off.
                     │
 ┌───────────────────▼───────────────────────────┐
 │         External Dependencies                 │
-│  the LLM provider API — two-tier:                    │
+│  LLM provider API — two-tier (Default: Anthropic):      │
 │    Sonnet 4.6 (actor + synthesis)             │
 │    Haiku 4.5  (judges + injection detector)   │
 │  APScheduler job loop                         │
-└───────────────────────────────────────────────┘
+└───────────────────┴───────────────────────────┘
 ```
 
 ### 4.3 Component responsibilities
@@ -694,7 +695,7 @@ Seven functions in `llm_client.py`, all routed through `_make_api_call`:
 | `generate_dashboard_insight` | M2 | Platform-health summary | 1024 |
 | `generate_compliance_summary` | M4 | Governance compliance report | 1024 |
 
-No router handler imports the `anthropic` SDK directly. The single
+No router handler imports the the LLM provider SDK directly. The single
 pipeline is the only integration point.
 
 ### 7.2 What the LLM is allowed to do
@@ -725,7 +726,7 @@ The LLM is explicitly **not** permitted to:
 is a forcing function for deliberation, not an enforcement mechanism. A
 determined admin can type 20 meaningless characters. See `SELF_CRITIQUE.md §5`.
 This is acknowledged as a Level-1 HITL control; Level-2 (distinct
-drafter/approver) and Level-3 (content validation) are documented as
+drafter and approver) and Level-3 (content validation) are documented as
 future work.
 
 ### 7.4 Safety guardrails
@@ -1255,8 +1256,8 @@ strong default.
 5. **Tech stack justification (45 sec).** React/Vite for fast dev
    feedback; FastAPI for typed validation; SQLite for zero-config
    (migration path to Postgres documented); the LLM provider two-tier
-   (Sonnet 4.6 actor + Haiku 4.5 judges / injection detector) via a
-   single pipeline so vendor-swap is one file.
+    (Claude Sonnet 4.6 actor + Claude Haiku 4.5 judges / injection detector) via a
+    single pipeline so vendor-swap is one file.
 6. **Demo data readiness (30 sec).** Fresh seed includes 15 eval runs
    with a deliberate drift scenario visible on first login — today's
    dashboard proves itself before we touch anything.

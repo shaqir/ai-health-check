@@ -4,7 +4,7 @@
 
 ## 1. System Overview
 
-AI Health Check is a centralized AI operations platform built for the ARTI-409-A course. The frontend is a React 18 SPA (Vite 5 + Tailwind 3.4). The backend is FastAPI with SQLAlchemy ORM over SQLite. All LLM calls use the LLM provider the AI Sonnet 4.6 (`claude-sonnet-4-6`) via the `anthropic>=0.49.0` SDK, routed through a single pipeline in `llm_client.py`. Two APScheduler jobs run in the background: an HTTP health-check probe against every service every 5 min, and an automated eval run against every active non-confidential service with test cases every 60 min.
+AI Health Check is a centralized AI operations platform built for the ARTI-409-A course. The frontend is a React 18 SPA (Vite 5 + Tailwind 3.4). The backend is FastAPI with SQLAlchemy ORM over SQLite. While it uses **Claude Sonnet 4.6** and **Claude Haiku 4.5** by default via the Anthropic SDK, the system is architected to be **model-agnostic**, allowing for seamless integration of other providers (OpenAI, Gemini, etc.) through its centralized `llm_client.py` pipeline. Two APScheduler jobs run in the background: an HTTP health-check probe against every service every 5 min, and an automated eval run against every active non-confidential service with test cases every 60 min.
 
 ## 2. Architecture Diagram
 
@@ -21,7 +21,7 @@ FastAPI Backend (7 routers, 47 endpoints)
     |
     |--- SQLite (SQLAlchemy ORM, 13 models, Alembic migrations)
     |
-    |--- the LLM provider API — two-tier:
+    |--- LLM provider API — two-tier (Default: Anthropic):
     |       Sonnet 4.6  (actor: services under test + synthesis tasks)
     |       Haiku 4.5   (merged judge: factuality + hallucination in one call)
     |        ^
@@ -92,8 +92,8 @@ Compliance was split into three cohesive files mounted under the same
 
 All the LLM provider API calls are centralized in `llm_client.py`. Two-tier model architecture:
 
-- **Actor — `settings.llm_model` (Sonnet 4.6 default):** the service under test and every synthesis task (incident summaries, dashboard insights, compliance reports).
-- **Judge — `settings.judge_model` (Haiku 4.5 default):** merged `judge_response` — one structured Haiku call per factuality test case returns `{factuality, hallucination}`. Different size/training emphasis from the actor narrows the "model scoring itself" correlation. The earlier split `score_factuality` + `detect_hallucination` pair was merged in commit `0fbddac` to halve judge traffic.
+- **Actor — `settings.llm_model` (Claude Sonnet 4.6 default):** Handles the service under test and every synthesis task.
+- **Judge — `settings.judge_model` (Claude Haiku 4.5 default):** Handles merged `judge_response`. The architecture allows swapping these for any other model (e.g., GPT-4o, Gemini Pro) by updating `config.py`.
 - **Safety:** single-layer regex only (`safety.py::scan_input`). An LLM classifier second layer existed briefly and was removed in commit `73e09b3` — false-positive rate on legitimate prompts didn't justify the cost.
 
 ### Flow through `_make_api_call` (5 stages)

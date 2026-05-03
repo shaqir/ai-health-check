@@ -43,8 +43,8 @@ Every time the app talks to the AI model, it goes through this pipeline:
 
 1. **Scan the input (single-layer regex)** -- 15 injection patterns, PII detection (email, phone, SSN, credit card), and a length limit (hard cap 12 000 chars). Risk score ≥ 80 blocks the call with HTTP 422. An LLM classifier second layer was trialled and removed in commit `73e09b3` — the false-positive rate didn't justify the cost at demo scale.
 2. **Check the budget** -- Block the call if daily ($5) or monthly ($25) spend limits are reached
-3. **Check rate limits** -- Throttle if the user exceeds 20 calls/minute or the system exceeds 30/minute (sized for demo eval batches — a 10-case factuality run fires ~20 the AI calls: 10 actor + 10 merged judge). Exceeding returns HTTP 429.
-4. **Call the model** -- Sonnet for actor + synthesis tasks; Haiku for the judges that score factuality and hallucination. If it fails, retry up to 2 times with backoff
+3. **Check rate limits** -- Throttled if the user exceeds 20 calls/minute or the system exceeds 30/minute (sized for demo eval batches — a 10-case factuality run fires ~20 AI calls: 10 actor + 10 merged judge). Exceeding returns HTTP 429.
+4. **Call the model** -- Claude Sonnet for actor + synthesis tasks; Claude Haiku for the judges that score factuality and hallucination. The platform is model-agnostic; while it uses Anthropic by default, it is designed to support any LLM provider (OpenAI, Gemini, etc.).
 5. **Scan the output** -- Check the AI's response for personal information before showing it to the user
 6. **Log everything** -- Record tokens, cost, latency, model used, and any safety flags (per-model cost accounting keeps Haiku vs Sonnet rows priced correctly)
 
@@ -55,8 +55,8 @@ Every time the app talks to the AI model, it goes through this pipeline:
 | Frontend | React 18, Vite 5, Tailwind CSS 3.4, Recharts |
 | Backend | FastAPI, Python 3.11+, SQLAlchemy |
 | Database | SQLite |
-| LLM (actor) | the LLM provider the AI Sonnet 4.6 (`claude-sonnet-4-6-20250415`) — services under test + synthesis tasks |
-| LLM (judge) | the LLM provider the AI Haiku 4.5 (`claude-haiku-4-5-20251001`) — merged factuality + hallucination judge (one structured call per factuality test case) |
+| LLM (actor) | Claude Sonnet 4.6 (default, can be swapped) — services under test + synthesis tasks |
+| LLM (judge) | Claude Haiku 4.5 (default, can be swapped) — merged factuality + hallucination judge |
 | Testing | Pytest (188 tests across 22 files, ~71% coverage) |
 
 ## Quick Start
@@ -65,7 +65,7 @@ Every time the app talks to the AI model, it goes through this pipeline:
 # Backend
 cd backend
 pip install -r requirements.txt
-cp .env.example .env          # add your ANTHROPIC_API_KEY
+cp .env.example .env          # add your ANTHROPIC_API_KEY (or OpenAI/Gemini key)
 python -m app.seed
 uvicorn app.main:app --reload --port 8000
 

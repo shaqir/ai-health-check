@@ -11,7 +11,7 @@
 | Date | Change | Reason |
 |------|--------|--------|
 | 2026-03-18 | Initial: `claude-sonnet-4-20250514` (Sonnet 4), `anthropic>=0.39.0` | Project launch |
-| 2026-04-12 | Upgrade: `claude-sonnet-4-6-20250415` (Sonnet 4.6), `anthropic>=0.49.0` | Improved reasoning and instruction following; no prompt changes required |
+| 2026-04-12 | Upgrade: `claude-sonnet-4-6-20250415` (Sonnet 4.6), `anthropic>=0.49.0` | Improved reasoning and instruction following. Note: Architecture supports swapping to OpenAI/Gemini by updating `llm_client.py`. |
 | 2026-04-18 | Judge parser strict mode: `score_factuality()` and `detect_hallucination()` now require `re.fullmatch` on a bare integer and return `None` on refusal | Hostile QA found the old `re.search(r"\d+", text)` misread refusals ("I cannot rate this. 404 Not Found" → 404 → clamp 100 → severe hallucination; "I can give you 7 reasons" → factuality 7% → false drift). No prompt text changed; parsing contract changed. |
 | 2026-04-20 | Dropped LLM injection classifier (`detect_injection`); safety is now single-layer regex only | Commit `73e09b3`. The Haiku classifier's false-positive rate on legitimate prompts (incident symptoms like "please investigate the failed auth") didn't justify its cost at demo scale. The 15-pattern regex tripwire remains. |
 | 2026-04-20 | Merged `score_factuality` + `detect_hallucination` into a single `judge_response` call returning structured JSON `{factuality, hallucination}` | Commit `0fbddac`. Halves judge traffic (one Haiku call per factuality test case instead of two reading the same inputs). New parser `_parse_judge_json` handles accidental code fences, clamps each rubric to `[0, 100]`, returns `None` per-rubric on refusal. Callers must distinguish `None` from `0` — a refusal is not a zero score. |
@@ -73,7 +73,7 @@ Respond with ONLY valid JSON on a single line, no prose, no code fences:
 {"factuality": <0-100>, "hallucination": <0-100>}
 ```
 
-Output: Parsed via `_parse_judge_json()` which strips accidental code fences, parses the JSON, clamps each rubric to `[0, 100]`, and returns `{"factuality": float|None, "hallucination": float|None}`. `None` for a rubric means the judge refused, returned malformed JSON, or produced a non-numeric value for that key — callers treat refusal as `judge_refused` status and EXCLUDE the case from aggregate quality. Routed to `settings.judge_model` (Haiku 4.5 default), not the actor model.
+Output: Parsed via `_parse_judge_json()` which strips accidental code fences, parses the JSON, clamps each rubric to `[0, 100]`, and returns `{"factuality": float|None, "hallucination": float|None}`. `None` for a rubric means the judge refused, returned malformed JSON, or produced a non-numeric value for that key — callers treat refusal as `judge_refused` status and EXCLUDE the case from aggregate quality. Routed to `settings.judge_model` (Claude Haiku default), not the actor model.
 
 Replaces the separate `score_factuality` + `detect_hallucination` pair in commit `0fbddac` — one the AI call per test case instead of two reading the same inputs.
 

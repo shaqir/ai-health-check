@@ -4,15 +4,13 @@ import { useAuth } from '../context/AuthContext';
 import { Server, ChevronDown, ChevronUp, Loader2, ShieldAlert, ArrowLeft, KeyRound, CheckCircle2 } from 'lucide-react';
 import api from '../utils/api';
 
-// Demo-role convenience panel. Emails only — passwords are set by the
-// operator via SEED_ADMIN_PASSWORD / SEED_MAINTAINER_PASSWORD /
-// SEED_VIEWER_PASSWORD in backend/.env and never shipped with the
-// frontend bundle. Clicking a row pre-fills the email field; the user
-// types the password they configured themselves.
+// Demo-role convenience panel. Clicking a row pre-fills both the email and
+// default password fields for easy demonstration. Operators can still
+// configure custom passwords via SEED_*_PASSWORD in backend/.env.
 const DEMO_ROLES = [
-  { role: 'Admin', email: 'admin@aiops.local', desc: 'Full access' },
-  { role: 'Maintainer', email: 'maintainer@aiops.local', desc: 'Services + incidents' },
-  { role: 'Viewer', email: 'viewer@aiops.local', desc: 'Read-only' },
+  { role: 'Admin', email: 'admin@aiops.local', password: 'change-me', desc: 'Full access' },
+  { role: 'Maintainer', email: 'maintainer@aiops.local', password: 'change-me', desc: 'Services + incidents' },
+  { role: 'Viewer', email: 'viewer@aiops.local', password: 'change-me', desc: 'Read-only' },
 ];
 
 const INPUT_CLS = 'w-full px-4 py-2.5 text-sm bg-[var(--material-thick)] border border-hairline rounded-md text-text placeholder-text-subtle transition-standard focus:border-accent focus:bg-surface';
@@ -58,11 +56,9 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemoClick = (demoEmail) => {
-    setEmail(demoEmail);
-    // Password intentionally not pre-filled — the user enters the
-    // password they set via SEED_*_PASSWORD in backend/.env. See
-    // .env.example for the override documentation.
+  const handleDemoClick = (cred) => {
+    setEmail(cred.email);
+    setPassword(cred.password);
   };
 
   const handleRecovery = async (e) => {
@@ -315,7 +311,7 @@ export default function LoginPage() {
                     <button
                       key={i}
                       type="button"
-                      onClick={() => handleDemoClick(cred.email)}
+                      onClick={() => handleDemoClick(cred)}
                       className="w-full flex items-center justify-between px-5 py-2.5 text-left hover:bg-accent-weak transition-standard border-b border-hairline last:border-b-0"
                     >
                       <div>
